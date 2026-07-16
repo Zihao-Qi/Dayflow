@@ -17,6 +17,10 @@ The app is a working local MVP built with:
 - Recharts
 - lucide-react icons
 
+The latest completed milestone is the Activity Log MVP, merged in pull request
+`#2` on July 16, 2026. Dayflow can now record chronological evidence of what
+happened during the day and use those entries for recorded-time totals.
+
 Recent front-end polish and responsive layout work has been documented in:
 
 - `DAYFLOW_CHANGELOG.md`
@@ -119,7 +123,7 @@ Funemployment Day has a narrower and immediately understandable promise around r
 
 - Shows completion rate over recent days.
 - Shows tasks completed.
-- Shows planned vs actual time.
+- Shows planned vs recorded activity time.
 - Shows mood and energy trends.
 
 ### Front-End Polish and Responsiveness
@@ -132,6 +136,7 @@ Funemployment Day has a narrower and immediately understandable promise around r
 - Buttons and rating dots have clearer hover and active states.
 - Notes and Materials tabs include empty states.
 - Mobile navigation switches to a fixed bottom tab bar on small screens.
+- Mobile navigation shares the available width evenly and remains visible at a 320px viewport.
 - Compact mode reduces spacing and control sizes for higher task density.
 
 ### Review View
@@ -149,6 +154,7 @@ Funemployment Day has a narrower and immediately understandable promise around r
 ```
 
 This is intended as a future integration point for tools such as Hermes agent.
+The current export uses schema version 2 and includes activity entries.
 
 ## Data and Local Setup
 
@@ -201,6 +207,21 @@ Verified user-facing behavior includes:
 - Task rows can be reordered by dragging the grip handle.
 - Compact mode is available from the top toolbar.
 - Notes and Materials show empty states when there is no content.
+- Activities can be created with a time, duration, category, accomplishment note, and optional task link.
+- Activity entries persist across refreshes and can be deleted.
+- Empty accomplishment notes and invalid durations are rejected with clear validation errors.
+- Daily Pulse spent time and weekly actual-time charts use activity duration when entries exist.
+- Existing task-level actual minutes remain a compatibility fallback on days without activity entries.
+- Deleting a linked task safely detaches its activity entries instead of deleting them.
+- Agent export schema version 2 includes activity entries.
+- The Activity Log form and long activity notes render cleanly on desktop and mobile.
+- Responsive layout checks passed at 320, 360, 375, 390, 430, and 768 pixel viewports.
+
+Additional API regression checks were completed against a disposable copy of
+the local SQLite database. The checks covered activity creation, linking,
+aggregation, refresh persistence, deletion, export, task creation and updates,
+task reordering, task deletion, notes, materials, diary updates, and bootstrap
+integrity. The real local database was restored unchanged after testing.
 
 Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
 
@@ -286,7 +307,7 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
 
 ## Suggested Next Technical Steps
 
-1. Add focused browser tests for the main flows:
+1. Automate the currently manual/API-verified main flows with focused browser tests:
    - Add task
    - Complete task
    - Add activity

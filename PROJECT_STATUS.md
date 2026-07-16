@@ -1,6 +1,6 @@
 # Dayflow Project Status and Plan
 
-Last updated: May 10, 2026
+Last updated: July 16, 2026
 
 ## Project Goal
 
@@ -28,6 +28,28 @@ The local app runs at:
 ```bash
 http://localhost:3000
 ```
+
+## Product Direction and Competitive Notes
+
+The public product pages for [Funemployment Day](https://funemploymentday.app/) were reviewed in July 2026 as a useful comparison for time tracking, daily structure, and progress reporting.
+
+The main lesson is not to copy its unemployment-specific positioning or hosted subscription model. Dayflow should remain a broader, local-first personal workspace. The useful ideas are:
+
+- Treat time as a first-class record, not only an estimate attached to a task.
+- Let users record actual activities with a duration, category, optional task, and short accomplishment note.
+- Use categories such as deep work, learning, administration, health, rest, or custom areas to show where time is going.
+- Turn completed tasks, activity records, notes, materials, mood, and energy into a weekly evidence-of-progress review.
+- Provide human-friendly CSV export in addition to the existing agent-oriented JSON export.
+- Use supportive prompts that help make small accomplishments visible without becoming judgmental or overly gamified.
+- Consider an installable Progressive Web App so the local tool feels more like a dedicated desktop or mobile application.
+
+Funemployment Day has a narrower and immediately understandable promise around restoring routine, structure, momentum, and progress. Dayflow already has a richer working dashboard and should preserve its calmer notebook identity and the headline “Make today legible.” Future product copy and onboarding should make the daily loop equally clear:
+
+1. Decide what matters.
+2. Plan the day.
+3. Record what actually happened.
+4. Capture useful thoughts and materials.
+5. Review visible evidence of progress.
 
 ## Implemented Features
 
@@ -179,6 +201,11 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
 
 - There are no automated browser tests yet.
 - Task drag-and-drop exists in the task list and matrix, but there are no automated tests covering those interactions yet.
+- Actual time is stored on tasks, but there is no chronological activity log or start/stop timer.
+- There are no user-defined activity categories for understanding how time is distributed across areas of life.
+- The review flow does not yet produce a complete weekly evidence-of-progress summary.
+- Export is currently agent-oriented JSON; CSV export, printable summaries, and full import are not implemented.
+- The app is responsive but is not yet configured as an installable PWA.
 - Notes and materials have fields for task linking, but the UI for attaching them to tasks is still limited.
 - PDF upload/storage is not implemented yet; materials currently store reference URLs and notes.
 - There is no hosted sync, authentication, or multi-device support yet.
@@ -199,27 +226,47 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
 - Allow moving unfinished tasks to tomorrow.
 - Add quick creation of time blocks from tasks.
 
-### 3. Strengthen Notes, Diary, and Materials
+### 3. Add Activity and Time Logging
+
+- Add an `ActivityEntry` model with start time, end time or duration, category, optional task link, and accomplishment note.
+- Support manual activity entry first, followed by an optional start/stop timer.
+- Use activity entries to calculate actual time in the Daily Pulse and review views.
+- Allow custom activity categories while providing calm defaults such as deep work, learning, administration, health, and rest.
+- Make rest and non-task activity valid records rather than treating all progress as task completion.
+
+### 4. Strengthen Notes, Diary, and Materials
 
 - Add UI for linking notes to tasks.
 - Add UI for linking materials to tasks or notes.
 - Add search and tag filtering for notes and materials.
 - Consider markdown support for diary and notes.
 - Add richer diary states for empty days and completed reviews.
+- Add gentle prompts such as “What would make today feel complete?”, “Record a small win,” and “What should carry forward?”
 
-### 4. Improve Charts
+### 5. Improve Reviews and Charts
 
-- Add weekly review summaries.
+- Add a weekly evidence-of-progress summary combining completed tasks, activity time, notes, materials, mood, and energy.
+- Show time distribution by activity category.
 - Add a cleaner planned vs actual time breakdown.
 - Add mood and energy correlation with completion trends.
+- Let users write or edit a short weekly narrative about what moved forward.
 
-### 5. Add Local-First Durability
+### 6. Add Local-First Durability and Portability
 
 - Add export and import for all local data.
+- Add CSV export for activity and task history alongside the existing JSON agent export.
+- Add a printable or shareable weekly summary.
 - Add a backup command or UI action.
 - Consider using Prisma migrations once the local schema-engine issue is resolved.
 
-### 6. Prepare for Future Hosted Version
+### 7. Improve the App-Like Experience
+
+- Add a web app manifest, icons, and installable PWA behavior.
+- Define useful offline behavior and make local data status visible.
+- Keep Dayflow’s quiet notebook visual identity instead of adopting a generic SaaS dashboard style.
+- Add a short first-run explanation of the Decide → Plan → Record → Capture → Review loop.
+
+### 8. Prepare for Future Hosted Version
 
 - Keep API routes clean and typed.
 - Separate local persistence assumptions from app logic.
@@ -228,17 +275,22 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
 
 ## Suggested Next Technical Steps
 
-1. Add focused browser tests for the main flows:
+1. Design and add the `ActivityEntry` data model and a simple manual activity log.
+2. Connect activity duration to Daily Pulse actual time and weekly review calculations.
+3. Add focused browser tests for the main flows:
    - Add task
    - Complete task
+   - Add activity
    - Add note
    - Add material
    - Update urgency and importance
    - Drag reorder tasks
    - Toggle compact mode
-2. Add a small data export/import UI.
-3. Improve task-to-note and task-to-material linking.
-4. Add a handoff convention:
+4. Add CSV export and a small data export/import UI.
+5. Build the first weekly evidence-of-progress summary.
+6. Improve task-to-note and task-to-material linking.
+7. Add installable PWA metadata and verify offline/local behavior.
+8. Add a handoff convention:
    - Gemini records front-end design and UI changes in `DAYFLOW_CHANGELOG.md`.
    - This file records product status, implementation status, limitations, and development plan.
-5. Add a proper project README once the app shape stabilizes.
+9. Expand the README with the core Decide → Plan → Record → Capture → Review workflow as the app shape stabilizes.

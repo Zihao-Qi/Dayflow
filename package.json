@@ -1,0 +1,31 @@
+{
+  "name": "dayflow",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "prisma generate && next build",
+    "typecheck": "tsc --noEmit",
+    "prisma:generate": "prisma generate",
+    "prisma:push": "prisma db push",
+    "db:init": "sqlite3 prisma/dev.db \".read prisma/init.sql\"",
+    "prisma:seed": "tsx prisma/seed.ts",
+    "db:setup": "npm run db:init && npm run prisma:seed"
+  },
+  "dependencies": {
+    "@prisma/client": "6.19.3",
+    "lucide-react": "0.475.0",
+    "next": "15.5.18",
+    "prisma": "6.19.3",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "recharts": "2.15.1"
+  },
+  "devDependencies": {
+    "@types/node": "22.13.1",
+    "@types/react": "19.0.8",
+    "@types/react-dom": "19.0.3",
+    "tsx": "4.21.0",
+    "typescript": "5.7.3"
+  }
+}

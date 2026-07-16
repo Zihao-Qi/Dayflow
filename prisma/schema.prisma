@@ -1,0 +1,89 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  DONE
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+model Task {
+  id              String       @id @default(cuid())
+  title           String
+  date            DateTime
+  status          TaskStatus   @default(TODO)
+  priority        Priority     @default(MEDIUM)
+  urgentScore     Int          @default(2)
+  importanceScore Int          @default(3)
+  deadline        DateTime?
+  estimateMinutes Int          @default(30)
+  actualMinutes   Int          @default(0)
+  sortOrder       Int          @default(0)
+  completedAt     DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  notes           Note[]
+  materials       Material[]
+  timeBlocks      TimeBlock[]
+}
+
+model Note {
+  id        String     @id @default(cuid())
+  content   String
+  tags      String     @default("[]")
+  date      DateTime
+  taskId    String?
+  task      Task?      @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  materials Material[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+}
+
+model DiaryEntry {
+  id         String   @id @default(cuid())
+  date       DateTime @unique
+  content    String   @default("")
+  reflection String   @default("")
+  mood       Int      @default(3)
+  energy     Int      @default(3)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model Material {
+  id        String   @id @default(cuid())
+  title     String
+  url       String
+  type      String   @default("website")
+  notes     String   @default("")
+  taskId    String?
+  noteId    String?
+  task      Task?    @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  note      Note?    @relation(fields: [noteId], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model TimeBlock {
+  id        String   @id @default(cuid())
+  date      DateTime
+  startTime String
+  endTime   String
+  title     String
+  taskId    String?
+  task      Task?    @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

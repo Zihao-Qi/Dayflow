@@ -20,23 +20,24 @@ enum Priority {
 }
 
 model Task {
-  id              String       @id @default(cuid())
+  id              String          @id @default(cuid())
   title           String
   date            DateTime
-  status          TaskStatus   @default(TODO)
-  priority        Priority     @default(MEDIUM)
-  urgentScore     Int          @default(2)
-  importanceScore Int          @default(3)
+  status          TaskStatus      @default(TODO)
+  priority        Priority        @default(MEDIUM)
+  urgentScore     Int             @default(2)
+  importanceScore Int             @default(3)
   deadline        DateTime?
-  estimateMinutes Int          @default(30)
-  actualMinutes   Int          @default(0)
-  sortOrder       Int          @default(0)
+  estimateMinutes Int             @default(30)
+  actualMinutes   Int             @default(0)
+  sortOrder       Int             @default(0)
   completedAt     DateTime?
-  createdAt       DateTime     @default(now())
-  updatedAt       DateTime     @updatedAt
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
   notes           Note[]
   materials       Material[]
   timeBlocks      TimeBlock[]
+  activities      ActivityEntry[]
 }
 
 model Note {
@@ -86,4 +87,19 @@ model TimeBlock {
   task      Task?    @relation(fields: [taskId], references: [id], onDelete: SetNull)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model ActivityEntry {
+  id              String   @id @default(cuid())
+  startedAt       DateTime
+  durationMinutes Int
+  category        String
+  note            String
+  taskId          String?
+  task            Task?    @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([startedAt])
+  @@index([taskId])
 }

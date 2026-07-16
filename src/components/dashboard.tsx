@@ -93,6 +93,16 @@ type TimeBlock = {
   taskId: string | null;
 };
 
+type ActivityEntry = {
+  id: string;
+  startedAt: string;
+  durationMinutes: number;
+  category: string;
+  note: string;
+  taskId: string | null;
+  createdAt: string;
+};
+
 type DayStat = {
   day: string;
   completed: number;
@@ -111,6 +121,7 @@ type Bootstrap = {
   diary: Diary;
   materials: Material[];
   timeBlocks: TimeBlock[];
+  activities: ActivityEntry[];
   stats: DayStat[];
 };
 
@@ -134,6 +145,8 @@ const statusLabel: Record<TaskStatus, string> = {
   DONE: "Done"
 };
 
+const activityCategories = ["Deep Work", "Learning", "Admin", "Health", "Rest"];
+
 export function Dashboard() {
   const [data, setData] = useState<Bootstrap | null>(null);
   const [active, setActive] = useState("today");
@@ -143,10 +156,17 @@ export function Dashboard() {
   const [materialTitle, setMaterialTitle] = useState("");
   const [materialUrl, setMaterialUrl] = useState("");
   const [materialNotes, setMaterialNotes] = useState("");
+  const [activityTime, setActivityTime] = useState("");
+  const [activityDuration, setActivityDuration] = useState("30");
+  const [activityCategory, setActivityCategory] = useState(activityCategories[0]);
+  const [activityTaskId, setActivityTaskId] = useState("");
+  const [activityNote, setActivityNote] = useState("");
+  const [activityError, setActivityError] = useState("");
   const [compactMode, setCompactMode] = useState(false);
   const [savingDiary, setSavingDiary] = useState(false);
 
   useEffect(() => {
+    setActivityTime(formatTimeInput(new Date()));
     void refresh();
   }, []);
 
@@ -169,10 +189,17 @@ export function Dashboard() {
     return data.tasks.filter((task) => task.date.slice(0, 10) > key);
   }, [data]);
 
+  const todayActivities = useMemo(() => data?.activities ?? [], [data]);
+
   const summary = useMemo(() => {
     const completed = todayTasks.filter((task) => task.status === "DONE").length;
     const estimate = todayTasks.reduce((sum, task) => sum + task.estimateMinutes, 0);
-    const actual = todayTasks.reduce((sum, task) => sum + task.actualMinutes, 0);
+    const recordedMinutes = todayActivities.reduce(
+      (sum, activity) => sum + activity.durationMinutes,
+      0
+    );
+    const legacyActualMinutes = todayTasks.reduce((sum, task) => sum + task.actualMinutes, 0);
+    const actual = todayActivities.length ? recordedMinutes : legacyActualMinutes;
     return {
       completed,
       total: todayTasks.length,
@@ -180,7 +207,7 @@ export function Dashboard() {
       estimate,
       actual
     };
-  }, [todayTasks]);
+  }, [todayActivities, todayTasks]);
 
   async function addTask() {
     if (!newTask.trim()) return;
@@ -283,6 +310,48 @@ export function Dashboard() {
     setMaterialTitle("");
     setMaterialUrl("");
     setMaterialNotes("");
+    await refresh();
+  }
+
+  async function addActivity() {
+    const durationMinutes = Number(activityDuration);
+    if (!activityNote.trim()) {
+      setActivityError("Add a short note about what happened.");
+      return;
+    }
+    if (!Number.isFinite(durationMinutes) || durationMinutes < 1 || durationMinutes > 1440) {
+      setActivityError("Duration must be between 1 and 1440 minutes.");
+      return;
+    }
+
+    setActivityError("");
+    const response = await fetch("/api/activities", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        date: data?.today,
+        startTime: activityTime,
+        durationMinutes,
+        category: activityCategory,
+        taskId: activityTaskId || null,
+        note: activityNote
+      })
+    });
+
+    if (!response.ok) {
+      const result = await response.json().catch(() => null);
+      setActivityError(result?.error ?? "Activity could not be saved.");
+      return;
+    }
+
+    setActivityNote("");
+    setActivityTaskId("");
+    setActivityTime(formatTimeInput(new Date()));
+    await refresh();
+  }
+
+  async function deleteActivity(id: string) {
+    await fetch(`/api/activities/${id}`, { method: "DELETE" });
     await refresh();
   }
 
@@ -396,6 +465,82 @@ export function Dashboard() {
             <section className="panel matrix-panel">
               <PanelTitle icon={<LayoutDashboard size={18} />} title="Urgency and importance" detail="Drag tasks or label them" />
               <UrgencyImportanceMatrix tasks={todayTasks} today={data.today} onUpdate={updateTask} />
+            </section>
+
+            <section className="panel activity-panel">
+              <PanelTitle
+                icon={<Clock3 size={18} />}
+                title="What happened today?"
+                detail={`${summary.actual}m recorded`}
+              />
+              <div className="activity-form">
+                <div className="activity-form-grid">
+                  <label>
+                    Time
+                    <input
+                      type="time"
+                      value={activityTime}
+                      onChange={(event) => setActivityTime(event.target.value)}
+                    />
+                  </label>
+                  <label>
+                    Minutes
+                    <input
+                      type="number"
+                      min="1"
+                      max="1440"
+                      step="5"
+                      value={activityDuration}
+                      onChange={(event) => setActivityDuration(event.target.value)}
+                    />
+                  </label>
+                  <label>
+                    Category
+                    <select
+                      value={activityCategory}
+                      onChange={(event) => setActivityCategory(event.target.value)}
+                    >
+                      {activityCategories.map((category) => (
+                        <option key={category} value={category}>
+                          {category}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <label className="activity-task-field">
+                  Linked task
+                  <select
+                    value={activityTaskId}
+                    onChange={(event) => setActivityTaskId(event.target.value)}
+                  >
+                    <option value="">No linked task</option>
+                    {todayTasks.map((task) => (
+                      <option key={task.id} value={task.id}>
+                        {task.title}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <textarea
+                  value={activityNote}
+                  onChange={(event) => {
+                    setActivityNote(event.target.value);
+                    if (activityError) setActivityError("");
+                  }}
+                  placeholder="Record a small win or what moved forward."
+                />
+                {activityError && <p className="form-error">{activityError}</p>}
+                <button className="secondary-button" onClick={() => void addActivity()}>
+                  <Plus size={16} />
+                  Add activity
+                </button>
+              </div>
+              <ActivityList
+                activities={todayActivities}
+                tasks={todayTasks}
+                onDelete={deleteActivity}
+              />
             </section>
 
             <section className="panel diary-panel">
@@ -936,6 +1081,53 @@ function MiniTimeline({
   );
 }
 
+function ActivityList({
+  activities,
+  tasks,
+  onDelete
+}: {
+  activities: ActivityEntry[];
+  tasks: Task[];
+  onDelete: (id: string) => Promise<void>;
+}) {
+  if (!activities.length) {
+    return (
+      <div className="activity-empty">
+        <p>No activity recorded yet. Add one small piece of evidence from your day.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="activity-list">
+      {activities.map((activity) => {
+        const task = tasks.find((item) => item.id === activity.taskId);
+        return (
+          <article className="activity-item" key={activity.id}>
+            <div className="activity-item-header">
+              <div className="activity-meta">
+                <time dateTime={activity.startedAt}>{formatActivityTime(activity.startedAt)}</time>
+                <span>{activity.durationMinutes}m</span>
+                <span className="activity-category">{activity.category}</span>
+              </div>
+              <button
+                className="icon-button danger"
+                title="Delete activity"
+                aria-label={`Delete activity: ${activity.note}`}
+                onClick={() => void onDelete(activity.id)}
+              >
+                <Trash2 size={15} />
+              </button>
+            </div>
+            <p>{activity.note}</p>
+            {task && <small>Linked to {task.title}</small>}
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
 function NoteList({ notes }: { notes: Note[] }) {
   if (notes.length === 0) {
     return (
@@ -1029,4 +1221,12 @@ function formatLongDate(value: string) {
 
 function formatShortDate(value: string) {
   return new Date(value).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+function formatActivityTime(value: string) {
+  return new Date(value).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+}
+
+function formatTimeInput(value: Date) {
+  return `${String(value.getHours()).padStart(2, "0")}:${String(value.getMinutes()).padStart(2, "0")}`;
 }

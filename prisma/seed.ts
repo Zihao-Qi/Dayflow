@@ -9,7 +9,14 @@ const startOfDay = (offset = 0) => {
   return date;
 };
 
+const atTime = (date: Date, hours: number, minutes: number) => {
+  const value = new Date(date);
+  value.setHours(hours, minutes, 0, 0);
+  return value;
+};
+
 async function main() {
+  await prisma.activityEntry.deleteMany();
   await prisma.timeBlock.deleteMany();
   await prisma.material.deleteMany();
   await prisma.note.deleteMany();
@@ -90,6 +97,32 @@ async function main() {
       }
     })
   ]);
+
+  await prisma.activityEntry.createMany({
+    data: [
+      {
+        startedAt: atTime(today, 9, 10),
+        durationMinutes: 35,
+        category: "Deep Work",
+        note: "Turned the dashboard direction into a concrete product outline.",
+        taskId: tasks[1].id
+      },
+      {
+        startedAt: atTime(today, 11, 5),
+        durationMinutes: 20,
+        category: "Learning",
+        note: "Reviewed saved references and captured the useful ideas.",
+        taskId: tasks[2].id
+      },
+      {
+        startedAt: atTime(yesterday, 16, 15),
+        durationMinutes: 25,
+        category: "Admin",
+        note: "Closed the remaining loose ends from the day.",
+        taskId: tasks[4].id
+      }
+    ]
+  });
 
   await prisma.note.createMany({
     data: [

@@ -62,8 +62,18 @@ Funemployment Day has a narrower and immediately understandable promise around r
 - Supports deleting tasks.
 - Supports drag-and-drop task reordering using the task row grip handle.
 - Supports task status, deadline, estimated minutes, urgency, and importance.
-- Shows daily progress and planned vs actual time.
+- Shows daily progress and planned vs recorded activity time.
 - Includes a compact mode toggle for denser task management.
+
+### Activity and Time Logging
+
+- Supports manually recording what happened during the day.
+- Stores activity time, duration, category, accomplishment note, and an optional linked task.
+- Includes calm default categories for deep work, learning, administration, health, and rest.
+- Uses activity durations as the source for Daily Pulse spent time and weekly actual-time charts.
+- Supports deleting activity entries.
+- Includes activities in the local agent export.
+- Uses task-level actual minutes only as a compatibility fallback on days without activity entries.
 
 ### Urgency and Importance Matrix
 
@@ -201,8 +211,9 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
 
 - There are no automated browser tests yet.
 - Task drag-and-drop exists in the task list and matrix, but there are no automated tests covering those interactions yet.
-- Actual time is stored on tasks, but there is no chronological activity log or start/stop timer.
-- There are no user-defined activity categories for understanding how time is distributed across areas of life.
+- Activity logging is manual; there is no start/stop timer or activity editing yet.
+- Activity categories use a fixed default list; user-defined categories are not implemented yet.
+- Activity entry is currently focused on today rather than retrospective logging for another date.
 - The review flow does not yet produce a complete weekly evidence-of-progress summary.
 - Export is currently agent-oriented JSON; CSV export, printable summaries, and full import are not implemented.
 - The app is responsive but is not yet configured as an installable PWA.
@@ -226,13 +237,13 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
 - Allow moving unfinished tasks to tomorrow.
 - Add quick creation of time blocks from tasks.
 
-### 3. Add Activity and Time Logging
+### 3. Extend Activity and Time Logging
 
-- Add an `ActivityEntry` model with start time, end time or duration, category, optional task link, and accomplishment note.
-- Support manual activity entry first, followed by an optional start/stop timer.
-- Use activity entries to calculate actual time in the Daily Pulse and review views.
-- Allow custom activity categories while providing calm defaults such as deep work, learning, administration, health, and rest.
-- Make rest and non-task activity valid records rather than treating all progress as task completion.
+- Add editing for activity entries.
+- Add an optional start/stop timer.
+- Add custom activity category management.
+- Allow retrospective activity logging for another date.
+- Keep rest and non-task activity valid records rather than treating all progress as task completion.
 
 ### 4. Strengthen Notes, Diary, and Materials
 
@@ -275,9 +286,7 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
 
 ## Suggested Next Technical Steps
 
-1. Design and add the `ActivityEntry` data model and a simple manual activity log.
-2. Connect activity duration to Daily Pulse actual time and weekly review calculations.
-3. Add focused browser tests for the main flows:
+1. Add focused browser tests for the main flows:
    - Add task
    - Complete task
    - Add activity
@@ -286,11 +295,12 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
    - Update urgency and importance
    - Drag reorder tasks
    - Toggle compact mode
-4. Add CSV export and a small data export/import UI.
-5. Build the first weekly evidence-of-progress summary.
-6. Improve task-to-note and task-to-material linking.
-7. Add installable PWA metadata and verify offline/local behavior.
-8. Add a handoff convention:
+2. Build the first weekly evidence-of-progress summary from tasks, activities, diary state, notes, and materials.
+3. Add CSV export and a small data export/import UI.
+4. Add activity editing, custom categories, and an optional timer.
+5. Improve task-to-note and task-to-material linking.
+6. Add installable PWA metadata and verify offline/local behavior.
+7. Add a handoff convention:
    - Gemini records front-end design and UI changes in `DAYFLOW_CHANGELOG.md`.
    - This file records product status, implementation status, limitations, and development plan.
-9. Expand the README with the core Decide → Plan → Record → Capture → Review workflow as the app shape stabilizes.
+8. Expand the README with the core Decide → Plan → Record → Capture → Review workflow as the app shape stabilizes.

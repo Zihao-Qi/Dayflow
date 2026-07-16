@@ -746,6 +746,7 @@ function TaskRow({
   return (
     <article
       className={isDone ? "task-row done" : "task-row"}
+      aria-label={`Task: ${task.title}`}
       draggable={isDraggable}
       onDragStart={(e) => {
         e.dataTransfer.setData("text/plain", task.id);

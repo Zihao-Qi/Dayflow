@@ -6,6 +6,10 @@
     "dev": "next dev",
     "build": "prisma generate && next build",
     "typecheck": "tsc --noEmit",
+    "test:e2e:install": "playwright install chromium",
+    "test:e2e:prepare": "node scripts/prepare-e2e-db.mjs",
+    "test:e2e:server": "next dev -p 3100",
+    "test:e2e": "npm run test:e2e:prepare && playwright test",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",
     "db:init": "sqlite3 prisma/dev.db \".read prisma/init.sql\"",
@@ -22,6 +26,7 @@
     "recharts": "2.15.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@types/node": "22.13.1",
     "@types/react": "19.0.8",
     "@types/react-dom": "19.0.3",

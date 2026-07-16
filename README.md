@@ -39,6 +39,24 @@ npm run typecheck
 npm run build
 ```
 
+## Browser Tests
+
+Install Playwright's Chromium browser once:
+
+```bash
+npm run test:e2e:install
+```
+
+Then run the end-to-end suite:
+
+```bash
+npm run test:e2e
+```
+
+The suite starts Dayflow on `http://127.0.0.1:3100` and uses a disposable
+SQLite database at `/private/tmp/dayflow-playwright.db`. It does not read or
+write the normal local database at `prisma/dev.db`.
+
 ## Local Data
 
 The local database and `.env` file are intentionally excluded from Git. This

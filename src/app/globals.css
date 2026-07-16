@@ -1087,19 +1087,22 @@ button:disabled {
     right: 0;
     z-index: 100;
     display: flex;
-    justify-content: space-around;
+    justify-content: stretch;
+    gap: 0;
     background: #fffdf8;
     border-top: 1px solid var(--line);
-    padding: 10px 14px;
+    padding: 10px 6px;
     padding-bottom: calc(10px + env(safe-area-inset-bottom));
     box-shadow: 0 -4px 12px rgba(0,0,0,0.05);
   }
 
   .nav-item {
+    flex: 1 1 0;
+    min-width: 0;
     flex-direction: column;
     gap: 4px;
     font-size: 11px;
-    padding: 8px 12px;
+    padding: 8px 2px;
     min-height: auto;
     border: none;
     border-radius: 8px;

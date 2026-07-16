@@ -8,30 +8,39 @@ export async function GET() {
   const weekEnd = addDays(today, 2);
   const { start, end } = sameDayRange(today);
 
-  const [tasks, notes, diary, materials, timeBlocks, weekTasks, diaries] = await Promise.all([
-    prisma.task.findMany({
-      where: { date: { gte: weekStart, lt: weekEnd } },
-      orderBy: [{ date: "asc" }, { sortOrder: "asc" }, { createdAt: "asc" }]
-    }),
-    prisma.note.findMany({
-      where: { date: { gte: start, lt: end } },
-      orderBy: { createdAt: "desc" }
-    }),
-    prisma.diaryEntry.findUnique({ where: { date: start } }),
-    prisma.material.findMany({ orderBy: { createdAt: "desc" }, take: 12 }),
-    prisma.timeBlock.findMany({
-      where: { date: { gte: today, lt: weekEnd } },
-      orderBy: [{ date: "asc" }, { startTime: "asc" }]
-    }),
-    prisma.task.findMany({
-      where: { date: { gte: weekStart, lt: weekEnd } },
-      orderBy: { date: "asc" }
-    }),
-    prisma.diaryEntry.findMany({
-      where: { date: { gte: weekStart, lt: weekEnd } },
-      orderBy: { date: "asc" }
-    })
-  ]);
+  const [tasks, notes, diary, materials, timeBlocks, activities, weekTasks, diaries, weekActivities] =
+    await Promise.all([
+      prisma.task.findMany({
+        where: { date: { gte: weekStart, lt: weekEnd } },
+        orderBy: [{ date: "asc" }, { sortOrder: "asc" }, { createdAt: "asc" }]
+      }),
+      prisma.note.findMany({
+        where: { date: { gte: start, lt: end } },
+        orderBy: { createdAt: "desc" }
+      }),
+      prisma.diaryEntry.findUnique({ where: { date: start } }),
+      prisma.material.findMany({ orderBy: { createdAt: "desc" }, take: 12 }),
+      prisma.timeBlock.findMany({
+        where: { date: { gte: today, lt: weekEnd } },
+        orderBy: [{ date: "asc" }, { startTime: "asc" }]
+      }),
+      prisma.activityEntry.findMany({
+        where: { startedAt: { gte: start, lt: end } },
+        orderBy: [{ startedAt: "desc" }, { createdAt: "desc" }]
+      }),
+      prisma.task.findMany({
+        where: { date: { gte: weekStart, lt: weekEnd } },
+        orderBy: { date: "asc" }
+      }),
+      prisma.diaryEntry.findMany({
+        where: { date: { gte: weekStart, lt: weekEnd } },
+        orderBy: { date: "asc" }
+      }),
+      prisma.activityEntry.findMany({
+        where: { startedAt: { gte: weekStart, lt: weekEnd } },
+        orderBy: { startedAt: "asc" }
+      })
+    ]);
 
   const diaryEntry =
     diary ??
@@ -46,7 +55,8 @@ export async function GET() {
     diary: diaryEntry,
     materials,
     timeBlocks,
-    stats: buildStats(weekTasks, diaries)
+    activities,
+    stats: buildStats(weekTasks, diaries, weekActivities)
   });
 }
 
@@ -72,23 +82,34 @@ type StatDiary = {
   energy: number;
 };
 
-function buildStats(tasks: StatTask[], diaries: StatDiary[]) {
+type StatActivity = {
+  startedAt: Date;
+  durationMinutes: number;
+};
+
+function buildStats(tasks: StatTask[], diaries: StatDiary[], activities: StatActivity[]) {
   const byDay = new Map<string, StatTask[]>();
   for (const task of tasks) {
-    const key = task.date.toISOString().slice(0, 10);
+    const key = localDateKey(task.date);
     byDay.set(key, [...(byDay.get(key) ?? []), task]);
   }
 
   return Array.from(byDay.entries()).map(([day, dayTasks]) => {
     const done = dayTasks.filter((task) => task.status === "DONE").length;
-    const diary = diaries.find((entry) => entry.date.toISOString().slice(0, 10) === day);
+    const diary = diaries.find((entry) => localDateKey(entry.date) === day);
+    const dayActivities = activities.filter((entry) => localDateKey(entry.startedAt) === day);
+    const recordedMinutes = dayActivities.reduce(
+      (sum, entry) => sum + entry.durationMinutes,
+      0
+    );
+    const legacyActualMinutes = dayTasks.reduce((sum, task) => sum + task.actualMinutes, 0);
     return {
       day,
       completed: done,
       total: dayTasks.length,
       completionRate: dayTasks.length ? Math.round((done / dayTasks.length) * 100) : 0,
       plannedHours: roundHours(dayTasks.reduce((sum, task) => sum + task.estimateMinutes, 0)),
-      actualHours: roundHours(dayTasks.reduce((sum, task) => sum + task.actualMinutes, 0)),
+      actualHours: roundHours(dayActivities.length ? recordedMinutes : legacyActualMinutes),
       mood: diary?.mood ?? null,
       energy: diary?.energy ?? null
     };
@@ -97,4 +118,11 @@ function buildStats(tasks: StatTask[], diaries: StatDiary[]) {
 
 function roundHours(minutes: number) {
   return Math.round((minutes / 60) * 10) / 10;
+}
+
+function localDateKey(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }

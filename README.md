@@ -10,6 +10,7 @@ lucide-react. The app runs locally without accounts or hosted services.
 ## Features
 
 - Today dashboard with task creation, completion, inline editing, and drag-and-drop reordering.
+- Manual activity log with time, duration, category, accomplishment note, and optional task linking.
 - Five-point urgency and importance controls with an interactive priority matrix.
 - Deadline-aware urgency that increases as a due date approaches.
 - Planning, notes, diary, materials, review, and progress chart views.

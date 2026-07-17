@@ -7,3 +7,5 @@ dev.db
 prisma/dev.db
 *.log
 *.tsbuildinfo
+playwright-report
+test-results

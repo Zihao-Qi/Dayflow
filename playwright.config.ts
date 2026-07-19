@@ -1,7 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
+import { testDatabaseUrl } from "./tests/e2e/database";
 
 const baseURL = "http://127.0.0.1:3100";
-const testDatabaseUrl = "file:/private/tmp/dayflow-playwright.db";
 
 export default defineConfig({
   testDir: "./tests/e2e",

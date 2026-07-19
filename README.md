@@ -54,8 +54,9 @@ npm run test:e2e
 ```
 
 The suite starts Dayflow on `http://127.0.0.1:3100` and uses a disposable
-SQLite database at `/private/tmp/dayflow-playwright.db`. It does not read or
-write the normal local database at `prisma/dev.db`.
+`dayflow-playwright.db` SQLite database in the operating system's temporary
+directory. It does not read or write the normal local database at
+`prisma/dev.db`.
 
 ## Local Data
 

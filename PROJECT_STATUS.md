@@ -1,6 +1,6 @@
 # Dayflow Project Status and Plan
 
-Last updated: July 16, 2026
+Last updated: July 18, 2026
 
 ## Project Goal
 
@@ -180,9 +180,15 @@ Note: the project currently uses `prisma/init.sql` plus `npm run db:setup` for l
 The following checks have passed:
 
 ```bash
+npm run test:e2e
 npm run typecheck
 npm run build
 ```
+
+The Playwright browser suite runs against a disposable SQLite database in the
+operating system's temporary directory. It covers activity recording and
+deletion, task completion, section navigation, compact mode, task reordering,
+matrix placement, persistence after reload, and narrow mobile navigation.
 
 The app has also been opened and visually checked in Chrome at:
 
@@ -209,8 +215,8 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
 
 ## Known Limitations
 
-- There are no automated browser tests yet.
-- Task drag-and-drop exists in the task list and matrix, but there are no automated tests covering those interactions yet.
+- Automated browser coverage currently targets Chromium; Firefox and WebKit are not covered yet.
+- Touch-specific drag behavior still needs manual verification on a physical mobile device.
 - Activity logging is manual; there is no start/stop timer or activity editing yet.
 - Activity categories use a fixed default list; user-defined categories are not implemented yet.
 - Activity entry is currently focused on today rather than retrospective logging for another date.
@@ -226,7 +232,7 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
 
 ### 1. Stabilize Front-End Interaction Quality
 
-- Add browser tests for drag reordering, matrix placement, compact mode, and mobile navigation.
+- Keep browser coverage for drag reordering, matrix placement, compact mode, activity logging, and mobile navigation passing as the interface evolves.
 - Confirm touch behavior for drag interactions on mobile.
 - Review keyboard accessibility for task reordering and dot rating controls.
 - Keep Gemini-led front-end changes documented in `DAYFLOW_CHANGELOG.md`.

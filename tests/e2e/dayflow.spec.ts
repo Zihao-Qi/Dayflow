@@ -24,6 +24,7 @@ test("records, persists, totals, and deletes an activity", async ({ page }) => {
   await openDashboard(page);
   await addTask(page, "Ship browser coverage");
 
+  await page.getByText("Record activity", { exact: true }).click();
   await page.getByRole("button", { name: "Add activity" }).click();
   await expect(page.getByText("Add a short note about what happened.")).toBeVisible();
 
@@ -82,14 +83,14 @@ test("persists task completion and switches between the main sections", async ({
   await expect(page.getByText("100% complete", { exact: true })).toBeVisible();
 
   await page.reload();
+  await page.getByText("Completed · 1", { exact: true }).click();
   await expect(
     taskRow(page, "Verify completion").getByRole("button", { name: "Mark incomplete" })
   ).toBeVisible();
 
   const sections = [
-    ["Plan", "Plan the next blocks"],
-    ["Notes", "Capture what matters"],
-    ["Materials", "Keep useful references close"],
+    ["Plan", "Plan with intention"],
+    ["Journal", "Keep what matters"],
     ["Review", "Close the day with intention"],
     ["Today", "Make today legible"]
   ] as const;
@@ -99,6 +100,7 @@ test("persists task completion and switches between the main sections", async ({
     await expect(page.getByRole("heading", { name: heading })).toBeVisible();
   }
 
+  await page.getByRole("button", { name: "Open tools" }).click();
   await page.getByTitle("Toggle compact mode").click();
   await expect(page.locator(".workspace")).toHaveClass(/compact-mode/);
 });
@@ -152,6 +154,8 @@ test("updates urgency and importance through matrix placement", async ({ page })
   await openDashboard(page);
   await addTask(page, "Place on matrix");
 
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.getByRole("tab", { name: "Matrix", exact: true }).click();
   const board = page.locator(".matrix-board");
   const boardBox = await board.boundingBox();
   if (!boardBox) throw new Error("The urgency and importance matrix is not visible.");
@@ -166,7 +170,9 @@ test("updates urgency and importance through matrix placement", async ({ page })
       }
     });
 
+  await page.getByRole("button", { name: "Today", exact: true }).click();
   const row = taskRow(page, "Place on matrix");
+  await row.getByRole("button", { name: "Show task details: Place on matrix" }).click();
   await expect(row.getByRole("radio", { name: "Urgency 5 of 5" })).toHaveAttribute(
     "aria-checked",
     "true"
@@ -182,7 +188,7 @@ test("keeps mobile navigation visible without horizontal overflow", async ({ pag
   await openDashboard(page);
 
   const navItems = page.locator(".nav-list .nav-item");
-  await expect(navItems).toHaveCount(5);
+  await expect(navItems).toHaveCount(4);
 
   const viewport = page.viewportSize();
   if (!viewport) throw new Error("The mobile viewport was not applied.");

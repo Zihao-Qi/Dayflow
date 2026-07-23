@@ -21,6 +21,11 @@ Recent front-end polish and responsive layout work has been documented in:
 
 - `DAYFLOW_CHANGELOG.md`
 
+The interface was simplified in July 2026 around four clear destinations:
+Today, Plan, Journal, and Review. Frequent actions remain immediately
+available, contextual details expand when needed, and infrequent data or
+density controls live in Tools.
+
 The current collaboration plan is for Gemini to take more of the front-end iteration work, especially layout refinement, visual polish, responsiveness, and interaction design. This status file should remain the higher-level project record and planning document.
 
 The local app runs at:
@@ -61,9 +66,10 @@ Funemployment Day has a narrower and immediately understandable promise around r
 - Supports completing and reopening tasks.
 - Supports deleting tasks.
 - Supports drag-and-drop task reordering using the task row grip handle.
-- Supports task status, deadline, estimated minutes, urgency, and importance.
+- Keeps task status, deadline, estimated minutes, urgency, importance, and deletion in expandable task details.
+- Collapses completed work into a quieter completed group.
 - Shows daily progress and planned vs recorded activity time.
-- Includes a compact mode toggle for denser task management.
+- Keeps activity capture and recent activity alongside the focused task list.
 
 ### Activity and Time Logging
 
@@ -84,25 +90,26 @@ Funemployment Day has a narrower and immediately understandable promise around r
 - Tasks can be dragged directly on the matrix to update their urgency and importance.
 - Urgency automatically increases when a task deadline gets close.
 - Urgency selector uses five colored dots:
-  - Left side is green for not urgent.
+  - Left side is gray for not urgent.
   - Right side is red for very urgent.
 - Importance selector uses five colored dots:
-  - Lower importance starts blue.
-  - Higher importance moves toward green.
+  - Lower importance starts gray.
+  - Higher importance moves toward blue.
 - Matrix quadrants are color-matched:
-  - Important and urgent: red
-  - Important and not urgent: green
-  - Urgent and less important: blue
+  - Important and urgent: purple, combining the red and blue axes
+  - Important and not urgent: blue
+  - Urgent and less important: red
   - Neither urgent nor important: gray
 
 ### Planning View
 
-- Shows today and future planning blocks.
-- Shows unfinished tasks clearly.
-- Includes a compact urgency and importance matrix for unfinished work.
+- Offers List, Timeline, and Matrix views instead of displaying every planning tool at once.
+- Shows unfinished tasks clearly in the default list view.
+- Keeps the urgency and importance matrix available as an optional power tool.
 
 ### Notes and Diary
 
+- Groups diary, notes, and references under one Journal destination.
 - Supports quick notes.
 - Supports tags on notes.
 - Supports daily diary content.
@@ -111,12 +118,14 @@ Funemployment Day has a narrower and immediately understandable promise around r
 
 ### Materials Library
 
+- Lives in the Journal as the canonical place to browse and save references.
 - Supports saving materials such as YouTube links, articles, websites, PDFs, or references.
 - Stores title, URL, type, notes, and optional task attachment fields.
 - Displays saved materials in a library-style list.
 
 ### Charts and Visualization
 
+- Lives in Review rather than competing with today's work.
 - Shows completion rate over recent days.
 - Shows tasks completed.
 - Shows planned vs actual time.
@@ -124,6 +133,11 @@ Funemployment Day has a narrower and immediately understandable promise around r
 
 ### Front-End Polish and Responsiveness
 
+- Uses four primary destinations: Today, Plan, Journal, and Review.
+- Removes duplicated notes, materials, diary, matrix, and chart surfaces from Today.
+- Adds a global Capture menu that routes directly to the relevant canonical form.
+- Moves compact density and agent export into a Tools menu for progressive disclosure.
+- Hides the desktop brand panel on mobile while keeping the four-item bottom navigation visible.
 - Task control layout now uses wrapping flex behavior to avoid overlap between deadline, status, estimate, urgency, and importance controls.
 - Task title inputs truncate long text cleanly instead of colliding with row actions.
 - Daily pulse metrics use a more resilient responsive grid.
@@ -149,6 +163,7 @@ Funemployment Day has a narrower and immediately understandable promise around r
 ```
 
 This is intended as a future integration point for tools such as Hermes agent.
+The endpoint is exposed through the Tools menu instead of primary navigation.
 
 ## Data and Local Setup
 
@@ -202,11 +217,13 @@ Verified user-facing behavior includes:
 - Tasks are visible.
 - Task completion works.
 - Urgency and importance dot controls render without high/low text labels.
-- Matrix is larger and diary appears lower on the page.
+- Matrix is available from the optional Plan view.
 - Matrix quadrant colors match the urgency and importance color meanings.
 - Task rows can be reordered by dragging the grip handle.
-- Compact mode is available from the top toolbar.
-- Notes and Materials show empty states when there is no content.
+- Advanced task fields expand only when requested.
+- Compact density and agent export are available from Tools.
+- Journal provides canonical Diary, Notes, and Materials views.
+- The mobile shell uses four bottom navigation items without horizontal overflow.
 
 Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
 

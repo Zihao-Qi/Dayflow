@@ -2,6 +2,18 @@
 
 This document records the updates, bug fixes, and design enhancements implemented for the **Dayflow** dashboard during our session.
 
+## Latest: Simplification and Progressive Disclosure
+
+- **Four Clear Destinations**: Consolidated the product around Today, Plan, Journal, and Review so each capability has one canonical home.
+- **Focused Today View**: Reduced Today to active tasks, a compact daily pulse, and activity capture. Planning tools, diary, charts, notes, and references no longer compete in the same canvas.
+- **Expandable Task Details**: Kept the default task row focused on completion, title, status, and estimate while moving urgency, importance, deadline, status editing, estimate editing, and deletion into an expandable detail area.
+- **Optional Planning Tools**: Turned List, Timeline, and Matrix into selectable Plan views, keeping the matrix available without making it part of every daily workflow.
+- **Unified Journal**: Moved diary, notes, and materials into Journal with a small internal view switcher and one canonical creation form for each content type.
+- **Power Tools Menu**: Moved compact density and agent export out of primary navigation and into Tools.
+- **Global Capture**: Added a Capture menu that routes directly to task, activity, note, or reference entry.
+- **Mobile Hierarchy**: Removed the large desktop identity panel from the mobile content flow and reduced bottom navigation to four destinations.
+- **Two-Axis Priority Color**: Simplified urgency to a gray-to-red scale and importance to a gray-to-blue scale. The planning matrix uses the same meanings, with their high-high overlap producing a derived purple “Do now” quadrant.
+
 ## 1. Layout & Responsiveness Fixes
 Our initial priority was fixing layout overflows, overlapping elements, and unpredictable grid behaviors when resizing the browser window.
 

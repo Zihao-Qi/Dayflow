@@ -9,12 +9,14 @@ lucide-react. The app runs locally without accounts or hosted services.
 
 ## Features
 
-- Today dashboard with task creation, completion, inline editing, and drag-and-drop reordering.
-- Manual activity log with time, duration, category, accomplishment note, and optional task linking.
-- Five-point urgency and importance controls with an interactive priority matrix.
+- Focused Today view with task creation, completion, inline editing, drag reordering, daily pulse, and activity capture.
+- Expandable task details keep status, deadline, estimate, urgency, and importance available without crowding each row.
+- Optional List, Timeline, and Matrix planning views.
+- Journal workspace for diary entries, quick notes, and saved references.
+- Review workspace for reflection and seven-day progress patterns.
+- Global Capture menu for jumping directly to a task, activity, note, or reference.
 - Deadline-aware urgency that increases as a due date approaches.
-- Planning, notes, diary, materials, review, and progress chart views.
-- Local agent export endpoint at `/api/agent-export` for a future integration.
+- Advanced tools such as compact density and agent export are kept in the Tools menu.
 
 ## Local Setup
 

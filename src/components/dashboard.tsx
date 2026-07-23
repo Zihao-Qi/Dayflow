@@ -33,6 +33,7 @@ import {
   Plus,
   RefreshCw,
   Save,
+  Settings2,
   Shrink,
   Sparkles,
   Trash2
@@ -40,6 +41,10 @@ import {
 
 type TaskStatus = "TODO" | "IN_PROGRESS" | "DONE";
 type Priority = "LOW" | "MEDIUM" | "HIGH";
+type Section = "today" | "plan" | "journal" | "review";
+type PlanView = "list" | "timeline" | "matrix";
+type JournalView = "diary" | "notes" | "materials";
+type CaptureTarget = "task" | "activity" | "note" | "material";
 
 type Task = {
   id: string;
@@ -128,10 +133,9 @@ type Bootstrap = {
 const nav = [
   { id: "today", label: "Today", icon: LayoutDashboard },
   { id: "plan", label: "Plan", icon: CalendarDays },
-  { id: "notes", label: "Notes", icon: NotebookPen },
-  { id: "materials", label: "Materials", icon: Library },
+  { id: "journal", label: "Journal", icon: NotebookPen },
   { id: "review", label: "Review", icon: Sparkles }
-];
+] satisfies Array<{ id: Section; label: string; icon: typeof LayoutDashboard }>;
 
 const priorityLabel: Record<Priority, string> = {
   LOW: "Low",
@@ -149,7 +153,12 @@ const activityCategories = ["Deep Work", "Learning", "Admin", "Health", "Rest"];
 
 export function Dashboard() {
   const [data, setData] = useState<Bootstrap | null>(null);
-  const [active, setActive] = useState("today");
+  const [active, setActive] = useState<Section>("today");
+  const [planView, setPlanView] = useState<PlanView>("list");
+  const [journalView, setJournalView] = useState<JournalView>("diary");
+  const [captureOpen, setCaptureOpen] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [activityComposerOpen, setActivityComposerOpen] = useState(false);
   const [newTask, setNewTask] = useState("");
   const [newNote, setNewNote] = useState("");
   const [noteTags, setNoteTags] = useState("");
@@ -188,6 +197,21 @@ export function Dashboard() {
     const key = data.today.slice(0, 10);
     return data.tasks.filter((task) => task.date.slice(0, 10) > key);
   }, [data]);
+
+  const planningTasks = useMemo(
+    () => [...todayTasks, ...futureTasks].filter((task) => task.status !== "DONE"),
+    [futureTasks, todayTasks]
+  );
+
+  const openTodayTasks = useMemo(
+    () => todayTasks.filter((task) => task.status !== "DONE"),
+    [todayTasks]
+  );
+
+  const completedTodayTasks = useMemo(
+    () => todayTasks.filter((task) => task.status === "DONE"),
+    [todayTasks]
+  );
 
   const todayActivities = useMemo(() => data?.activities ?? [], [data]);
 
@@ -347,6 +371,7 @@ export function Dashboard() {
     setActivityNote("");
     setActivityTaskId("");
     setActivityTime(formatTimeInput(new Date()));
+    setActivityComposerOpen(false);
     await refresh();
   }
 
@@ -359,6 +384,23 @@ export function Dashboard() {
     setData((current) =>
       current ? { ...current, diary: { ...current.diary, [key]: value } } : current
     );
+  }
+
+  function openCapture(target: CaptureTarget) {
+    const destination: Record<CaptureTarget, { section: Section; field: string }> = {
+      task: { section: "today", field: "new-task" },
+      activity: { section: "today", field: "activity-note" },
+      note: { section: "journal", field: "new-note" },
+      material: { section: "journal", field: "material-url" }
+    };
+
+    if (target === "note") setJournalView("notes");
+    if (target === "material") setJournalView("materials");
+    if (target === "activity") setActivityComposerOpen(true);
+    setActive(destination[target].section);
+    setCaptureOpen(false);
+    setToolsOpen(false);
+    window.setTimeout(() => document.getElementById(destination[target].field)?.focus(), 0);
   }
 
   if (!data) {
@@ -387,7 +429,11 @@ export function Dashboard() {
               <button
                 key={item.id}
                 className={active === item.id ? "nav-item active" : "nav-item"}
-                onClick={() => setActive(item.id)}
+                onClick={() => {
+                  setActive(item.id);
+                  setCaptureOpen(false);
+                  setToolsOpen(false);
+                }}
               >
                 <Icon size={17} />
                 {item.label}
@@ -395,37 +441,79 @@ export function Dashboard() {
             );
           })}
         </nav>
-        <a className="agent-link" href="/api/agent-export" target="_blank">
-          <Sparkles size={16} />
-          Agent export
-        </a>
+        <p className="sidebar-note">Decide. Do. Capture. Review.</p>
       </aside>
 
       <section className={compactMode ? "workspace compact-mode" : "workspace"}>
         <header className="topbar">
-          <div>
+          <div className="page-intro">
             <p className="date-line">{formatLongDate(data.today)}</p>
             <h1>{headlineFor(active)}</h1>
           </div>
-          <div className="topbar-actions" style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-            <button className="icon-button" onClick={() => setCompactMode(!compactMode)} title="Toggle compact mode">
-              {compactMode ? <Expand size={16} /> : <Shrink size={16} />}
-            </button>
-            <div className="progress-tile">
-              <span>{summary.rate}% complete</span>
-              <div className="meter" aria-hidden="true">
-                <i style={{ width: `${summary.rate}%` }} />
-              </div>
+          <div className="topbar-actions">
+            <div className="menu-anchor">
+              <button
+                className="capture-button"
+                aria-expanded={captureOpen}
+                onClick={() => {
+                  setCaptureOpen((open) => !open);
+                  setToolsOpen(false);
+                }}
+              >
+                <Plus size={16} />
+                Capture
+              </button>
+              {captureOpen && (
+                <div className="action-menu capture-menu" aria-label="Capture options">
+                  <button onClick={() => openCapture("task")}>New task</button>
+                  <button onClick={() => openCapture("activity")}>Record activity</button>
+                  <button onClick={() => openCapture("note")}>Write note</button>
+                  <button onClick={() => openCapture("material")}>Save reference</button>
+                </div>
+              )}
+            </div>
+            <div className="menu-anchor">
+              <button
+                className="icon-button"
+                aria-label="Open tools"
+                aria-expanded={toolsOpen}
+                onClick={() => {
+                  setToolsOpen((open) => !open);
+                  setCaptureOpen(false);
+                }}
+              >
+                <Settings2 size={17} />
+              </button>
+              {toolsOpen && (
+                <div className="action-menu tools-menu" aria-label="Tools">
+                  <button
+                    title="Toggle compact mode"
+                    onClick={() => {
+                      setCompactMode((compact) => !compact);
+                      setToolsOpen(false);
+                    }}
+                  >
+                    {compactMode ? <Expand size={16} /> : <Shrink size={16} />}
+                    {compactMode ? "Comfortable density" : "Compact density"}
+                  </button>
+                  <a href="/api/agent-export" target="_blank">
+                    <Sparkles size={16} />
+                    Agent export
+                  </a>
+                  <span>More data tools will live here.</span>
+                </div>
+              )}
             </div>
           </div>
         </header>
 
         {active === "today" && (
-          <div className="dashboard-grid">
+          <div className="today-layout">
             <section className="panel task-panel">
               <PanelTitle icon={<Check size={18} />} title="Today" detail={`${summary.completed}/${summary.total} done`} />
               <div className="task-input-row">
                 <input
+                  id="new-task"
                   value={newTask}
                   onChange={(event) => setNewTask(event.target.value)}
                   onKeyDown={(event) => {
@@ -439,7 +527,7 @@ export function Dashboard() {
                 </button>
               </div>
               <div className="task-list">
-                {todayTasks.map((task) => (
+                {openTodayTasks.map((task) => (
                   <TaskRow
                     key={task.id}
                     task={task}
@@ -448,255 +536,286 @@ export function Dashboard() {
                     onReorder={reorderTask}
                   />
                 ))}
+                {!openTodayTasks.length && !completedTodayTasks.length && (
+                  <div className="quiet-empty">
+                    <strong>Your day is open.</strong>
+                    <span>Add one thing that would make today feel complete.</span>
+                  </div>
+                )}
               </div>
-            </section>
-
-            <section className="panel summary-panel">
-              <PanelTitle icon={<Clock3 size={18} />} title="Daily pulse" detail="Planned vs actual" />
-              <div className="pulse-grid">
-                <Metric label="Planned" value={`${summary.estimate}m`} />
-                <Metric label="Spent" value={`${summary.actual}m`} />
-                <Metric label="Energy" value={`${data.diary.energy}/5`} />
-                <Metric label="Mood" value={`${data.diary.mood}/5`} />
-              </div>
-              <MiniTimeline blocks={data.timeBlocks} tasks={todayTasks} today={data.today} />
-            </section>
-
-            <section className="panel matrix-panel">
-              <PanelTitle icon={<LayoutDashboard size={18} />} title="Urgency and importance" detail="Drag tasks or label them" />
-              <UrgencyImportanceMatrix tasks={todayTasks} today={data.today} onUpdate={updateTask} />
-            </section>
-
-            <section className="panel activity-panel">
-              <PanelTitle
-                icon={<Clock3 size={18} />}
-                title="What happened today?"
-                detail={`${summary.actual}m recorded`}
-              />
-              <div className="activity-form">
-                <div className="activity-form-grid">
-                  <label>
-                    Time
-                    <input
-                      type="time"
-                      value={activityTime}
-                      onChange={(event) => setActivityTime(event.target.value)}
-                    />
-                  </label>
-                  <label>
-                    Minutes
-                    <input
-                      type="number"
-                      min="1"
-                      max="1440"
-                      step="5"
-                      value={activityDuration}
-                      onChange={(event) => setActivityDuration(event.target.value)}
-                    />
-                  </label>
-                  <label>
-                    Category
-                    <select
-                      value={activityCategory}
-                      onChange={(event) => setActivityCategory(event.target.value)}
-                    >
-                      {activityCategories.map((category) => (
-                        <option key={category} value={category}>
-                          {category}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-                <label className="activity-task-field">
-                  Linked task
-                  <select
-                    value={activityTaskId}
-                    onChange={(event) => setActivityTaskId(event.target.value)}
-                  >
-                    <option value="">No linked task</option>
-                    {todayTasks.map((task) => (
-                      <option key={task.id} value={task.id}>
-                        {task.title}
-                      </option>
+              {completedTodayTasks.length > 0 && (
+                <details className="completed-group">
+                  <summary>Completed · {completedTodayTasks.length}</summary>
+                  <div className="task-list completed-list">
+                    {completedTodayTasks.map((task) => (
+                      <TaskRow
+                        key={task.id}
+                        task={task}
+                        onUpdate={updateTask}
+                        onDelete={deleteTask}
+                        onReorder={reorderTask}
+                      />
                     ))}
-                  </select>
-                </label>
-                <textarea
-                  value={activityNote}
-                  onChange={(event) => {
-                    setActivityNote(event.target.value);
-                    if (activityError) setActivityError("");
-                  }}
-                  placeholder="Record a small win or what moved forward."
+                  </div>
+                </details>
+              )}
+            </section>
+
+            <div className="today-side">
+              <section className="pulse-strip" aria-label="Daily pulse">
+                <div className="pulse-heading">
+                  <div>
+                    <Clock3 size={18} />
+                    <h2>Daily pulse</h2>
+                  </div>
+                  <span>{summary.rate}% complete</span>
+                </div>
+                <div className="pulse-grid">
+                  <Metric label="Planned" value={`${summary.estimate}m`} />
+                  <Metric label="Spent" value={`${summary.actual}m`} />
+                  <Metric label="Energy" value={`${data.diary.energy}/5`} />
+                  <Metric label="Mood" value={`${data.diary.mood}/5`} />
+                </div>
+              </section>
+
+              <section className="panel activity-panel">
+                <PanelTitle
+                  icon={<Clock3 size={18} />}
+                  title="Activity"
+                  detail={`${summary.actual}m recorded`}
                 />
-                {activityError && <p className="form-error">{activityError}</p>}
-                <button className="secondary-button" onClick={() => void addActivity()}>
-                  <Plus size={16} />
-                  Add activity
-                </button>
-              </div>
-              <ActivityList
-                activities={todayActivities}
-                tasks={todayTasks}
-                onDelete={deleteActivity}
-              />
-            </section>
-
-            <section className="panel diary-panel">
-              <PanelTitle icon={<BookOpen size={18} />} title="Diary" detail={savingDiary ? "Saving" : "Today"} />
-              <textarea
-                value={data.diary.content}
-                onChange={(event) => setDiaryValue("content", event.target.value)}
-                placeholder="Write a few lines about the day."
-              />
-              <div className="range-row">
-                <label>
-                  Mood
-                  <input
-                    type="range"
-                    min="1"
-                    max="5"
-                    value={data.diary.mood}
-                    onChange={(event) => setDiaryValue("mood", Number(event.target.value))}
-                  />
-                </label>
-                <label>
-                  Energy
-                  <input
-                    type="range"
-                    min="1"
-                    max="5"
-                    value={data.diary.energy}
-                    onChange={(event) => setDiaryValue("energy", Number(event.target.value))}
-                  />
-                </label>
-                <button className="icon-button" title="Save diary" onClick={() => void saveDiary()}>
-                  <Save size={17} />
-                </button>
-              </div>
-            </section>
-
-            <section className="panel charts-panel">
-              <PanelTitle icon={<LayoutDashboard size={18} />} title="Progress" detail="Last 7 days" />
-              <Charts stats={data.stats} />
-            </section>
-
-            <section className="panel notes-panel">
-              <PanelTitle icon={<NotebookPen size={18} />} title="Quick notes" detail={`${data.notes.length} notes`} />
-              <div className="note-input">
-                <textarea
-                  value={newNote}
-                  onChange={(event) => setNewNote(event.target.value)}
-                  placeholder="Capture a thought, decision, or reminder."
-                />
-                <input
-                  value={noteTags}
-                  onChange={(event) => setNoteTags(event.target.value)}
-                  placeholder="Tags, comma separated"
-                />
-                <button className="secondary-button" onClick={() => void addNote()}>
-                  <Plus size={16} />
-                  Save note
-                </button>
-              </div>
-              <NoteList notes={data.notes} />
-            </section>
-
-            <section className="panel materials-panel">
-              <PanelTitle icon={<Library size={18} />} title="Materials" detail="Links and references" />
-              <div className="material-form">
-                <input value={materialTitle} onChange={(event) => setMaterialTitle(event.target.value)} placeholder="Title" />
-                <input value={materialUrl} onChange={(event) => setMaterialUrl(event.target.value)} placeholder="YouTube, article, PDF, or website URL" />
-                <textarea value={materialNotes} onChange={(event) => setMaterialNotes(event.target.value)} placeholder="Optional notes" />
-                <button className="secondary-button" onClick={() => void addMaterial()}>
-                  <LinkIcon size={16} />
-                  Save material
-                </button>
-              </div>
-              <MaterialList materials={data.materials} />
-            </section>
+                <details
+                  className="composer"
+                  open={activityComposerOpen}
+                  onToggle={(event) => setActivityComposerOpen(event.currentTarget.open)}
+                >
+                  <summary>
+                    <Plus size={15} />
+                    Record activity
+                  </summary>
+                  <div className="activity-form">
+                    <textarea
+                      id="activity-note"
+                      value={activityNote}
+                      onChange={(event) => {
+                        setActivityNote(event.target.value);
+                        if (activityError) setActivityError("");
+                      }}
+                      placeholder="Record a small win or what moved forward."
+                    />
+                    <div className="activity-form-grid">
+                      <label>
+                        Minutes
+                        <input
+                          type="number"
+                          min="1"
+                          max="1440"
+                          step="5"
+                          value={activityDuration}
+                          onChange={(event) => setActivityDuration(event.target.value)}
+                        />
+                      </label>
+                      <label>
+                        Category
+                        <select
+                          value={activityCategory}
+                          onChange={(event) => setActivityCategory(event.target.value)}
+                        >
+                          {activityCategories.map((category) => (
+                            <option key={category} value={category}>
+                              {category}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                    <div className="activity-form-grid secondary-fields">
+                      <label>
+                        Time
+                        <input
+                          type="time"
+                          value={activityTime}
+                          onChange={(event) => setActivityTime(event.target.value)}
+                        />
+                      </label>
+                      <label className="activity-task-field">
+                        Linked task
+                        <select
+                          value={activityTaskId}
+                          onChange={(event) => setActivityTaskId(event.target.value)}
+                        >
+                          <option value="">No linked task</option>
+                          {todayTasks.map((task) => (
+                            <option key={task.id} value={task.id}>
+                              {task.title}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                    {activityError && <p className="form-error">{activityError}</p>}
+                    <button className="secondary-button" onClick={() => void addActivity()}>
+                      <Plus size={16} />
+                      Add activity
+                    </button>
+                  </div>
+                </details>
+                <ActivityList activities={todayActivities} tasks={todayTasks} onDelete={deleteActivity} />
+              </section>
+            </div>
           </div>
         )}
 
         {active === "plan" && (
-          <TwoColumnView
-            left={
-              <section className="panel">
+          <div className="section-stack">
+            <div className="view-switcher" role="tablist" aria-label="Planning view">
+              {(["list", "timeline", "matrix"] as PlanView[]).map((view) => (
+                <button
+                  key={view}
+                  className={planView === view ? "active" : ""}
+                  aria-selected={planView === view}
+                  role="tab"
+                  onClick={() => setPlanView(view)}
+                >
+                  {`${view[0].toUpperCase()}${view.slice(1)}`}
+                </button>
+              ))}
+            </div>
+            {planView === "list" && (
+              <section className="panel focused-panel">
+                <PanelTitle icon={<Circle size={18} />} title="What comes next" detail={`${planningTasks.length} open`} />
+                <TaskCompactList tasks={planningTasks} />
+              </section>
+            )}
+            {planView === "timeline" && (
+              <section className="panel focused-panel">
                 <PanelTitle icon={<CalendarDays size={18} />} title="Timeline" detail="Today and tomorrow" />
                 <MiniTimeline blocks={data.timeBlocks} tasks={data.tasks} today={data.today} expanded />
               </section>
-            }
-            right={
-              <section className="panel">
-                <PanelTitle icon={<Circle size={18} />} title="Unfinished" detail="Carry forward" />
-                <TaskCompactList tasks={[...todayTasks, ...futureTasks].filter((task) => task.status !== "DONE")} />
-                <div className="plan-matrix">
-                  <UrgencyImportanceMatrix
-                    tasks={[...todayTasks, ...futureTasks].filter((task) => task.status !== "DONE")}
-                    today={data.today}
-                    onUpdate={updateTask}
-                    compact
-                  />
-                </div>
+            )}
+            {planView === "matrix" && (
+              <section className="panel matrix-panel focused-panel">
+                <PanelTitle icon={<LayoutDashboard size={18} />} title="Urgency and importance" detail="Optional planning tool" />
+                <UrgencyImportanceMatrix tasks={planningTasks} today={data.today} onUpdate={updateTask} />
               </section>
-            }
-          />
+            )}
+          </div>
         )}
 
-        {active === "notes" && (
-          <TwoColumnView
-            left={
-              <section className="panel">
-                <PanelTitle icon={<NotebookPen size={18} />} title="Notes" detail="Today's captures" />
-                <NoteList notes={data.notes} />
-              </section>
-            }
-            right={
-              <section className="panel">
-                <PanelTitle icon={<BookOpen size={18} />} title="Diary" detail="Reflection" />
+        {active === "journal" && (
+          <div className="section-stack">
+            <div className="view-switcher" role="tablist" aria-label="Journal view">
+              {(["diary", "notes", "materials"] as JournalView[]).map((view) => (
+                <button
+                  key={view}
+                  className={journalView === view ? "active" : ""}
+                  aria-selected={journalView === view}
+                  role="tab"
+                  onClick={() => setJournalView(view)}
+                >
+                  {`${view[0].toUpperCase()}${view.slice(1)}`}
+                </button>
+              ))}
+            </div>
+            {journalView === "diary" && (
+              <section className="panel journal-editor focused-panel">
+                <PanelTitle icon={<BookOpen size={18} />} title="Daily page" detail={savingDiary ? "Saving" : "Today"} />
                 <textarea
                   className="large-textarea"
                   value={data.diary.content}
                   onChange={(event) => setDiaryValue("content", event.target.value)}
+                  placeholder="Write a few lines about the day."
                 />
-                <button className="primary-button wide" onClick={() => void saveDiary()}>
-                  <Save size={16} />
-                  Save diary
-                </button>
-              </section>
-            }
-          />
-        )}
-
-        {active === "materials" && (
-          <TwoColumnView
-            left={
-              <section className="panel">
-                <PanelTitle icon={<Library size={18} />} title="Library" detail={`${data.materials.length} saved`} />
-                <MaterialList materials={data.materials} />
-              </section>
-            }
-            right={
-              <section className="panel">
-                <PanelTitle icon={<LinkIcon size={18} />} title="Add material" detail="Attach later to tasks or notes" />
-                <div className="material-form roomy">
-                  <input value={materialTitle} onChange={(event) => setMaterialTitle(event.target.value)} placeholder="Title" />
-                  <input value={materialUrl} onChange={(event) => setMaterialUrl(event.target.value)} placeholder="URL" />
-                  <textarea value={materialNotes} onChange={(event) => setMaterialNotes(event.target.value)} placeholder="Why this matters" />
-                  <button className="primary-button" onClick={() => void addMaterial()}>
-                    <Plus size={16} />
-                    Add material
+                <div className="range-row">
+                  <label>
+                    Mood · {data.diary.mood}/5
+                    <input
+                      type="range"
+                      min="1"
+                      max="5"
+                      value={data.diary.mood}
+                      onChange={(event) => setDiaryValue("mood", Number(event.target.value))}
+                    />
+                  </label>
+                  <label>
+                    Energy · {data.diary.energy}/5
+                    <input
+                      type="range"
+                      min="1"
+                      max="5"
+                      value={data.diary.energy}
+                      onChange={(event) => setDiaryValue("energy", Number(event.target.value))}
+                    />
+                  </label>
+                  <button className="primary-button" onClick={() => void saveDiary()}>
+                    <Save size={16} />
+                    Save
                   </button>
                 </div>
               </section>
-            }
-          />
+            )}
+            {journalView === "notes" && (
+              <TwoColumnView
+                left={
+                  <section className="panel">
+                    <PanelTitle icon={<NotebookPen size={18} />} title="Notes" detail={`${data.notes.length} saved`} />
+                    <NoteList notes={data.notes} />
+                  </section>
+                }
+                right={
+                  <section className="panel">
+                    <PanelTitle icon={<Plus size={18} />} title="New note" detail="Quick capture" />
+                    <div className="note-input">
+                      <textarea
+                        id="new-note"
+                        value={newNote}
+                        onChange={(event) => setNewNote(event.target.value)}
+                        placeholder="Capture a thought, decision, or reminder."
+                      />
+                      <input
+                        value={noteTags}
+                        onChange={(event) => setNoteTags(event.target.value)}
+                        placeholder="Tags, comma separated"
+                      />
+                      <button className="primary-button" onClick={() => void addNote()}>
+                        <Plus size={16} />
+                        Save note
+                      </button>
+                    </div>
+                  </section>
+                }
+              />
+            )}
+            {journalView === "materials" && (
+              <TwoColumnView
+                left={
+                  <section className="panel">
+                    <PanelTitle icon={<Library size={18} />} title="References" detail={`${data.materials.length} saved`} />
+                    <MaterialList materials={data.materials} />
+                  </section>
+                }
+                right={
+                  <section className="panel">
+                    <PanelTitle icon={<LinkIcon size={18} />} title="Save reference" detail="Link with context" />
+                    <div className="material-form roomy">
+                      <input value={materialTitle} onChange={(event) => setMaterialTitle(event.target.value)} placeholder="Title" />
+                      <input id="material-url" value={materialUrl} onChange={(event) => setMaterialUrl(event.target.value)} placeholder="URL" />
+                      <textarea value={materialNotes} onChange={(event) => setMaterialNotes(event.target.value)} placeholder="Why this matters" />
+                      <button className="primary-button" onClick={() => void addMaterial()}>
+                        <Plus size={16} />
+                        Save reference
+                      </button>
+                    </div>
+                  </section>
+                }
+              />
+            )}
+          </div>
         )}
 
         {active === "review" && (
-          <TwoColumnView
-            left={
+          <div className="review-page">
+            <div className="two-column review-summary">
               <section className="panel">
                 <PanelTitle icon={<Sparkles size={18} />} title="Today reviewed" detail={`${summary.completed} completed`} />
                 <div className="review-stack">
@@ -706,8 +825,6 @@ export function Dashboard() {
                 </div>
                 <TaskCompactList tasks={todayTasks.filter((task) => task.status !== "DONE")} />
               </section>
-            }
-            right={
               <section className="panel">
                 <PanelTitle icon={<FileText size={18} />} title="Reflection" detail="Plan tomorrow" />
                 <textarea
@@ -721,8 +838,12 @@ export function Dashboard() {
                   Save reflection
                 </button>
               </section>
-            }
-          />
+            </div>
+            <section className="panel insights-panel">
+              <PanelTitle icon={<LayoutDashboard size={18} />} title="Seven-day view" detail="Patterns, not pressure" />
+              <Charts stats={data.stats} />
+            </section>
+          </div>
         )}
       </section>
     </main>
@@ -742,6 +863,7 @@ function TaskRow({
 }) {
   const isDone = task.status === "DONE";
   const [isDraggable, setIsDraggable] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
   return (
     <article
@@ -784,53 +906,78 @@ function TaskRow({
         value={task.title}
         onChange={(event) => void onUpdate(task.id, { title: event.target.value })}
       />
-      <div className="row-actions">
-        <button className="icon-button danger" title="Delete" onClick={() => void onDelete(task.id)}>
-          <Trash2 size={16} />
-        </button>
-      </div>
-      <div className="task-controls">
-        <label className="score-field">
-          Urgency
-          <ScoreDots
-            value={task.urgentScore}
-            tone="urgent"
-            onChange={(value) => void onUpdate(task.id, { urgentScore: value })}
-          />
-        </label>
-        <label className="score-field">
-          Importance
-          <ScoreDots
-            value={task.importanceScore}
-            tone="important"
-            onChange={(value) => void onUpdate(task.id, { importanceScore: value })}
-          />
-        </label>
-        <label>
-          Deadline
-          <input
-            type="date"
-            value={task.deadline ? task.deadline.slice(0, 10) : ""}
-            onChange={(event) => void onUpdate(task.id, { deadline: event.target.value || null })}
-          />
-        </label>
-        <select value={task.status} onChange={(event) => void onUpdate(task.id, { status: event.target.value as TaskStatus })}>
-          {Object.entries(statusLabel).map(([value, label]) => (
-            <option key={value} value={value}>
-              {label}
-            </option>
-          ))}
-        </select>
-        <input
-          className="mini-number"
-          type="number"
-          min="5"
-          step="5"
-          value={task.estimateMinutes}
-          onChange={(event) => void onUpdate(task.id, { estimateMinutes: Number(event.target.value) })}
-          title="Estimated minutes"
-        />
-      </div>
+      <span className="task-glance">
+        {statusLabel[task.status]} · {task.estimateMinutes}m
+        {task.deadline ? ` · ${formatShortDate(task.deadline)}` : ""}
+      </span>
+      <button
+        className="icon-button task-details-toggle"
+        aria-label={`${detailsOpen ? "Hide" : "Show"} task details: ${task.title}`}
+        aria-expanded={detailsOpen}
+        onClick={() => setDetailsOpen((open) => !open)}
+      >
+        {detailsOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+      </button>
+      {detailsOpen && (
+        <div className="task-details">
+          <div className="task-controls">
+            <label className="score-field">
+              Urgency
+              <ScoreDots
+                value={task.urgentScore}
+                tone="urgent"
+                onChange={(value) => void onUpdate(task.id, { urgentScore: value })}
+              />
+            </label>
+            <label className="score-field">
+              Importance
+              <ScoreDots
+                value={task.importanceScore}
+                tone="important"
+                onChange={(value) => void onUpdate(task.id, { importanceScore: value })}
+              />
+            </label>
+            <label>
+              Deadline
+              <input
+                type="date"
+                value={task.deadline ? task.deadline.slice(0, 10) : ""}
+                onChange={(event) => void onUpdate(task.id, { deadline: event.target.value || null })}
+              />
+            </label>
+            <label>
+              Status
+              <select value={task.status} onChange={(event) => void onUpdate(task.id, { status: event.target.value as TaskStatus })}>
+                {Object.entries(statusLabel).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Estimate
+              <input
+                className="mini-number"
+                type="number"
+                min="5"
+                step="5"
+                value={task.estimateMinutes}
+                onChange={(event) => void onUpdate(task.id, { estimateMinutes: Number(event.target.value) })}
+                aria-label="Estimated minutes"
+              />
+            </label>
+          </div>
+          <button
+            className="text-button danger"
+            aria-label={`Delete task: ${task.title}`}
+            onClick={() => void onDelete(task.id)}
+          >
+            <Trash2 size={15} />
+            Delete task
+          </button>
+        </div>
+      )}
     </article>
   );
 }
@@ -1204,9 +1351,8 @@ function TwoColumnView({ left, right }: { left: React.ReactNode; right: React.Re
 function headlineFor(active: string) {
   const labels: Record<string, string> = {
     today: "Make today legible",
-    plan: "Plan the next blocks",
-    notes: "Capture what matters",
-    materials: "Keep useful references close",
+    plan: "Plan with intention",
+    journal: "Keep what matters",
     review: "Close the day with intention"
   };
   return labels[active] ?? labels.today;

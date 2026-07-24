@@ -16,16 +16,39 @@ const atTime = (date: Date, hours: number, minutes: number) => {
 };
 
 async function main() {
+  await prisma.taskScheduleChange.deleteMany();
+  await prisma.focusSession.deleteMany();
   await prisma.activityEntry.deleteMany();
   await prisma.timeBlock.deleteMany();
   await prisma.material.deleteMany();
   await prisma.note.deleteMany();
   await prisma.diaryEntry.deleteMany();
   await prisma.task.deleteMany();
+  await prisma.projectPhase.deleteMany();
+  await prisma.project.deleteMany();
 
   const today = startOfDay();
   const yesterday = startOfDay(-1);
   const tomorrow = startOfDay(1);
+
+  const project = await prisma.project.create({
+    data: {
+      name: "Shape the next Dayflow release",
+      desiredOutcome: "A focused release that makes daily progress easier to see and review.",
+      targetDate: startOfDay(18),
+      targetDurationValue: 3,
+      targetDurationUnit: "WEEKS",
+      weeklyMinutesBudget: 300
+    }
+  });
+  const phases = await Promise.all([
+    prisma.projectPhase.create({
+      data: { projectId: project.id, name: "Product direction", sortOrder: 1 }
+    }),
+    prisma.projectPhase.create({
+      data: { projectId: project.id, name: "Implementation", sortOrder: 2 }
+    })
+  ]);
 
   const tasks = await Promise.all([
     prisma.task.create({
@@ -53,7 +76,9 @@ async function main() {
         status: "IN_PROGRESS",
         estimateMinutes: 60,
         actualMinutes: 35,
-        sortOrder: 2
+        sortOrder: 2,
+        projectId: project.id,
+        phaseId: phases[0].id
       }
     }),
     prisma.task.create({
@@ -66,7 +91,9 @@ async function main() {
         deadline: new Date(today.getFullYear(), today.getMonth(), today.getDate() + 10),
         status: "TODO",
         estimateMinutes: 40,
-        sortOrder: 3
+        sortOrder: 3,
+        projectId: project.id,
+        phaseId: phases[0].id
       }
     }),
     prisma.task.create({
@@ -79,7 +106,9 @@ async function main() {
         deadline: new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1),
         status: "TODO",
         estimateMinutes: 30,
-        sortOrder: 1
+        sortOrder: 1,
+        projectId: project.id,
+        phaseId: phases[1].id
       }
     }),
     prisma.task.create({
@@ -94,6 +123,20 @@ async function main() {
         actualMinutes: 25,
         sortOrder: 1,
         completedAt: yesterday
+      }
+    }),
+    prisma.task.create({
+      data: {
+        title: "Define the release acceptance checklist",
+        date: null,
+        priority: "MEDIUM",
+        urgentScore: 2,
+        importanceScore: 4,
+        status: "TODO",
+        estimateMinutes: 35,
+        sortOrder: 1,
+        projectId: project.id,
+        phaseId: phases[1].id
       }
     })
   ]);
@@ -120,6 +163,13 @@ async function main() {
         category: "Admin",
         note: "Closed the remaining loose ends from the day.",
         taskId: tasks[4].id
+      },
+      {
+        startedAt: atTime(today, 14, 0),
+        durationMinutes: 15,
+        category: "Deep Work",
+        note: "Clarified the outcome and boundaries for the next release.",
+        projectId: project.id
       }
     ]
   });
@@ -130,7 +180,8 @@ async function main() {
         content: "Keep the dashboard calm. The core loop should be add, complete, reflect, plan.",
         tags: JSON.stringify(["product", "design"]),
         date: today,
-        taskId: tasks[1].id
+        taskId: tasks[1].id,
+        projectId: project.id
       },
       {
         content: "Try a short review ritual before dinner.",
@@ -163,7 +214,8 @@ async function main() {
         title: "Local-first software notes",
         url: "https://www.inkandswitch.com/local-first/",
         type: "article",
-        notes: "Useful principles for future hosted sync."
+        notes: "Useful principles for future hosted sync.",
+        projectId: project.id
       }
     ]
   });

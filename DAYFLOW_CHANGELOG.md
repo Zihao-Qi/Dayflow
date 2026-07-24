@@ -2,6 +2,64 @@
 
 This document records the updates, bug fixes, and design enhancements implemented for the **Dayflow** dashboard during our session.
 
+## Latest: Plan and Project Navigation Hierarchy
+
+- **Two Planning Levels**: Plan now starts with Day plan and Projects instead
+  of presenting long-term Projects as a peer of Timeline and Matrix.
+- **Day Plan Views**: List, Timeline, and Matrix remain available as secondary
+  views within Day plan.
+- **Scannable Project Workspaces**: Project detail is split into Overview,
+  Plan, and Evidence views.
+- **Actionable Overview**: Overview keeps the Project metrics and next step
+  prominent, with direct access to planning and focus actions.
+- **Focused Plan View**: Task creation, Phases, scheduled work, and the Project
+  backlog live together.
+- **Dedicated Evidence View**: Recorded activity, linked Notes, and linked
+  Materials no longer make every Project page unnecessarily long.
+
+## Latest: Usability Stabilization
+
+- **App-Wide Timer**: Timer lifecycle now stays mounted across all four primary
+  destinations, with a compact active-session banner outside Today.
+- **Contextual Focus**: Today tasks, Project tasks, and Project next steps can
+  prefill the Focus Timer directly.
+- **Safer Cancellation**: Canceling after one elapsed focus minute confirms
+  that the time will not be recorded.
+- **Clear Carry-Forward Language**: Replaced ambiguous Backlog and Leave actions
+  with Remove date and Keep on [date], and gave the date picker a visible label.
+- **Reliable Title Editing**: Today task titles save once after editing finishes
+  and expose saving, saved, or failure feedback.
+- **Honest Project Time Fields**: Target duration is now a whole number of days
+  or weeks, separate from the weekly effort budget.
+- **Tablet and Accessibility Pass**: Activity spans the tablet side grid, task
+  titles have explicit labels, and async feedback uses live status text.
+
+## Latest: Persistent Focus Timer
+
+- **Today Integration**: Added a compact Focus Timer between Daily Pulse and Activity.
+- **Flexible Durations**: Added 25/5 and 50/10 presets plus custom sessions from 1 to 240 minutes.
+- **Honest Attribution**: Focus can link to one Task, one Project, or neither, with Project context inherited from a linked Task.
+- **Persistent State**: Running and paused sessions are stored in SQLite and survive reloads.
+- **Session Controls**: Added pause, resume, early finish, cancel, and a one-active-session invariant.
+- **Activity Evidence**: Completed focus with at least one elapsed minute creates a Deep Work Activity; canceled work and Break Sessions do not.
+- **Break Flow**: Added suggested breaks and optional browser completion notifications.
+- **Portable Core**: Timer calculation and lifecycle rules live outside the React UI so a future macOS companion can share the same contract.
+- **Browser Coverage**: Added an end-to-end test for attribution, pause/reload/resume persistence, completion, Activity recording, and starting a suggested break.
+
+## Latest: Projects and Long-Term Progress
+
+- **Projects in Plan**: Added a Projects view without expanding the four-item primary navigation.
+- **Optional Phases**: Projects can group work into reorderable phases while still supporting direct Project tasks.
+- **Project Backlogs**: Tasks can remain unscheduled and later be assigned to a day from the Project or general backlog.
+- **Two Honest Progress Signals**: Project cards and workspaces show current-plan task progress separately from recorded invested time.
+- **Project Workspace**: Added a full Plan workspace for next steps, phases, tasks, backlog, recent activity, notes, and materials.
+- **Quiet Daily Context**: Today tasks show a compact Project chip, and existing tasks can be attached to a Project from expanded details.
+- **Evidence Attribution**: Activities, notes, and materials can link directly to Projects; task-linked activity is inherited without double counting.
+- **Safe Lifecycle**: Added pause, explicit completion, archive, reopen, and deletion that detaches rather than destroys associated content.
+- **Unfinished Task Tray**: Past unfinished tasks stay on their original date until the user moves, reschedules, returns, leaves, or undoes them.
+- **Responsive Coverage**: Added browser coverage for Project creation, phases, progress, evidence, carry-over undo, deletion safety, and mobile overflow.
+- **Deferred Intentionally**: Ongoing Areas, AI task generation, automatic scheduling, and silent carry-forward remain future work.
+
 ## Latest: Simplification and Progressive Disclosure
 
 - **Four Clear Destinations**: Consolidated the product around Today, Plan, Journal, and Review so each capability has one canonical home.

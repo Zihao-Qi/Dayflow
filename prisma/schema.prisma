@@ -19,10 +19,68 @@ enum Priority {
   HIGH
 }
 
+enum ProjectStatus {
+  ACTIVE
+  PAUSED
+  COMPLETED
+  ARCHIVED
+}
+
+enum ProjectDurationUnit {
+  DAYS
+  WEEKS
+}
+
+enum FocusSessionStatus {
+  RUNNING
+  PAUSED
+  COMPLETED
+  CANCELED
+}
+
+enum FocusSessionKind {
+  FOCUS
+  BREAK
+}
+
+model Project {
+  id                  String          @id @default(cuid())
+  name                String
+  desiredOutcome      String          @default("")
+  targetDate          DateTime?
+  targetDurationValue Int?
+  targetDurationUnit  ProjectDurationUnit?
+  weeklyMinutesBudget Int?
+  status              ProjectStatus   @default(ACTIVE)
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+  phases              ProjectPhase[]
+  tasks               Task[]
+  notes               Note[]
+  materials           Material[]
+  activities          ActivityEntry[]
+  focusSessions       FocusSession[]
+
+  @@index([status])
+}
+
+model ProjectPhase {
+  id        String   @id @default(cuid())
+  projectId String
+  name      String
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  tasks     Task[]
+
+  @@index([projectId, sortOrder])
+}
+
 model Task {
   id              String          @id @default(cuid())
   title           String
-  date            DateTime
+  date            DateTime?
   status          TaskStatus      @default(TODO)
   priority        Priority        @default(MEDIUM)
   urgentScore     Int             @default(2)
@@ -34,10 +92,20 @@ model Task {
   completedAt     DateTime?
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
+  projectId       String?
+  phaseId         String?
+  project         Project?        @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  phase           ProjectPhase?   @relation(fields: [phaseId], references: [id], onDelete: SetNull)
   notes           Note[]
   materials       Material[]
   timeBlocks      TimeBlock[]
   activities      ActivityEntry[]
+  focusSessions   FocusSession[]
+  scheduleChanges TaskScheduleChange[]
+
+  @@index([date])
+  @@index([projectId])
+  @@index([phaseId])
 }
 
 model Note {
@@ -46,10 +114,14 @@ model Note {
   tags      String     @default("[]")
   date      DateTime
   taskId    String?
+  projectId String?
   task      Task?      @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  project   Project?   @relation(fields: [projectId], references: [id], onDelete: SetNull)
   materials Material[]
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
+
+  @@index([projectId])
 }
 
 model DiaryEntry {
@@ -71,10 +143,14 @@ model Material {
   notes     String   @default("")
   taskId    String?
   noteId    String?
+  projectId String?
   task      Task?    @relation(fields: [taskId], references: [id], onDelete: SetNull)
   note      Note?    @relation(fields: [noteId], references: [id], onDelete: SetNull)
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([projectId])
 }
 
 model TimeBlock {
@@ -96,10 +172,49 @@ model ActivityEntry {
   category        String
   note            String
   taskId          String?
+  projectId       String?
   task            Task?    @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  project         Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
   @@index([startedAt])
   @@index([taskId])
+  @@index([projectId])
+}
+
+model FocusSession {
+  id                      String             @id @default(cuid())
+  kind                    FocusSessionKind   @default(FOCUS)
+  plannedMinutes          Int
+  actualMinutes           Int                @default(0)
+  label                   String             @default("")
+  startedAt               DateTime           @default(now())
+  pausedAt                DateTime?
+  accumulatedPauseSeconds Int                @default(0)
+  status                  FocusSessionStatus @default(RUNNING)
+  completedAt             DateTime?
+  taskId                  String?
+  projectId               String?
+  task                    Task?              @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  project                 Project?           @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  createdAt               DateTime           @default(now())
+  updatedAt               DateTime           @updatedAt
+
+  @@index([status])
+  @@index([completedAt])
+  @@index([taskId])
+  @@index([projectId])
+}
+
+model TaskScheduleChange {
+  id           String   @id @default(cuid())
+  taskId       String
+  previousDate DateTime?
+  nextDate     DateTime?
+  source       String   @default("manual")
+  createdAt    DateTime @default(now())
+  task         Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId, createdAt])
 }

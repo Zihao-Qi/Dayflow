@@ -8,6 +8,7 @@ export async function POST(request: NextRequest) {
   const note = String(body.note ?? "").trim();
   const category = String(body.category ?? "").trim() || "Deep Work";
   const taskId = String(body.taskId ?? "").trim() || null;
+  let projectId = String(body.projectId ?? "").trim() || null;
 
   if (!Number.isFinite(durationMinutes) || durationMinutes < 1 || durationMinutes > 1440) {
     return NextResponse.json(
@@ -21,9 +22,31 @@ export async function POST(request: NextRequest) {
   }
 
   if (taskId) {
-    const task = await prisma.task.findUnique({ where: { id: taskId }, select: { id: true } });
+    const task = await prisma.task.findUnique({
+      where: { id: taskId },
+      select: { id: true, projectId: true }
+    });
     if (!task) {
       return NextResponse.json({ error: "The linked task could not be found." }, { status: 400 });
+    }
+    if (task.projectId) {
+      if (projectId && projectId !== task.projectId) {
+        return NextResponse.json(
+          { error: "The selected task belongs to a different project." },
+          { status: 400 }
+        );
+      }
+      projectId = null;
+    }
+  }
+
+  if (projectId) {
+    const project = await prisma.project.findUnique({
+      where: { id: projectId },
+      select: { id: true }
+    });
+    if (!project) {
+      return NextResponse.json({ error: "The linked project could not be found." }, { status: 400 });
     }
   }
 
@@ -38,7 +61,8 @@ export async function POST(request: NextRequest) {
       durationMinutes: Math.round(durationMinutes),
       category,
       note,
-      taskId
+      taskId,
+      projectId
     }
   });
 

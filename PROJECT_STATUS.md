@@ -1,6 +1,6 @@
 # Dayflow Project Status and Plan
 
-Last updated: July 18, 2026
+Last updated: July 23, 2026
 
 ## Project Goal
 
@@ -20,6 +20,11 @@ The app is a working local MVP built with:
 Recent front-end polish and responsive layout work has been documented in:
 
 - `DAYFLOW_CHANGELOG.md`
+
+The approved specification for finishable Projects, optional Phases, Project
+backlogs, progress tracking, and confirmation-based unfinished-task handling is:
+
+- `docs/specs/PROJECTS_V1.md`
 
 The interface was simplified in July 2026 around four clear destinations:
 Today, Plan, Journal, and Review. Frequent actions remain immediately
@@ -57,6 +62,48 @@ Funemployment Day has a narrower and immediately understandable promise around r
 5. Review visible evidence of progress.
 
 ## Implemented Features
+
+### Focus Timer
+
+- Adds a persistent Focus Timer to Today without introducing another primary destination.
+- Keeps active timer management mounted across Today, Plan, Journal, and Review,
+  with a compact banner outside Today.
+- Lets Today and Project task actions prefill the Timer directly.
+- Supports 25-minute and 50-minute focus presets plus any custom duration from 1 to 240 minutes.
+- Allows a session to link to a Task, a Project, or neither; Project context is inherited from a linked Task.
+- Keeps one running or paused session across page reloads.
+- Supports pause, resume, finish early, and cancel.
+- Converts completed Focus Sessions with at least one elapsed minute into Deep Work Activity evidence.
+- Keeps Break Sessions separate from Activity time and suggests an appropriate break after focus.
+- Shows today’s completed Focus Sessions and focused minutes.
+- Can show a browser completion notification after the user explicitly enables permission.
+- Keeps timer logic behind a reusable domain interface for a future macOS companion.
+
+### Usability Stabilization
+
+- Renames unfinished-task actions so removing a date and keeping the original
+  date are explicit.
+- Saves Today task-title edits once on blur or Enter rather than once per
+  keystroke, with visible save feedback.
+- Separates optional Project target duration in days or weeks from the weekly
+  effort budget.
+- Confirms cancellation when a Focus Session has accumulated meaningful work.
+- Makes Activity span the tablet grid instead of leaving an empty panel cell.
+
+### Projects and Multi-Layer Planning
+
+- Adds finishable Projects inside Plan without adding another primary navigation destination.
+- Supports optional Phases while allowing tasks to live directly at the Project root.
+- Lets Project and standalone tasks remain unscheduled in a backlog.
+- Uses completed-task count for current-plan progress and recorded Activity time for invested effort.
+- Requires explicit Project completion and derives Phase completion from current tasks.
+- Supports Active, Paused, Completed, and Archived Project states.
+- Preserves associated tasks, activities, notes, and materials when a Project container is deleted.
+- Lets activities, notes, and materials link directly to Projects.
+- Shows Project context quietly on Today tasks and Project progress in Review.
+- Surfaces unfinished scheduled tasks without silently changing their dates.
+- Supports moving unfinished tasks to today, choosing another day, returning them to a backlog, leaving them in place, and undoing a schedule move.
+- Keeps ongoing Areas and AI-generated or automatically arranged plans deferred to later specifications.
 
 ### Today View
 
@@ -201,9 +248,10 @@ npm run build
 ```
 
 The Playwright browser suite runs against a disposable SQLite database in the
-operating system's temporary directory. It covers activity recording and
-deletion, task completion, section navigation, compact mode, task reordering,
-matrix placement, persistence after reload, and narrow mobile navigation.
+operating system's temporary directory. It covers focus-session persistence and
+Activity recording, activity deletion, task completion, section navigation,
+compact mode, task reordering, matrix placement, Project workflows, and narrow
+mobile navigation.
 
 The app has also been opened and visually checked in Chrome at:
 
@@ -223,6 +271,7 @@ Verified user-facing behavior includes:
 - Advanced task fields expand only when requested.
 - Compact density and agent export are available from Tools.
 - Journal provides canonical Diary, Notes, and Materials views.
+- Focus Sessions can be started, paused, restored after reload, and canceled from Today.
 - The mobile shell uses four bottom navigation items without horizontal overflow.
 
 Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
@@ -234,7 +283,9 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
 
 - Automated browser coverage currently targets Chromium; Firefox and WebKit are not covered yet.
 - Touch-specific drag behavior still needs manual verification on a physical mobile device.
-- Activity logging is manual; there is no start/stop timer or activity editing yet.
+- Focus Timer sessions are single-device and depend on the local Dayflow process; there is no menu-bar or system-wide macOS timer yet.
+- Focus and break lengths are chosen per session; configurable default presets and long-break cycles are not implemented yet.
+- Activity entries cannot be edited yet.
 - Activity categories use a fixed default list; user-defined categories are not implemented yet.
 - Activity entry is currently focused on today rather than retrospective logging for another date.
 - The review flow does not yet produce a complete weekly evidence-of-progress summary.
@@ -257,13 +308,14 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
 ### 2. Improve Planning
 
 - Add a simple day picker for planning future days.
-- Allow moving unfinished tasks to tomorrow.
 - Add quick creation of time blocks from tasks.
+- Explore capacity-aware scheduling suggestions only after the manual Projects workflow has been validated.
 
 ### 3. Extend Activity and Time Logging
 
 - Add editing for activity entries.
-- Add an optional start/stop timer.
+- Validate Focus Timer defaults and break suggestions through daily use.
+- Explore a small macOS companion only after the web timer workflow is stable.
 - Add custom activity category management.
 - Allow retrospective activity logging for another date.
 - Keep rest and non-task activity valid records rather than treating all progress as task completion.

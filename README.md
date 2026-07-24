@@ -10,10 +10,16 @@ lucide-react. The app runs locally without accounts or hosted services.
 ## Features
 
 - Focused Today view with task creation, completion, inline editing, drag reordering, daily pulse, and activity capture.
+- Persistent Focus Timer with 25/5, 50/10, and custom sessions; pause, resume, early finish, cancellation, break suggestions, and automatic Activity records.
+- Finishable Projects with optional phases, target duration in days or weeks,
+  weekly effort budgets, scheduled and backlog tasks, task-count progress,
+  invested-time tracking, and safe lifecycle controls.
+- Confirmation-based unfinished-task handling with rescheduling, backlog return, leave-in-place, and undo.
 - Expandable task details keep status, deadline, estimate, urgency, and importance available without crowding each row.
 - Optional List, Timeline, and Matrix planning views.
 - Journal workspace for diary entries, quick notes, and saved references.
 - Review workspace for reflection and seven-day progress patterns.
+- Project attribution for activities, notes, and saved references.
 - Global Capture menu for jumping directly to a task, activity, note, or reference.
 - Deadline-aware urgency that increases as a due date approaches.
 - Advanced tools such as compact density and agent export are kept in the Tools menu.
@@ -33,6 +39,14 @@ Open [http://localhost:3000](http://localhost:3000).
 
 `npm run db:setup` creates and seeds the local SQLite database at
 `prisma/dev.db` so the dashboard has example data immediately.
+
+When updating an existing local checkout after a schema change, run:
+
+```bash
+npm run prisma:push
+```
+
+This updates the existing local database without reseeding personal data.
 
 ## Checks
 
@@ -70,4 +84,8 @@ needed for a new local setup.
 ## Project Notes
 
 - [Project status and plan](PROJECT_STATUS.md)
+- [Projects v1 feature specification](docs/specs/PROJECTS_V1.md)
+- [Focus Timer v1 feature specification](docs/specs/FOCUS_TIMER_V1.md)
+- [UX acceptance audit and next redesign batch](docs/UX_ACCEPTANCE_AUDIT_2026-07-23.md)
+- [Dayflow domain language](CONTEXT.md)
 - [Front-end development log](DAYFLOW_CHANGELOG.md)

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { addDays, sameDayRange, startOfLocalDay } from "@/lib/dates";
+import { listProjectSummaries } from "@/lib/projects";
 
 export async function GET() {
   const today = startOfLocalDay();
@@ -8,10 +9,27 @@ export async function GET() {
   const weekEnd = addDays(today, 2);
   const { start, end } = sameDayRange(today);
 
-  const [tasks, notes, diary, materials, timeBlocks, activities, weekTasks, diaries, weekActivities] =
+  const [
+    tasks,
+    notes,
+    diary,
+    materials,
+    timeBlocks,
+    activities,
+    weekTasks,
+    diaries,
+    weekActivities,
+    projects
+  ] =
     await Promise.all([
       prisma.task.findMany({
-        where: { date: { gte: weekStart, lt: weekEnd } },
+        where: {
+          OR: [
+            { date: { gte: weekStart, lt: weekEnd } },
+            { date: { lt: today }, status: { not: "DONE" } },
+            { date: null, projectId: null }
+          ]
+        },
         orderBy: [{ date: "asc" }, { sortOrder: "asc" }, { createdAt: "asc" }]
       }),
       prisma.note.findMany({
@@ -39,7 +57,8 @@ export async function GET() {
       prisma.activityEntry.findMany({
         where: { startedAt: { gte: weekStart, lt: weekEnd } },
         orderBy: { startedAt: "asc" }
-      })
+      }),
+      listProjectSummaries()
     ]);
 
   const diaryEntry =
@@ -56,6 +75,10 @@ export async function GET() {
     materials,
     timeBlocks,
     activities,
+    projects,
+    unfinishedTasks: tasks.filter(
+      (task) => task.date && task.date < today && task.status !== "DONE"
+    ),
     stats: buildStats(weekTasks, diaries, weekActivities)
   });
 }
@@ -70,7 +93,7 @@ function safeTags(tags: string) {
 }
 
 type StatTask = {
-  date: Date;
+  date: Date | null;
   status: string;
   estimateMinutes: number;
   actualMinutes: number;
@@ -90,6 +113,7 @@ type StatActivity = {
 function buildStats(tasks: StatTask[], diaries: StatDiary[], activities: StatActivity[]) {
   const byDay = new Map<string, StatTask[]>();
   for (const task of tasks) {
+    if (!task.date) continue;
     const key = localDateKey(task.date);
     byDay.set(key, [...(byDay.get(key) ?? []), task]);
   }

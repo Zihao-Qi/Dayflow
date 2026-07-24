@@ -6,11 +6,32 @@ export async function GET() {
   const today = startOfLocalDay();
   const horizon = addDays(today, 14);
 
-  const [tasks, notes, diaryEntries, materials, timeBlocks, activities] = await Promise.all([
+  const [
+    projects,
+    phases,
+    focusSessions,
+    tasks,
+    scheduleChanges,
+    notes,
+    diaryEntries,
+    materials,
+    timeBlocks,
+    activities
+  ] = await Promise.all([
+    prisma.project.findMany({ orderBy: { updatedAt: "desc" } }),
+    prisma.projectPhase.findMany({ orderBy: [{ projectId: "asc" }, { sortOrder: "asc" }] }),
+    prisma.focusSession.findMany({ orderBy: { startedAt: "desc" }, take: 250 }),
     prisma.task.findMany({
-      where: { date: { gte: today, lt: horizon } },
+      where: {
+        OR: [
+          { date: { gte: today, lt: horizon } },
+          { date: null },
+          { projectId: { not: null } }
+        ]
+      },
       orderBy: [{ date: "asc" }, { sortOrder: "asc" }]
     }),
+    prisma.taskScheduleChange.findMany({ orderBy: { createdAt: "desc" }, take: 250 }),
     prisma.note.findMany({ orderBy: { createdAt: "desc" }, take: 100 }),
     prisma.diaryEntry.findMany({ orderBy: { date: "desc" }, take: 30 }),
     prisma.material.findMany({ orderBy: { createdAt: "desc" }, take: 100 }),
@@ -25,8 +46,12 @@ export async function GET() {
     app: "Dayflow",
     exportedAt: new Date().toISOString(),
     purpose: "Local-first productivity data for a future external agent integration.",
-    schemaVersion: 2,
+    schemaVersion: 5,
+    projects,
+    phases,
+    focusSessions,
     tasks,
+    scheduleChanges,
     notes: notes.map((note) => ({ ...note, tags: parseTags(note.tags) })),
     diaryEntries,
     materials,

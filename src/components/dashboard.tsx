@@ -25,11 +25,13 @@ import {
   Expand,
   ExternalLink,
   FileText,
+  FolderKanban,
   GripVertical,
   LayoutDashboard,
   Library,
   LinkIcon,
   NotebookPen,
+  Play,
   Plus,
   RefreshCw,
   Save,
@@ -38,18 +40,27 @@ import {
   Sparkles,
   Trash2
 } from "lucide-react";
+import { ProjectsWorkspace } from "@/components/projects-workspace";
+import {
+  FocusDraft,
+  FocusSessionBanner,
+  FocusTimer
+} from "@/components/focus-timer";
+import { useFocusSession } from "@/components/focus-session-provider";
+import { ProjectSummary } from "@/lib/project-domain";
 
 type TaskStatus = "TODO" | "IN_PROGRESS" | "DONE";
 type Priority = "LOW" | "MEDIUM" | "HIGH";
 type Section = "today" | "plan" | "journal" | "review";
-type PlanView = "list" | "timeline" | "matrix";
+type PlanView = "list" | "timeline" | "matrix" | "projects";
 type JournalView = "diary" | "notes" | "materials";
-type CaptureTarget = "task" | "activity" | "note" | "material";
+type CaptureTarget = "task" | "project" | "activity" | "note" | "material";
+type FocusTarget = Omit<FocusDraft, "revision">;
 
 type Task = {
   id: string;
   title: string;
-  date: string;
+  date: string | null;
   status: TaskStatus;
   priority: Priority;
   urgentScore: number;
@@ -59,6 +70,8 @@ type Task = {
   actualMinutes: number;
   sortOrder: number;
   completedAt: string | null;
+  projectId: string | null;
+  phaseId: string | null;
 };
 
 type Note = {
@@ -66,6 +79,7 @@ type Note = {
   content: string;
   tags: string[];
   taskId: string | null;
+  projectId: string | null;
   date: string;
   createdAt: string;
 };
@@ -86,6 +100,7 @@ type Material = {
   type: string;
   notes: string;
   taskId: string | null;
+  projectId: string | null;
   createdAt: string;
 };
 
@@ -105,6 +120,7 @@ type ActivityEntry = {
   category: string;
   note: string;
   taskId: string | null;
+  projectId: string | null;
   createdAt: string;
 };
 
@@ -127,6 +143,8 @@ type Bootstrap = {
   materials: Material[];
   timeBlocks: TimeBlock[];
   activities: ActivityEntry[];
+  projects: ProjectSummary[];
+  unfinishedTasks: Task[];
   stats: DayStat[];
 };
 
@@ -152,6 +170,7 @@ const statusLabel: Record<TaskStatus, string> = {
 const activityCategories = ["Deep Work", "Learning", "Admin", "Health", "Rest"];
 
 export function Dashboard() {
+  const { activityRevision } = useFocusSession();
   const [data, setData] = useState<Bootstrap | null>(null);
   const [active, setActive] = useState<Section>("today");
   const [planView, setPlanView] = useState<PlanView>("list");
@@ -165,19 +184,31 @@ export function Dashboard() {
   const [materialTitle, setMaterialTitle] = useState("");
   const [materialUrl, setMaterialUrl] = useState("");
   const [materialNotes, setMaterialNotes] = useState("");
+  const [materialProjectId, setMaterialProjectId] = useState("");
   const [activityTime, setActivityTime] = useState("");
   const [activityDuration, setActivityDuration] = useState("30");
   const [activityCategory, setActivityCategory] = useState(activityCategories[0]);
   const [activityTaskId, setActivityTaskId] = useState("");
+  const [activityProjectId, setActivityProjectId] = useState("");
   const [activityNote, setActivityNote] = useState("");
   const [activityError, setActivityError] = useState("");
   const [compactMode, setCompactMode] = useState(false);
   const [savingDiary, setSavingDiary] = useState(false);
+  const [noteProjectId, setNoteProjectId] = useState("");
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [projectCreateOpen, setProjectCreateOpen] = useState(false);
+  const [dismissedUnfinished, setDismissedUnfinished] = useState<string[]>([]);
+  const [scheduleUndoTaskId, setScheduleUndoTaskId] = useState<string | null>(null);
+  const [focusDraft, setFocusDraft] = useState<FocusDraft | null>(null);
 
   useEffect(() => {
     setActivityTime(formatTimeInput(new Date()));
     void refresh();
   }, []);
+
+  useEffect(() => {
+    if (activityRevision > 0) void refresh();
+  }, [activityRevision]);
 
   async function refresh() {
     const response = await fetch("/api/bootstrap", { cache: "no-store" });
@@ -188,19 +219,27 @@ export function Dashboard() {
     if (!data) return [];
     const key = data.today.slice(0, 10);
     return data.tasks
-      .filter((task) => task.date.slice(0, 10) === key)
+      .filter((task) => task.date?.slice(0, 10) === key)
       .sort((a, b) => a.sortOrder - b.sortOrder);
   }, [data]);
 
   const futureTasks = useMemo(() => {
     if (!data) return [];
     const key = data.today.slice(0, 10);
-    return data.tasks.filter((task) => task.date.slice(0, 10) > key);
+    return data.tasks.filter((task) => task.date && task.date.slice(0, 10) > key);
   }, [data]);
 
   const planningTasks = useMemo(
     () => [...todayTasks, ...futureTasks].filter((task) => task.status !== "DONE"),
     [futureTasks, todayTasks]
+  );
+
+  const generalBacklogTasks = useMemo(
+    () =>
+      (data?.tasks ?? []).filter(
+        (task) => !task.date && !task.projectId && task.status !== "DONE"
+      ),
+    [data]
   );
 
   const openTodayTasks = useMemo(
@@ -214,6 +253,32 @@ export function Dashboard() {
   );
 
   const todayActivities = useMemo(() => data?.activities ?? [], [data]);
+  const selectedActivityTask = useMemo(
+    () => todayTasks.find((task) => task.id === activityTaskId) ?? null,
+    [activityTaskId, todayTasks]
+  );
+
+  const projectById = useMemo(
+    () => new Map((data?.projects ?? []).map((project) => [project.id, project])),
+    [data]
+  );
+
+  const visibleUnfinishedTasks = useMemo(
+    () =>
+      (data?.unfinishedTasks ?? []).filter(
+        (task) => !dismissedUnfinished.includes(task.id)
+      ),
+    [data, dismissedUnfinished]
+  );
+
+  const movedProjects = useMemo(() => {
+    if (!data) return [];
+    const weekStart = new Date(data.today);
+    weekStart.setDate(weekStart.getDate() - 6);
+    return data.projects.filter(
+      (project) => project.lastProgressAt && new Date(project.lastProgressAt) >= weekStart
+    );
+  }, [data]);
 
   const summary = useMemo(() => {
     const completed = todayTasks.filter((task) => task.status === "DONE").length;
@@ -244,21 +309,31 @@ export function Dashboard() {
     await refresh();
   }
 
-  async function updateTask(id: string, patch: Partial<Task>) {
+  async function updateTask(id: string, patch: Partial<Task> & { scheduleSource?: string }) {
+    const { scheduleSource: _scheduleSource, ...taskPatch } = patch;
     setData((current) =>
       current
         ? {
             ...current,
-            tasks: current.tasks.map((task) => (task.id === id ? { ...task, ...patch } : task))
+            tasks: current.tasks.map((task) =>
+              task.id === id ? { ...task, ...taskPatch } : task
+            )
           }
         : current
     );
-    await fetch(`/api/tasks/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(patch)
-    });
-    await refresh();
+    try {
+      const response = await fetch(`/api/tasks/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch)
+      });
+      if (!response.ok) throw new Error("Task could not be saved.");
+      await refresh();
+      return true;
+    } catch {
+      await refresh();
+      return false;
+    }
   }
 
   async function deleteTask(id: string) {
@@ -297,6 +372,7 @@ export function Dashboard() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         content: newNote,
+        projectId: noteProjectId || null,
         tags: noteTags
           .split(",")
           .map((tag) => tag.trim())
@@ -305,6 +381,7 @@ export function Dashboard() {
     });
     setNewNote("");
     setNoteTags("");
+    setNoteProjectId("");
     await refresh();
   }
 
@@ -328,12 +405,14 @@ export function Dashboard() {
       body: JSON.stringify({
         title: materialTitle,
         url: materialUrl,
-        notes: materialNotes
+        notes: materialNotes,
+        projectId: materialProjectId || null
       })
     });
     setMaterialTitle("");
     setMaterialUrl("");
     setMaterialNotes("");
+    setMaterialProjectId("");
     await refresh();
   }
 
@@ -358,6 +437,7 @@ export function Dashboard() {
         durationMinutes,
         category: activityCategory,
         taskId: activityTaskId || null,
+        projectId: activityProjectId || null,
         note: activityNote
       })
     });
@@ -370,6 +450,7 @@ export function Dashboard() {
 
     setActivityNote("");
     setActivityTaskId("");
+    setActivityProjectId("");
     setActivityTime(formatTimeInput(new Date()));
     setActivityComposerOpen(false);
     await refresh();
@@ -389,6 +470,7 @@ export function Dashboard() {
   function openCapture(target: CaptureTarget) {
     const destination: Record<CaptureTarget, { section: Section; field: string }> = {
       task: { section: "today", field: "new-task" },
+      project: { section: "plan", field: "new-project-name" },
       activity: { section: "today", field: "activity-note" },
       note: { section: "journal", field: "new-note" },
       material: { section: "journal", field: "material-url" }
@@ -397,10 +479,48 @@ export function Dashboard() {
     if (target === "note") setJournalView("notes");
     if (target === "material") setJournalView("materials");
     if (target === "activity") setActivityComposerOpen(true);
+    if (target === "project") {
+      setPlanView("projects");
+      setSelectedProjectId(null);
+      setProjectCreateOpen(true);
+    }
     setActive(destination[target].section);
     setCaptureOpen(false);
     setToolsOpen(false);
     window.setTimeout(() => document.getElementById(destination[target].field)?.focus(), 0);
+  }
+
+  function openProject(id: string) {
+    setSelectedProjectId(id);
+    setPlanView("projects");
+    setActive("plan");
+    setCaptureOpen(false);
+    setToolsOpen(false);
+  }
+
+  function openFocus(target: FocusTarget) {
+    setFocusDraft({ ...target, revision: Date.now() });
+    setActive("today");
+    setCaptureOpen(false);
+    setToolsOpen(false);
+    window.setTimeout(
+      () => document.getElementById("focus-timer-title")?.scrollIntoView({
+        behavior: "smooth",
+        block: "center"
+      }),
+      0
+    );
+  }
+
+  async function resolveUnfinishedTask(id: string, date: string | null, source: string) {
+    await updateTask(id, { date, scheduleSource: source });
+    setScheduleUndoTaskId(id);
+  }
+
+  async function undoScheduleChange(id: string) {
+    await fetch(`/api/tasks/${id}/schedule/undo`, { method: "POST" });
+    setScheduleUndoTaskId(null);
+    await refresh();
   }
 
   if (!data) {
@@ -466,6 +586,7 @@ export function Dashboard() {
               {captureOpen && (
                 <div className="action-menu capture-menu" aria-label="Capture options">
                   <button onClick={() => openCapture("task")}>New task</button>
+                  <button onClick={() => openCapture("project")}>New project</button>
                   <button onClick={() => openCapture("activity")}>Record activity</button>
                   <button onClick={() => openCapture("note")}>Write note</button>
                   <button onClick={() => openCapture("material")}>Save reference</button>
@@ -507,10 +628,48 @@ export function Dashboard() {
           </div>
         </header>
 
+        {active !== "today" && (
+          <FocusSessionBanner
+            onOpenToday={() => {
+              setActive("today");
+              window.setTimeout(
+                () => document.getElementById("focus-timer-title")?.scrollIntoView({
+                  behavior: "smooth",
+                  block: "center"
+                }),
+                0
+              );
+            }}
+          />
+        )}
+
         {active === "today" && (
           <div className="today-layout">
             <section className="panel task-panel">
               <PanelTitle icon={<Check size={18} />} title="Today" detail={`${summary.completed}/${summary.total} done`} />
+              {visibleUnfinishedTasks.length > 0 && (
+                <UnfinishedTray
+                  tasks={visibleUnfinishedTasks}
+                  projects={projectById}
+                  today={data.today}
+                  onResolve={resolveUnfinishedTask}
+                  onLeave={(id) =>
+                    setDismissedUnfinished((current) => [...current, id])
+                  }
+                />
+              )}
+              {scheduleUndoTaskId && (
+                <div className="schedule-undo">
+                  <span>Task schedule updated.</span>
+                  <button
+                    className="text-button"
+                    onClick={() => void undoScheduleChange(scheduleUndoTaskId)}
+                  >
+                    <RefreshCw size={14} />
+                    Undo
+                  </button>
+                </div>
+              )}
               <div className="task-input-row">
                 <input
                   id="new-task"
@@ -534,6 +693,16 @@ export function Dashboard() {
                     onUpdate={updateTask}
                     onDelete={deleteTask}
                     onReorder={reorderTask}
+                    project={task.projectId ? projectById.get(task.projectId) : undefined}
+                    projects={data.projects}
+                    onOpenProject={openProject}
+                    onStartFocus={(task) =>
+                      openFocus({
+                        taskId: task.id,
+                        projectId: task.projectId ?? undefined,
+                        label: task.title
+                      })
+                    }
                   />
                 ))}
                 {!openTodayTasks.length && !completedTodayTasks.length && (
@@ -554,6 +723,16 @@ export function Dashboard() {
                         onUpdate={updateTask}
                         onDelete={deleteTask}
                         onReorder={reorderTask}
+                        project={task.projectId ? projectById.get(task.projectId) : undefined}
+                        projects={data.projects}
+                        onOpenProject={openProject}
+                        onStartFocus={(task) =>
+                          openFocus({
+                            taskId: task.id,
+                            projectId: task.projectId ?? undefined,
+                            label: task.title
+                          })
+                        }
                       />
                     ))}
                   </div>
@@ -577,6 +756,13 @@ export function Dashboard() {
                   <Metric label="Mood" value={`${data.diary.mood}/5`} />
                 </div>
               </section>
+
+              <FocusTimer
+                tasks={data.tasks.filter((task) => task.status !== "DONE")}
+                projects={data.projects}
+                today={data.today}
+                draft={focusDraft}
+              />
 
               <section className="panel activity-panel">
                 <PanelTitle
@@ -642,7 +828,12 @@ export function Dashboard() {
                         Linked task
                         <select
                           value={activityTaskId}
-                          onChange={(event) => setActivityTaskId(event.target.value)}
+                          onChange={(event) => {
+                            const taskId = event.target.value;
+                            setActivityTaskId(taskId);
+                            const task = todayTasks.find((item) => item.id === taskId);
+                            if (task?.projectId) setActivityProjectId("");
+                          }}
                         >
                           <option value="">No linked task</option>
                           {todayTasks.map((task) => (
@@ -650,6 +841,25 @@ export function Dashboard() {
                               {task.title}
                             </option>
                           ))}
+                        </select>
+                      </label>
+                      <label className="activity-project-field">
+                        Project
+                        <select
+                          value={
+                            selectedActivityTask?.projectId ?? activityProjectId
+                          }
+                          disabled={Boolean(selectedActivityTask?.projectId)}
+                          onChange={(event) => setActivityProjectId(event.target.value)}
+                        >
+                          <option value="">No linked project</option>
+                          {data.projects
+                            .filter((project) => project.status !== "ARCHIVED")
+                            .map((project) => (
+                              <option key={project.id} value={project.id}>
+                                {project.name}
+                              </option>
+                            ))}
                         </select>
                       </label>
                     </div>
@@ -660,7 +870,12 @@ export function Dashboard() {
                     </button>
                   </div>
                 </details>
-                <ActivityList activities={todayActivities} tasks={todayTasks} onDelete={deleteActivity} />
+                <ActivityList
+                  activities={todayActivities}
+                  tasks={todayTasks}
+                  projects={projectById}
+                  onDelete={deleteActivity}
+                />
               </section>
             </div>
           </div>
@@ -669,7 +884,7 @@ export function Dashboard() {
         {active === "plan" && (
           <div className="section-stack">
             <div className="view-switcher" role="tablist" aria-label="Planning view">
-              {(["list", "timeline", "matrix"] as PlanView[]).map((view) => (
+              {(["list", "timeline", "matrix", "projects"] as PlanView[]).map((view) => (
                 <button
                   key={view}
                   className={planView === view ? "active" : ""}
@@ -677,7 +892,7 @@ export function Dashboard() {
                   role="tab"
                   onClick={() => setPlanView(view)}
                 >
-                  {`${view[0].toUpperCase()}${view.slice(1)}`}
+                  {view === "list" ? "Tasks" : `${view[0].toUpperCase()}${view.slice(1)}`}
                 </button>
               ))}
             </div>
@@ -685,6 +900,13 @@ export function Dashboard() {
               <section className="panel focused-panel">
                 <PanelTitle icon={<Circle size={18} />} title="What comes next" detail={`${planningTasks.length} open`} />
                 <TaskCompactList tasks={planningTasks} />
+                <div className="plan-backlog">
+                  <div>
+                    <strong>Backlog</strong>
+                    <span>{generalBacklogTasks.length} unscheduled</span>
+                  </div>
+                  <BacklogList tasks={generalBacklogTasks} onUpdate={updateTask} />
+                </div>
               </section>
             )}
             {planView === "timeline" && (
@@ -698,6 +920,18 @@ export function Dashboard() {
                 <PanelTitle icon={<LayoutDashboard size={18} />} title="Urgency and importance" detail="Optional planning tool" />
                 <UrgencyImportanceMatrix tasks={planningTasks} today={data.today} onUpdate={updateTask} />
               </section>
+            )}
+            {planView === "projects" && (
+              <ProjectsWorkspace
+                projects={data.projects}
+                selectedProjectId={selectedProjectId}
+                createOpen={projectCreateOpen}
+                today={data.today}
+                onSelectedProjectChange={setSelectedProjectId}
+                  onCreateOpenChange={setProjectCreateOpen}
+                  onDataChanged={refresh}
+                  onStartFocus={openFocus}
+                />
             )}
           </div>
         )}
@@ -759,7 +993,7 @@ export function Dashboard() {
                 left={
                   <section className="panel">
                     <PanelTitle icon={<NotebookPen size={18} />} title="Notes" detail={`${data.notes.length} saved`} />
-                    <NoteList notes={data.notes} />
+                    <NoteList notes={data.notes} projects={projectById} />
                   </section>
                 }
                 right={
@@ -777,6 +1011,20 @@ export function Dashboard() {
                         onChange={(event) => setNoteTags(event.target.value)}
                         placeholder="Tags, comma separated"
                       />
+                      <select
+                        value={noteProjectId}
+                        onChange={(event) => setNoteProjectId(event.target.value)}
+                        aria-label="Note project"
+                      >
+                        <option value="">No linked project</option>
+                        {data.projects
+                          .filter((project) => project.status !== "ARCHIVED")
+                          .map((project) => (
+                            <option key={project.id} value={project.id}>
+                              {project.name}
+                            </option>
+                          ))}
+                      </select>
                       <button className="primary-button" onClick={() => void addNote()}>
                         <Plus size={16} />
                         Save note
@@ -791,7 +1039,7 @@ export function Dashboard() {
                 left={
                   <section className="panel">
                     <PanelTitle icon={<Library size={18} />} title="References" detail={`${data.materials.length} saved`} />
-                    <MaterialList materials={data.materials} />
+                    <MaterialList materials={data.materials} projects={projectById} />
                   </section>
                 }
                 right={
@@ -801,6 +1049,20 @@ export function Dashboard() {
                       <input value={materialTitle} onChange={(event) => setMaterialTitle(event.target.value)} placeholder="Title" />
                       <input id="material-url" value={materialUrl} onChange={(event) => setMaterialUrl(event.target.value)} placeholder="URL" />
                       <textarea value={materialNotes} onChange={(event) => setMaterialNotes(event.target.value)} placeholder="Why this matters" />
+                      <select
+                        value={materialProjectId}
+                        onChange={(event) => setMaterialProjectId(event.target.value)}
+                        aria-label="Reference project"
+                      >
+                        <option value="">No linked project</option>
+                        {data.projects
+                          .filter((project) => project.status !== "ARCHIVED")
+                          .map((project) => (
+                            <option key={project.id} value={project.id}>
+                              {project.name}
+                            </option>
+                          ))}
+                      </select>
                       <button className="primary-button" onClick={() => void addMaterial()}>
                         <Plus size={16} />
                         Save reference
@@ -839,6 +1101,30 @@ export function Dashboard() {
                 </button>
               </section>
             </div>
+            <section className="panel project-review-panel">
+              <PanelTitle
+                icon={<FolderKanban size={18} />}
+                title="Projects moved forward"
+                detail={`${movedProjects.length} this week`}
+              />
+              {movedProjects.length ? (
+                <div className="project-review-list">
+                  {movedProjects.slice(0, 5).map((project) => (
+                    <button key={project.id} onClick={() => openProject(project.id)}>
+                      <span>{project.name}</span>
+                      <small>
+                        {project.completedTaskCount}/{project.taskCount} tasks ·{" "}
+                        {project.investedMinutes}m invested
+                      </small>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="empty-copy">
+                  Record an activity or complete a Project task to make progress visible here.
+                </p>
+              )}
+            </section>
             <section className="panel insights-panel">
               <PanelTitle icon={<LayoutDashboard size={18} />} title="Seven-day view" detail="Patterns, not pressure" />
               <Charts stats={data.stats} />
@@ -850,20 +1136,126 @@ export function Dashboard() {
   );
 }
 
+function UnfinishedTray({
+  tasks,
+  projects,
+  today,
+  onResolve,
+  onLeave
+}: {
+  tasks: Task[];
+  projects: Map<string, ProjectSummary>;
+  today: string;
+  onResolve: (id: string, date: string | null, source: string) => Promise<void>;
+  onLeave: (id: string) => void;
+}) {
+  return (
+    <details className="unfinished-tray" open>
+      <summary>
+        <span>
+          <RefreshCw size={15} />
+          {tasks.length} unfinished {tasks.length === 1 ? "task" : "tasks"}
+        </span>
+        <small>Choose what should happen</small>
+      </summary>
+      <div className="unfinished-list">
+        {tasks.map((task) => {
+          const project = task.projectId ? projects.get(task.projectId) : null;
+          return (
+            <article key={task.id}>
+              <div className="unfinished-copy">
+                <strong>{task.title}</strong>
+                <span>
+                  {task.date ? formatShortDate(task.date) : "Previously scheduled"}
+                  {project ? ` · ${project.name}` : ""}
+                </span>
+              </div>
+              <div className="unfinished-actions">
+                <button
+                  className="secondary-button"
+                  onClick={() =>
+                    void onResolve(task.id, today.slice(0, 10), "unfinished-to-today")
+                  }
+                >
+                  Move to today
+                </button>
+                <label className="unfinished-date-action">
+                  <span>Another day</span>
+                  <input
+                    type="date"
+                    aria-label={`Choose another day for ${task.title}`}
+                    onChange={(event) => {
+                      if (event.target.value) {
+                        void onResolve(task.id, event.target.value, "unfinished-date-picker");
+                      }
+                    }}
+                  />
+                </label>
+                <button
+                  className="text-button"
+                  title="Move to the backlog by removing the scheduled date"
+                  onClick={() => void onResolve(task.id, null, "unfinished-to-backlog")}
+                >
+                  Remove date
+                </button>
+                <button
+                  className="text-button"
+                  title="Keep the original date and hide this prompt until the page reloads"
+                  onClick={() => onLeave(task.id)}
+                >
+                  {task.date ? `Keep on ${formatShortDate(task.date)}` : "Skip for now"}
+                </button>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    </details>
+  );
+}
+
 function TaskRow({
   task,
   onUpdate,
   onDelete,
-  onReorder
+  onReorder,
+  project,
+  projects,
+  onOpenProject,
+  onStartFocus
 }: {
   task: Task;
-  onUpdate: (id: string, patch: Partial<Task>) => Promise<void>;
+  onUpdate: (id: string, patch: Partial<Task> & { scheduleSource?: string }) => Promise<boolean>;
   onDelete: (id: string) => Promise<void>;
   onReorder: (draggedId: string, targetId: string) => Promise<void>;
+  project?: ProjectSummary;
+  projects: ProjectSummary[];
+  onOpenProject: (id: string) => void;
+  onStartFocus: (task: Task) => void;
 }) {
   const isDone = task.status === "DONE";
   const [isDraggable, setIsDraggable] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [titleDraft, setTitleDraft] = useState(task.title);
+  const [titleSaveState, setTitleSaveState] = useState<"idle" | "saving" | "saved" | "error">(
+    "idle"
+  );
+
+  useEffect(() => setTitleDraft(task.title), [task.title]);
+
+  async function saveTitle() {
+    const title = titleDraft.trim();
+    if (!title) {
+      setTitleDraft(task.title);
+      setTitleSaveState("error");
+      return;
+    }
+    if (title === task.title) return;
+    setTitleSaveState("saving");
+    const saved = await onUpdate(task.id, { title });
+    setTitleSaveState(saved ? "saved" : "error");
+    if (!saved) setTitleDraft(task.title);
+  }
 
   return (
     <article
@@ -901,15 +1293,55 @@ function TaskRow({
       >
         <GripVertical className="drag-icon" size={16} />
       </div>
-      <input
-        className="task-title-input"
-        value={task.title}
-        onChange={(event) => void onUpdate(task.id, { title: event.target.value })}
-      />
-      <span className="task-glance">
-        {statusLabel[task.status]} · {task.estimateMinutes}m
-        {task.deadline ? ` · ${formatShortDate(task.deadline)}` : ""}
-      </span>
+      <div className="task-title-editor">
+        <input
+          className="task-title-input"
+          value={titleDraft}
+          aria-label={`Task title: ${task.title}`}
+          onChange={(event) => {
+            setTitleDraft(event.target.value);
+            setTitleSaveState("idle");
+          }}
+          onBlur={() => void saveTitle()}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") event.currentTarget.blur();
+            if (event.key === "Escape") {
+              setTitleDraft(task.title);
+              setTitleSaveState("idle");
+              event.currentTarget.blur();
+            }
+          }}
+        />
+        {titleSaveState !== "idle" && (
+          <span
+            className={`task-save-state ${titleSaveState}`}
+            role="status"
+            aria-live="polite"
+          >
+            {titleSaveState === "saving"
+              ? "Saving"
+              : titleSaveState === "saved"
+                ? "Saved"
+                : "Not saved"}
+          </span>
+        )}
+      </div>
+      <div className="task-glance">
+        <span>
+          {statusLabel[task.status]} · {task.estimateMinutes}m
+          {task.deadline ? ` · ${formatShortDate(task.deadline)}` : ""}
+        </span>
+        {project && (
+          <button
+            className="project-chip"
+            aria-label={`Open project ${project.name}`}
+            onClick={() => onOpenProject(project.id)}
+          >
+            <FolderKanban size={12} />
+            {project.name}
+          </button>
+        )}
+      </div>
       <button
         className="icon-button task-details-toggle"
         aria-label={`${detailsOpen ? "Hide" : "Show"} task details: ${task.title}`}
@@ -956,6 +1388,31 @@ function TaskRow({
               </select>
             </label>
             <label>
+              Project
+              <select
+                value={task.projectId ?? ""}
+                onChange={(event) =>
+                  void onUpdate(task.id, {
+                    projectId: event.target.value || null,
+                    phaseId: null
+                  })
+                }
+              >
+                <option value="">No project</option>
+                {projects
+                  .filter(
+                    (item) =>
+                      (item.status !== "ARCHIVED" && item.status !== "COMPLETED") ||
+                      item.id === task.projectId
+                  )
+                  .map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+              </select>
+            </label>
+            <label>
               Estimate
               <input
                 className="mini-number"
@@ -968,14 +1425,22 @@ function TaskRow({
               />
             </label>
           </div>
-          <button
-            className="text-button danger"
-            aria-label={`Delete task: ${task.title}`}
-            onClick={() => void onDelete(task.id)}
-          >
-            <Trash2 size={15} />
-            Delete task
-          </button>
+          <div className="task-detail-actions">
+            {!isDone && (
+              <button className="text-button" onClick={() => onStartFocus(task)}>
+                <Play size={15} />
+                Start focus
+              </button>
+            )}
+            <button
+              className="text-button danger"
+              aria-label={`Delete task: ${task.title}`}
+              onClick={() => void onDelete(task.id)}
+            >
+              <Trash2 size={15} />
+              Delete task
+            </button>
+          </div>
         </div>
       )}
     </article>
@@ -1019,7 +1484,7 @@ function UrgencyImportanceMatrix({
 }: {
   tasks: Task[];
   today: string;
-  onUpdate: (id: string, patch: Partial<Task>) => Promise<void>;
+  onUpdate: (id: string, patch: Partial<Task>) => Promise<unknown>;
   compact?: boolean;
 }) {
   const activeTasks = tasks.filter((task) => task.status !== "DONE");
@@ -1232,10 +1697,12 @@ function MiniTimeline({
 function ActivityList({
   activities,
   tasks,
+  projects,
   onDelete
 }: {
   activities: ActivityEntry[];
   tasks: Task[];
+  projects: Map<string, ProjectSummary>;
   onDelete: (id: string) => Promise<void>;
 }) {
   if (!activities.length) {
@@ -1250,6 +1717,11 @@ function ActivityList({
     <div className="activity-list">
       {activities.map((activity) => {
         const task = tasks.find((item) => item.id === activity.taskId);
+        const project = task?.projectId
+          ? projects.get(task.projectId)
+          : activity.projectId
+            ? projects.get(activity.projectId)
+            : null;
         return (
           <article className="activity-item" key={activity.id}>
             <div className="activity-item-header">
@@ -1268,7 +1740,13 @@ function ActivityList({
               </button>
             </div>
             <p>{activity.note}</p>
-            {task && <small>Linked to {task.title}</small>}
+            {(task || project) && (
+              <small>
+                {task ? `Linked to ${task.title}` : ""}
+                {task && project ? " · " : ""}
+                {project ? project.name : ""}
+              </small>
+            )}
           </article>
         );
       })}
@@ -1276,7 +1754,13 @@ function ActivityList({
   );
 }
 
-function NoteList({ notes }: { notes: Note[] }) {
+function NoteList({
+  notes,
+  projects
+}: {
+  notes: Note[];
+  projects: Map<string, ProjectSummary>;
+}) {
   if (notes.length === 0) {
     return (
       <div className="empty-state">
@@ -1294,6 +1778,12 @@ function NoteList({ notes }: { notes: Note[] }) {
             {note.tags.map((tag) => (
               <span key={tag}>#{tag}</span>
             ))}
+            {note.projectId && projects.get(note.projectId) && (
+              <span className="linked-project">
+                <FolderKanban size={11} />
+                {projects.get(note.projectId)?.name}
+              </span>
+            )}
           </div>
         </article>
       ))}
@@ -1301,7 +1791,13 @@ function NoteList({ notes }: { notes: Note[] }) {
   );
 }
 
-function MaterialList({ materials }: { materials: Material[] }) {
+function MaterialList({
+  materials,
+  projects
+}: {
+  materials: Material[];
+  projects: Map<string, ProjectSummary>;
+}) {
   if (materials.length === 0) {
     return (
       <div className="empty-state">
@@ -1316,7 +1812,12 @@ function MaterialList({ materials }: { materials: Material[] }) {
         <a href={material.url} target="_blank" rel="noreferrer" className="material-item" key={material.id}>
           <span>{material.type}</span>
           <strong>{material.title}</strong>
-          <small>{material.notes || material.url}</small>
+          <small>
+            {material.notes || material.url}
+            {material.projectId && projects.get(material.projectId)
+              ? ` · ${projects.get(material.projectId)?.name}`
+              : ""}
+          </small>
           <ExternalLink size={15} />
         </a>
       ))}
@@ -1334,6 +1835,44 @@ function TaskCompactList({ tasks }: { tasks: Task[] }) {
           <span>{task.title}</span>
           <small>{priorityLabel[task.priority]}</small>
         </div>
+      ))}
+    </div>
+  );
+}
+
+function BacklogList({
+  tasks,
+  onUpdate
+}: {
+  tasks: Task[];
+  onUpdate: (
+    id: string,
+    patch: Partial<Task> & { scheduleSource?: string }
+  ) => Promise<unknown>;
+}) {
+  if (!tasks.length) {
+    return <p className="empty-copy">No standalone tasks are waiting here.</p>;
+  }
+
+  return (
+    <div className="backlog-list">
+      {tasks.map((task) => (
+        <article key={task.id}>
+          <Circle size={14} />
+          <span>{task.title}</span>
+          <input
+            type="date"
+            aria-label={`Schedule backlog task ${task.title}`}
+            onChange={(event) => {
+              if (event.target.value) {
+                void onUpdate(task.id, {
+                  date: event.target.value,
+                  scheduleSource: "general-backlog"
+                });
+              }
+            }}
+          />
+        </article>
       ))}
     </div>
   );

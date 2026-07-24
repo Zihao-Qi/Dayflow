@@ -1,0 +1,61 @@
+# Dayflow
+
+Dayflow is a personal workspace for deciding what matters, planning actionable work, recording what happened, and reviewing evidence of progress.
+
+## Language
+
+**Project**:
+A finishable outcome that may organize tasks into optional phases. A Project is complete only when the user explicitly confirms completion.
+_Avoid_: Long-term task, task group, area
+
+**Target Duration**:
+The intended elapsed span of a Project, expressed as a positive whole number of days or weeks.
+_Avoid_: Weekly budget, target date, effort
+
+**Weekly Effort Budget**:
+The amount of working time intentionally available to a Project each week.
+_Avoid_: Target duration, deadline, invested time
+
+**Phase**:
+An optional named section within one Project that groups related Project tasks. Its progress is derived from its current tasks.
+_Avoid_: Project, nested project, folder
+
+**Task**:
+A concrete action that belongs to zero or one Project and, when project-linked, zero or one Phase in that Project. A Task may be scheduled for a day or remain in the backlog.
+_Avoid_: Project, phase
+
+**Scheduled Task**:
+A Task assigned to a specific day.
+_Avoid_: Event, appointment
+
+**Backlog Task**:
+An unscheduled Task available for future planning. It may belong directly to a Project or to one of that Project's Phases.
+_Avoid_: Overdue task, someday project
+
+**Activity**:
+A record of time spent and what happened. It may receive Project attribution directly or through its linked Task.
+_Avoid_: Task, time block
+
+**Focus Session**:
+A timed block of deliberate work that may link to one Task, one Project, or neither. A completed Focus Session with at least one elapsed minute creates an Activity record; it does not complete its linked Task.
+_Avoid_: Task, completion, time block
+
+**Break Session**:
+A timed recovery interval suggested after focus. It is stored for timer continuity but does not create Activity evidence or count as Invested Time.
+_Avoid_: Focus Session, Rest activity
+
+**Plan Progress**:
+The number of completed tasks divided by all currently defined tasks in a Project or Phase. Recorded activity time is evidence of effort, not Plan Progress.
+_Avoid_: Percent complete, effort
+
+**Invested Time**:
+The total duration of activities attributed to a Project, either directly or through Project tasks.
+_Avoid_: Plan Progress, estimate
+
+**Unfinished Task**:
+A Scheduled Task whose scheduled day has passed and whose status is not done. It remains on its original day until the user chooses another disposition.
+_Avoid_: Automatically moved task
+
+**Area**:
+A future container for an ongoing responsibility without a finishable outcome. Areas are deliberately separate from Projects and are not part of Projects v1.
+_Avoid_: Project, perpetual project

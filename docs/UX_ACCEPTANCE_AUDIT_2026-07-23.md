@@ -8,7 +8,7 @@ signals.
 ## Evidence Used
 
 - The completed live walkthrough of the Focus Timer on `localhost:3000`.
-- The passing 10-test Playwright suite using an isolated SQLite database.
+- The passing 11-test Playwright suite using an isolated SQLite database.
 - Current component behavior and responsive CSS.
 - Earlier user questions, especially the ambiguity around “Backlog,” “Leave,”
   and the unit for the Project time field.
@@ -28,8 +28,15 @@ The first stabilization batch from this audit was implemented on July 23, 2026:
 - meaningful-work cancellation confirmation;
 - the tablet Activity-grid correction and initial accessibility feedback.
 
-The larger navigation and Project-page restructuring recommendations remain
-deferred until the stabilized workflow has been used with real work.
+The navigation and Project-page restructuring batch was implemented on July
+24, 2026:
+
+- Plan now starts with Day plan and Projects as its two primary modes;
+- List, Timeline, and Matrix are secondary Day plan views;
+- Project detail is split into Overview, Plan, and Evidence;
+- next-step and focus actions remain in Overview;
+- task creation, Phases, and backlog remain together in Plan;
+- Activity, Notes, and Materials are grouped in Evidence.
 
 ## What Is Working Well
 

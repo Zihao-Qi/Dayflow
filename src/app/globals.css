@@ -1520,6 +1520,41 @@ h1 {
   color: #fffdf8;
 }
 
+.plan-mode-switcher {
+  padding: 5px;
+  background: var(--surface-2);
+}
+
+.plan-mode-switcher button {
+  min-width: 118px;
+  font-weight: 700;
+}
+
+.day-plan-workspace,
+.project-overview-tab,
+.project-plan-tab {
+  display: grid;
+  gap: 16px;
+}
+
+.secondary-view-switcher,
+.project-detail-switcher {
+  padding: 2px;
+  border-color: transparent;
+  background: transparent;
+}
+
+.secondary-view-switcher button,
+.project-detail-switcher button {
+  min-height: 32px;
+}
+
+.secondary-view-switcher button.active,
+.project-detail-switcher button.active {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
 .focused-panel {
   min-height: 360px;
 }
@@ -2534,6 +2569,15 @@ h1 {
   display: grid;
   grid-template-columns: minmax(0, 0.8fr) minmax(380px, 1.2fr);
   gap: 16px;
+}
+
+.project-detail-switcher {
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+}
+
+.project-overview-tab .project-next-step {
+  min-height: 190px;
 }
 
 .project-next-step {

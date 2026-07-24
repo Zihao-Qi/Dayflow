@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { backdateFocusSession, resetTestDatabase } from "./database";
+import { resetTestDatabase, setFocusSessionElapsedMinutes } from "./database";
 
 test.beforeEach(() => {
   resetTestDatabase();
@@ -123,7 +123,7 @@ test("persists a focus timer and records completed work", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Resume", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Verify persistent focus" })).toBeVisible();
 
-  backdateFocusSession(session.id, 3);
+  setFocusSessionElapsedMinutes(session.id, 2);
   const resumeFocus = page.waitForResponse(
     (response) =>
       response.url().includes(`/api/focus-session/${session.id}`) &&
@@ -274,6 +274,11 @@ test("updates urgency and importance through matrix placement", async ({ page })
   await addTask(page, "Place on matrix");
 
   await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await expect(page.getByRole("tab", { name: "Day plan", exact: true })).toHaveAttribute(
+    "aria-selected",
+    "true"
+  );
+  await expect(page.getByRole("tab", { name: "List", exact: true })).toBeVisible();
   await page.getByRole("tab", { name: "Matrix", exact: true }).click();
   const board = page.locator(".matrix-board");
   const boardBox = await board.boundingBox();
@@ -319,6 +324,7 @@ test("creates a project with optional phases and tracks backlog progress", async
   await expect(page.getByText("8 weeks expected", { exact: true })).toBeVisible();
   await expect(page.getByText("No tasks", { exact: true }).first()).toBeVisible();
 
+  await page.getByRole("tab", { name: "Plan", exact: true }).click();
   await page.getByPlaceholder("Add an optional phase").fill("Foundations");
   await page.getByRole("button", { name: "Add phase" }).click();
   await expect(page.getByLabel("Phase name: Foundations")).toBeVisible();
@@ -346,6 +352,7 @@ test("creates a project with optional phases and tracks backlog progress", async
   await page.getByRole("tab", { name: "Projects", exact: true }).click();
   await page.locator(".project-card").filter({ hasText: "Complete the systems course" }).click();
   await expect(page.locator(".project-metric strong").filter({ hasText: "1/1" })).toBeVisible();
+  await page.getByRole("tab", { name: "Plan", exact: true }).click();
   await expect(page.getByLabel("Phase name: Foundations")).toBeVisible();
 });
 
@@ -396,6 +403,7 @@ test("attributes activity, notes, and materials directly to a project", async ({
   await page.getByRole("tab", { name: "Projects", exact: true }).click();
   await page.locator(".project-card").filter({ hasText: "Research resilient interfaces" }).click();
   await expect(page.getByText("25m", { exact: true })).toBeVisible();
+  await page.getByRole("tab", { name: "Evidence", exact: true }).click();
   await expect(page.getByText("Keep the module interface small.", { exact: true })).toBeVisible();
   await expect(page.getByText("Interface design notes", { exact: true })).toBeVisible();
 });

@@ -61,6 +61,8 @@ type ProjectPatch = Partial<{
   confirm: boolean;
 }>;
 
+type ProjectDetailView = "overview" | "plan" | "evidence";
+
 export function ProjectsWorkspace({
   projects,
   selectedProjectId,
@@ -441,6 +443,12 @@ function ProjectDetailWorkspace({
   const [newTaskPhase, setNewTaskPhase] = useState("");
   const [newTaskDate, setNewTaskDate] = useState("");
   const [undoTaskId, setUndoTaskId] = useState<string | null>(null);
+  const [detailView, setDetailView] = useState<ProjectDetailView>("overview");
+
+  useEffect(() => {
+    setDetailView("overview");
+    setEditing(false);
+  }, [detail?.id]);
 
   if (loading || !detail) {
     return (
@@ -695,233 +703,287 @@ function ProjectDetailWorkspace({
         </section>
       )}
 
-      <section className="project-focus-grid">
-        <div className="panel project-next-step">
-          <span className="eyebrow">Next step</span>
-          {nextTask ? (
-            <>
-              <h3>{nextTask.title}</h3>
-              <p>
-                {nextTask.date ? `Planned for ${formatShortDate(nextTask.date)}` : "Waiting in backlog"}
-              </p>
-              <div className="project-next-actions">
-                {!nextTask.date && canAddWork && (
+      <div
+        className="view-switcher project-detail-switcher"
+        role="tablist"
+        aria-label="Project view"
+      >
+        {(["overview", "plan", "evidence"] as ProjectDetailView[]).map((view) => (
+          <button
+            key={view}
+            className={detailView === view ? "active" : ""}
+            aria-selected={detailView === view}
+            role="tab"
+            onClick={() => setDetailView(view)}
+          >
+            {`${view[0].toUpperCase()}${view.slice(1)}`}
+          </button>
+        ))}
+      </div>
+
+      {detailView === "overview" && (
+        <div className="project-overview-tab" role="tabpanel" aria-label="Project overview">
+          <section className="panel project-next-step">
+            <span className="eyebrow">Next step</span>
+            {nextTask ? (
+              <>
+                <h3>{nextTask.title}</h3>
+                <p>
+                  {nextTask.date
+                    ? `Planned for ${formatShortDate(nextTask.date)}`
+                    : "Waiting in backlog"}
+                </p>
+                <div className="project-next-actions">
+                  {!nextTask.date && canAddWork && (
+                    <button
+                      className="secondary-button"
+                      onClick={() =>
+                        void updateTask(nextTask.id, {
+                          date: today.slice(0, 10),
+                          scheduleSource: "project-next-step"
+                        })
+                      }
+                    >
+                      <CalendarDays size={15} />
+                      Plan for today
+                    </button>
+                  )}
                   <button
                     className="secondary-button"
                     onClick={() =>
-                      void updateTask(nextTask.id, {
-                        date: today.slice(0, 10),
-                        scheduleSource: "project-next-step"
+                      onStartFocus({
+                        taskId: nextTask.id,
+                        projectId: project.id,
+                        label: nextTask.title
                       })
                     }
                   >
-                    <CalendarDays size={15} />
-                    Plan for today
+                    <Play size={15} />
+                    Start focus
                   </button>
-                )}
+                  <button
+                    className="text-button"
+                    onClick={() => setDetailView("plan")}
+                  >
+                    <Layers3 size={15} />
+                    View plan
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <h3>
+                  {detail.taskCount
+                    ? "The current plan is complete."
+                    : "Give this Project a first step."}
+                </h3>
+                <p>Choose one action that can be finished in a sitting.</p>
                 <button
                   className="secondary-button"
-                  onClick={() =>
-                    onStartFocus({
-                      taskId: nextTask.id,
-                      projectId: project.id,
-                      label: nextTask.title
-                    })
-                  }
+                  onClick={() => setDetailView("plan")}
                 >
-                  <Play size={15} />
-                  Start focus
-                </button>
-              </div>
-            </>
-          ) : (
-            <>
-              <h3>{detail.taskCount ? "The current plan is complete." : "Give this Project a first step."}</h3>
-              <p>Choose one action that can be finished in a sitting.</p>
-            </>
-          )}
-        </div>
-
-        <div className="panel project-add-task">
-          <span className="eyebrow">Add a step</span>
-          {canAddWork ? (
-            <>
-              <input
-                value={newTask}
-                onChange={(event) => setNewTask(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") void addTask();
-                }}
-                placeholder="A concrete, finishable task"
-                aria-label="New Project task"
-              />
-              <div className="project-add-task-options">
-                <select
-                  value={newTaskPhase}
-                  onChange={(event) => setNewTaskPhase(event.target.value)}
-                  aria-label="Task phase"
-                >
-                  <option value="">Project root</option>
-                  {detail.phases.map((phase) => (
-                    <option key={phase.id} value={phase.id}>
-                      {phase.name}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  type="date"
-                  value={newTaskDate}
-                  onChange={(event) => setNewTaskDate(event.target.value)}
-                  aria-label="Schedule task"
-                />
-                <button className="primary-button" onClick={() => void addTask()}>
                   <Plus size={15} />
-                  Add
+                  Add a step
+                </button>
+              </>
+            )}
+          </section>
+        </div>
+      )}
+
+      {detailView === "plan" && (
+        <div className="project-plan-tab" role="tabpanel" aria-label="Project plan">
+          <section className="panel project-add-task">
+            <span className="eyebrow">Add a step</span>
+            {canAddWork ? (
+              <>
+                <input
+                  value={newTask}
+                  onChange={(event) => setNewTask(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") void addTask();
+                  }}
+                  placeholder="A concrete, finishable task"
+                  aria-label="New Project task"
+                />
+                <div className="project-add-task-options">
+                  <select
+                    value={newTaskPhase}
+                    onChange={(event) => setNewTaskPhase(event.target.value)}
+                    aria-label="Task phase"
+                  >
+                    <option value="">Project root</option>
+                    {detail.phases.map((phase) => (
+                      <option key={phase.id} value={phase.id}>
+                        {phase.name}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="date"
+                    value={newTaskDate}
+                    onChange={(event) => setNewTaskDate(event.target.value)}
+                    aria-label="Schedule task"
+                  />
+                  <button className="primary-button" onClick={() => void addTask()}>
+                    <Plus size={15} />
+                    Add
+                  </button>
+                </div>
+                <small>Leave the date empty to keep this task in the backlog.</small>
+              </>
+            ) : (
+              <p>Reopen this Project before adding unfinished work.</p>
+            )}
+          </section>
+
+          <section className="panel project-plan">
+            <div className="project-section-heading">
+              <div>
+                <Layers3 size={18} />
+                <div>
+                  <h3>Phases and tasks</h3>
+                  <span>
+                    {detail.completedTaskCount} of {detail.taskCount} tasks complete
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {directTasks.length > 0 && (
+              <TaskGroup
+                title="Project tasks"
+                tasks={directTasks}
+                phases={detail.phases}
+                undoTaskId={undoTaskId}
+                onUpdate={updateTask}
+                onUndo={undoSchedule}
+                onDelete={deleteTask}
+                onStartFocus={onStartFocus}
+              />
+            )}
+
+            <div className="phase-list">
+              {detail.phases.map((phase, index) => {
+                const phaseTasks = detail.tasks.filter((task) => task.phaseId === phase.id);
+                const visiblePhaseTasks = phaseTasks.filter(
+                  (task) => task.date || task.status === "DONE"
+                );
+                const metrics = calculateProjectMetrics(phaseTasks);
+                return (
+                  <article className="phase-card" key={phase.id}>
+                    <div className="phase-header">
+                      <EditablePhaseName phase={phase} onSaved={onSync} onError={onError} />
+                      <span>
+                        {metrics.taskCount
+                          ? `${metrics.completedTaskCount}/${metrics.taskCount}`
+                          : "No tasks"}
+                      </span>
+                      <div className="phase-actions">
+                        <button
+                          className="icon-button"
+                          aria-label={`Move phase ${phase.name} up`}
+                          disabled={index === 0}
+                          onClick={() => void movePhase(index, -1)}
+                        >
+                          <ChevronUp size={14} />
+                        </button>
+                        <button
+                          className="icon-button"
+                          aria-label={`Move phase ${phase.name} down`}
+                          disabled={index === detail.phases.length - 1}
+                          onClick={() => void movePhase(index, 1)}
+                        >
+                          <ChevronDown size={14} />
+                        </button>
+                        <button
+                          className="icon-button danger"
+                          aria-label={`Delete phase ${phase.name}`}
+                          onClick={() => void deletePhase(phase)}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </div>
+                    <div className="phase-progress meter">
+                      <i style={{ width: `${metrics.progressPercent ?? 0}%` }} />
+                    </div>
+                    {visiblePhaseTasks.length ? (
+                      <TaskGroup
+                        tasks={visiblePhaseTasks}
+                        phases={detail.phases}
+                        undoTaskId={undoTaskId}
+                        onUpdate={updateTask}
+                        onUndo={undoSchedule}
+                        onDelete={deleteTask}
+                        onStartFocus={onStartFocus}
+                      />
+                    ) : (
+                      <p className="phase-empty">
+                        {phaseTasks.length
+                          ? `${phaseTasks.length} ${
+                              phaseTasks.length === 1 ? "task is" : "tasks are"
+                            } waiting in the backlog.`
+                          : "No tasks in this phase yet."}
+                      </p>
+                    )}
+                  </article>
+                );
+              })}
+            </div>
+
+            {canAddWork && (
+              <div className="phase-create">
+                <input
+                  value={newPhase}
+                  onChange={(event) => setNewPhase(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") void addPhase();
+                  }}
+                  placeholder="Add an optional phase"
+                  aria-label="New phase name"
+                />
+                <button className="secondary-button" onClick={() => void addPhase()}>
+                  <Plus size={15} />
+                  Add phase
                 </button>
               </div>
-              <small>Leave the date empty to keep this task in the backlog.</small>
-            </>
-          ) : (
-            <p>Reopen this Project before adding unfinished work.</p>
-          )}
-        </div>
-      </section>
+            )}
+          </section>
 
-      <section className="panel project-plan">
-        <div className="project-section-heading">
-          <div>
-            <Layers3 size={18} />
-            <div>
-              <h3>Phases and tasks</h3>
-              <span>{detail.completedTaskCount} of {detail.taskCount} tasks complete</span>
-            </div>
-          </div>
-        </div>
-
-        {directTasks.length > 0 && (
-          <TaskGroup
-            title="Project tasks"
-            tasks={directTasks}
-            phases={detail.phases}
-            undoTaskId={undoTaskId}
-            onUpdate={updateTask}
-            onUndo={undoSchedule}
-            onDelete={deleteTask}
-            onStartFocus={onStartFocus}
-          />
-        )}
-
-        <div className="phase-list">
-          {detail.phases.map((phase, index) => {
-            const phaseTasks = detail.tasks.filter((task) => task.phaseId === phase.id);
-            const visiblePhaseTasks = phaseTasks.filter((task) => task.date || task.status === "DONE");
-            const metrics = calculateProjectMetrics(phaseTasks);
-            return (
-              <article className="phase-card" key={phase.id}>
-                <div className="phase-header">
-                  <EditablePhaseName phase={phase} onSaved={onSync} onError={onError} />
-                  <span>
-                    {metrics.taskCount
-                      ? `${metrics.completedTaskCount}/${metrics.taskCount}`
-                      : "No tasks"}
-                  </span>
-                  <div className="phase-actions">
-                    <button
-                      className="icon-button"
-                      aria-label={`Move phase ${phase.name} up`}
-                      disabled={index === 0}
-                      onClick={() => void movePhase(index, -1)}
-                    >
-                      <ChevronUp size={14} />
-                    </button>
-                    <button
-                      className="icon-button"
-                      aria-label={`Move phase ${phase.name} down`}
-                      disabled={index === detail.phases.length - 1}
-                      onClick={() => void movePhase(index, 1)}
-                    >
-                      <ChevronDown size={14} />
-                    </button>
-                    <button
-                      className="icon-button danger"
-                      aria-label={`Delete phase ${phase.name}`}
-                      onClick={() => void deletePhase(phase)}
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
+          <section className="panel project-backlog">
+            <div className="project-section-heading">
+              <div>
+                <Circle size={18} />
+                <div>
+                  <h3>Backlog</h3>
+                  <span>Defined, but not assigned to a day</span>
                 </div>
-                <div className="phase-progress meter">
-                  <i style={{ width: `${metrics.progressPercent ?? 0}%` }} />
-                </div>
-                {visiblePhaseTasks.length ? (
-                  <TaskGroup
-                    tasks={visiblePhaseTasks}
-                    phases={detail.phases}
-                    undoTaskId={undoTaskId}
-                    onUpdate={updateTask}
-                    onUndo={undoSchedule}
-                    onDelete={deleteTask}
-                    onStartFocus={onStartFocus}
-                  />
-                ) : (
-                  <p className="phase-empty">
-                    {phaseTasks.length
-                      ? `${phaseTasks.length} ${phaseTasks.length === 1 ? "task is" : "tasks are"} waiting in the backlog.`
-                      : "No tasks in this phase yet."}
-                  </p>
-                )}
-              </article>
-            );
-          })}
-        </div>
-
-        {canAddWork && (
-          <div className="phase-create">
-            <input
-              value={newPhase}
-              onChange={(event) => setNewPhase(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") void addPhase();
-              }}
-              placeholder="Add an optional phase"
-              aria-label="New phase name"
-            />
-            <button className="secondary-button" onClick={() => void addPhase()}>
-              <Plus size={15} />
-              Add phase
-            </button>
-          </div>
-        )}
-      </section>
-
-      <section className="panel project-backlog">
-        <div className="project-section-heading">
-          <div>
-            <Circle size={18} />
-            <div>
-              <h3>Backlog</h3>
-              <span>Defined, but not assigned to a day</span>
+              </div>
+              <strong>{backlogTasks.length}</strong>
             </div>
-          </div>
-          <strong>{backlogTasks.length}</strong>
+            {backlogTasks.length ? (
+              <TaskGroup
+                tasks={backlogTasks}
+                phases={detail.phases}
+                undoTaskId={undoTaskId}
+                onUpdate={updateTask}
+                onUndo={undoSchedule}
+                onDelete={deleteTask}
+                onStartFocus={onStartFocus}
+              />
+            ) : (
+              <p className="empty-copy">No unfinished tasks are waiting in the backlog.</p>
+            )}
+          </section>
         </div>
-        {backlogTasks.length ? (
-          <TaskGroup
-            tasks={backlogTasks}
-            phases={detail.phases}
-            undoTaskId={undoTaskId}
-            onUpdate={updateTask}
-            onUndo={undoSchedule}
-            onDelete={deleteTask}
-            onStartFocus={onStartFocus}
-          />
-        ) : (
-          <p className="empty-copy">No unfinished tasks are waiting in the backlog.</p>
-        )}
-      </section>
+      )}
 
-      <ProjectEvidence detail={detail} />
+      {detailView === "evidence" && (
+        <div role="tabpanel" aria-label="Project evidence">
+          <ProjectEvidence detail={detail} />
+        </div>
+      )}
     </div>
   );
 }

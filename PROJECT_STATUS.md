@@ -1,6 +1,6 @@
 # Dayflow Project Status and Plan
 
-Last updated: July 23, 2026
+Last updated: July 24, 2026
 
 ## Project Goal
 
@@ -93,6 +93,10 @@ Funemployment Day has a narrower and immediately understandable promise around r
 ### Projects and Multi-Layer Planning
 
 - Adds finishable Projects inside Plan without adding another primary navigation destination.
+- Separates Plan into Day plan and Projects, with List, Timeline, and Matrix
+  grouped under Day plan.
+- Splits each Project workspace into Overview, Plan, and Evidence so next
+  actions, task structure, and recorded progress remain easy to scan.
 - Supports optional Phases while allowing tasks to live directly at the Project root.
 - Lets Project and standalone tasks remain unscheduled in a backlog.
 - Uses completed-task count for current-plan progress and recorded Activity time for invested effort.
@@ -150,7 +154,9 @@ Funemployment Day has a narrower and immediately understandable promise around r
 
 ### Planning View
 
-- Offers List, Timeline, and Matrix views instead of displaying every planning tool at once.
+- Starts with two planning levels: Day plan and Projects.
+- Offers List, Timeline, and Matrix as secondary Day plan views instead of
+  displaying every planning tool at once.
 - Shows unfinished tasks clearly in the default list view.
 - Keeps the urgency and importance matrix available as an optional power tool.
 

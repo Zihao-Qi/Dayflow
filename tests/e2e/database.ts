@@ -45,15 +45,19 @@ export function resetTestDatabase() {
   runPrismaDbExecute(["--stdin"], resetSql);
 }
 
-export function backdateFocusSession(id: string, minutes: number) {
+export function setFocusSessionElapsedMinutes(id: string, minutes: number) {
   if (!/^[A-Za-z0-9_-]+$/.test(id)) {
     throw new Error("Focus session id contains unexpected characters.");
   }
   const safeMinutes = Math.max(1, Math.floor(minutes));
+  const pausedAt = Date.now();
+  const startedAt = pausedAt - safeMinutes * 60_000;
   runPrismaDbExecute(
     ["--stdin"],
     `UPDATE "FocusSession"
-     SET "startedAt" = CAST(strftime('%s', 'now') AS INTEGER) * 1000 - ${safeMinutes * 60_000}
+     SET "startedAt" = ${startedAt},
+         "pausedAt" = ${pausedAt},
+         "accumulatedPauseSeconds" = 0
      WHERE "id" = '${id}';`
   );
 }

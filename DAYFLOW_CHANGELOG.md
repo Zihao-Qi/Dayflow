@@ -2,6 +2,21 @@
 
 This document records the updates, bug fixes, and design enhancements implemented for the **Dayflow** dashboard during our session.
 
+## Latest: Plan and Project Navigation Hierarchy
+
+- **Two Planning Levels**: Plan now starts with Day plan and Projects instead
+  of presenting long-term Projects as a peer of Timeline and Matrix.
+- **Day Plan Views**: List, Timeline, and Matrix remain available as secondary
+  views within Day plan.
+- **Scannable Project Workspaces**: Project detail is split into Overview,
+  Plan, and Evidence views.
+- **Actionable Overview**: Overview keeps the Project metrics and next step
+  prominent, with direct access to planning and focus actions.
+- **Focused Plan View**: Task creation, Phases, scheduled work, and the Project
+  backlog live together.
+- **Dedicated Evidence View**: Recorded activity, linked Notes, and linked
+  Materials no longer make every Project page unnecessarily long.
+
 ## Latest: Usability Stabilization
 
 - **App-Wide Timer**: Timer lifecycle now stays mounted across all four primary

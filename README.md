@@ -14,9 +14,11 @@ lucide-react. The app runs locally without accounts or hosted services.
 - Finishable Projects with optional phases, target duration in days or weeks,
   weekly effort budgets, scheduled and backlog tasks, task-count progress,
   invested-time tracking, and safe lifecycle controls.
+- Two-level Plan navigation with Day plan and Projects, plus Overview, Plan,
+  and Evidence views inside each Project.
 - Confirmation-based unfinished-task handling with rescheduling, backlog return, leave-in-place, and undo.
 - Expandable task details keep status, deadline, estimate, urgency, and importance available without crowding each row.
-- Optional List, Timeline, and Matrix planning views.
+- Optional List, Timeline, and Matrix views inside Day plan.
 - Journal workspace for diary entries, quick notes, and saved references.
 - Review workspace for reflection and seven-day progress patterns.
 - Project attribution for activities, notes, and saved references.

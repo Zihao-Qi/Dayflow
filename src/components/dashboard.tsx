@@ -52,7 +52,8 @@ import { ProjectSummary } from "@/lib/project-domain";
 type TaskStatus = "TODO" | "IN_PROGRESS" | "DONE";
 type Priority = "LOW" | "MEDIUM" | "HIGH";
 type Section = "today" | "plan" | "journal" | "review";
-type PlanView = "list" | "timeline" | "matrix" | "projects";
+type PlanMode = "day" | "projects";
+type DayPlanView = "list" | "timeline" | "matrix";
 type JournalView = "diary" | "notes" | "materials";
 type CaptureTarget = "task" | "project" | "activity" | "note" | "material";
 type FocusTarget = Omit<FocusDraft, "revision">;
@@ -173,7 +174,8 @@ export function Dashboard() {
   const { activityRevision } = useFocusSession();
   const [data, setData] = useState<Bootstrap | null>(null);
   const [active, setActive] = useState<Section>("today");
-  const [planView, setPlanView] = useState<PlanView>("list");
+  const [planMode, setPlanMode] = useState<PlanMode>("day");
+  const [dayPlanView, setDayPlanView] = useState<DayPlanView>("list");
   const [journalView, setJournalView] = useState<JournalView>("diary");
   const [captureOpen, setCaptureOpen] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
@@ -480,7 +482,7 @@ export function Dashboard() {
     if (target === "material") setJournalView("materials");
     if (target === "activity") setActivityComposerOpen(true);
     if (target === "project") {
-      setPlanView("projects");
+      setPlanMode("projects");
       setSelectedProjectId(null);
       setProjectCreateOpen(true);
     }
@@ -492,7 +494,7 @@ export function Dashboard() {
 
   function openProject(id: string) {
     setSelectedProjectId(id);
-    setPlanView("projects");
+    setPlanMode("projects");
     setActive("plan");
     setCaptureOpen(false);
     setToolsOpen(false);
@@ -883,55 +885,78 @@ export function Dashboard() {
 
         {active === "plan" && (
           <div className="section-stack">
-            <div className="view-switcher" role="tablist" aria-label="Planning view">
-              {(["list", "timeline", "matrix", "projects"] as PlanView[]).map((view) => (
+            <div className="view-switcher plan-mode-switcher" role="tablist" aria-label="Plan mode">
+              {(["day", "projects"] as PlanMode[]).map((mode) => (
                 <button
-                  key={view}
-                  className={planView === view ? "active" : ""}
-                  aria-selected={planView === view}
+                  key={mode}
+                  className={planMode === mode ? "active" : ""}
+                  aria-selected={planMode === mode}
                   role="tab"
-                  onClick={() => setPlanView(view)}
+                  onClick={() => setPlanMode(mode)}
                 >
-                  {view === "list" ? "Tasks" : `${view[0].toUpperCase()}${view.slice(1)}`}
+                  {mode === "day" ? "Day plan" : "Projects"}
                 </button>
               ))}
             </div>
-            {planView === "list" && (
-              <section className="panel focused-panel">
-                <PanelTitle icon={<Circle size={18} />} title="What comes next" detail={`${planningTasks.length} open`} />
-                <TaskCompactList tasks={planningTasks} />
-                <div className="plan-backlog">
-                  <div>
-                    <strong>Backlog</strong>
-                    <span>{generalBacklogTasks.length} unscheduled</span>
-                  </div>
-                  <BacklogList tasks={generalBacklogTasks} onUpdate={updateTask} />
+            {planMode === "day" && (
+              <div className="day-plan-workspace" role="tabpanel" aria-label="Day plan">
+                <div
+                  className="view-switcher secondary-view-switcher"
+                  role="tablist"
+                  aria-label="Day plan view"
+                >
+                  {(["list", "timeline", "matrix"] as DayPlanView[]).map((view) => (
+                    <button
+                      key={view}
+                      className={dayPlanView === view ? "active" : ""}
+                      aria-selected={dayPlanView === view}
+                      role="tab"
+                      onClick={() => setDayPlanView(view)}
+                    >
+                      {`${view[0].toUpperCase()}${view.slice(1)}`}
+                    </button>
+                  ))}
                 </div>
-              </section>
+                {dayPlanView === "list" && (
+                  <section className="panel focused-panel">
+                    <PanelTitle icon={<Circle size={18} />} title="What comes next" detail={`${planningTasks.length} open`} />
+                    <TaskCompactList tasks={planningTasks} />
+                    <div className="plan-backlog">
+                      <div>
+                        <strong>Backlog</strong>
+                        <span>{generalBacklogTasks.length} unscheduled</span>
+                      </div>
+                      <BacklogList tasks={generalBacklogTasks} onUpdate={updateTask} />
+                    </div>
+                  </section>
+                )}
+                {dayPlanView === "timeline" && (
+                  <section className="panel focused-panel">
+                    <PanelTitle icon={<CalendarDays size={18} />} title="Timeline" detail="Today and tomorrow" />
+                    <MiniTimeline blocks={data.timeBlocks} tasks={data.tasks} today={data.today} expanded />
+                  </section>
+                )}
+                {dayPlanView === "matrix" && (
+                  <section className="panel matrix-panel focused-panel">
+                    <PanelTitle icon={<LayoutDashboard size={18} />} title="Urgency and importance" detail="Optional planning tool" />
+                    <UrgencyImportanceMatrix tasks={planningTasks} today={data.today} onUpdate={updateTask} />
+                  </section>
+                )}
+              </div>
             )}
-            {planView === "timeline" && (
-              <section className="panel focused-panel">
-                <PanelTitle icon={<CalendarDays size={18} />} title="Timeline" detail="Today and tomorrow" />
-                <MiniTimeline blocks={data.timeBlocks} tasks={data.tasks} today={data.today} expanded />
-              </section>
-            )}
-            {planView === "matrix" && (
-              <section className="panel matrix-panel focused-panel">
-                <PanelTitle icon={<LayoutDashboard size={18} />} title="Urgency and importance" detail="Optional planning tool" />
-                <UrgencyImportanceMatrix tasks={planningTasks} today={data.today} onUpdate={updateTask} />
-              </section>
-            )}
-            {planView === "projects" && (
-              <ProjectsWorkspace
-                projects={data.projects}
-                selectedProjectId={selectedProjectId}
-                createOpen={projectCreateOpen}
-                today={data.today}
-                onSelectedProjectChange={setSelectedProjectId}
+            {planMode === "projects" && (
+              <div role="tabpanel" aria-label="Projects">
+                <ProjectsWorkspace
+                  projects={data.projects}
+                  selectedProjectId={selectedProjectId}
+                  createOpen={projectCreateOpen}
+                  today={data.today}
+                  onSelectedProjectChange={setSelectedProjectId}
                   onCreateOpenChange={setProjectCreateOpen}
                   onDataChanged={refresh}
                   onStartFocus={openFocus}
                 />
+              </div>
             )}
           </div>
         )}

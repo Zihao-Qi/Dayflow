@@ -144,12 +144,16 @@ Projects will not add a fifth primary navigation destination in v1.
 
 ### Plan
 
-- Add Projects as a view inside Plan.
-- Rename the existing List label to Tasks if needed for clarity.
+- Plan has two primary modes: `Day plan` and `Projects`.
+- List, Timeline, and Matrix are secondary views within Day plan.
 - The Projects view shows Active Projects by default.
 - Paused, Completed, and Archived Projects remain available through filters.
 - Opening a Project replaces the Plan content with a full Project workspace.
 - The Project workspace provides a clear `Back to Projects` action.
+- Project detail has three internal views:
+  - Overview for status, progress, invested time, and the next step;
+  - Plan for task creation, optional Phases, scheduled work, and backlog;
+  - Evidence for recorded Activity, linked Notes, and linked Materials.
 - Project creation and small editing actions may use dialogs, but the full Project must not be confined to a side panel.
 
 ### Today

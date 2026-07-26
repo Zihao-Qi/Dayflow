@@ -1,14 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Area,
-  AreaChart,
   Bar,
   BarChart,
   CartesianGrid,
-  Line,
-  LineChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -22,40 +18,51 @@ import {
   ChevronUp,
   Circle,
   Clock3,
-  Expand,
   ExternalLink,
   FileText,
   FolderKanban,
   GripVertical,
+  Layers3,
   LayoutDashboard,
   Library,
   LinkIcon,
+  Menu,
   NotebookPen,
+  Pause,
   Play,
   Plus,
   RefreshCw,
   Save,
-  Settings2,
-  Shrink,
   Sparkles,
+  Timer,
   Trash2
 } from "lucide-react";
 import { ProjectsWorkspace } from "@/components/projects-workspace";
-import {
-  FocusDraft,
-  FocusSessionBanner,
-  FocusTimer
-} from "@/components/focus-timer";
+import { FocusDraft, FocusRail } from "@/components/focus-timer";
 import { useFocusSession } from "@/components/focus-session-provider";
-import { ProjectSummary } from "@/lib/project-domain";
+import {
+  focusElapsedSeconds,
+  focusRemainingSeconds,
+  formatFocusClock
+} from "@/lib/focus-domain";
+import {
+  formatInvestedMinutes,
+  ProjectSummary
+} from "@/lib/project-domain";
 
 type TaskStatus = "TODO" | "IN_PROGRESS" | "DONE";
 type Priority = "LOW" | "MEDIUM" | "HIGH";
-type Section = "today" | "plan" | "journal" | "review";
-type PlanMode = "day" | "projects";
-type DayPlanView = "list" | "timeline" | "matrix";
-type JournalView = "diary" | "notes" | "materials";
-type CaptureTarget = "task" | "project" | "activity" | "note" | "material";
+type Screen =
+  | "today"
+  | "day-stream"
+  | "day-timeline"
+  | "projects"
+  | "backlog"
+  | "journal"
+  | "review";
+type DayView = "stream" | "timeline";
+type JournalView = "daily" | "notes" | "references";
+type BacklogArrange = "figure" | "quadrant" | "project" | "due";
 type FocusTarget = Omit<FocusDraft, "revision">;
 
 type Task = {
@@ -136,6 +143,14 @@ type DayStat = {
   energy: number | null;
 };
 
+type ReviewSummary = {
+  focusedMinutes: number;
+  completedSessions: number;
+  cancelledSessions: number;
+  longestMinutes: number;
+  longestStartedAt: string | null;
+};
+
 type Bootstrap = {
   today: string;
   tasks: Task[];
@@ -147,70 +162,89 @@ type Bootstrap = {
   projects: ProjectSummary[];
   unfinishedTasks: Task[];
   stats: DayStat[];
-};
-
-const nav = [
-  { id: "today", label: "Today", icon: LayoutDashboard },
-  { id: "plan", label: "Plan", icon: CalendarDays },
-  { id: "journal", label: "Journal", icon: NotebookPen },
-  { id: "review", label: "Review", icon: Sparkles }
-] satisfies Array<{ id: Section; label: string; icon: typeof LayoutDashboard }>;
-
-const priorityLabel: Record<Priority, string> = {
-  LOW: "Low",
-  MEDIUM: "Medium",
-  HIGH: "High"
-};
-
-const statusLabel: Record<TaskStatus, string> = {
-  TODO: "To do",
-  IN_PROGRESS: "In progress",
-  DONE: "Done"
+  reviewSummary: ReviewSummary;
 };
 
 const activityCategories = ["Deep Work", "Learning", "Admin", "Health", "Rest"];
 
+const nav = [
+  { id: "today", label: "Today", icon: LayoutDashboard },
+  { id: "day", label: "Log", icon: CalendarDays },
+  { id: "projects", label: "Projects", icon: Layers3 },
+  { id: "backlog", label: "Backlog", icon: Circle },
+  { id: "journal", label: "Journal", icon: NotebookPen },
+  { id: "review", label: "Review", icon: Sparkles }
+] as const;
+
 export function Dashboard() {
-  const { activityRevision } = useFocusSession();
+  const focus = useFocusSession();
+  const compactLayout = useMediaQuery("(max-width: 1179px)");
+  const phoneLayout = useMediaQuery("(max-width: 620px)");
   const [data, setData] = useState<Bootstrap | null>(null);
-  const [active, setActive] = useState<Section>("today");
-  const [planMode, setPlanMode] = useState<PlanMode>("day");
-  const [dayPlanView, setDayPlanView] = useState<DayPlanView>("list");
-  const [journalView, setJournalView] = useState<JournalView>("diary");
-  const [captureOpen, setCaptureOpen] = useState(false);
-  const [toolsOpen, setToolsOpen] = useState(false);
-  const [activityComposerOpen, setActivityComposerOpen] = useState(false);
+  const [screen, setScreen] = useState<Screen>("today");
+  const [railExpanded, setRailExpanded] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [journalView, setJournalView] = useState<JournalView>("daily");
+  const [backlogArrange, setBacklogArrange] =
+    useState<BacklogArrange>("quadrant");
+  const [backlogScopeProjectId, setBacklogScopeProjectId] = useState<string | null>(
+    null
+  );
   const [newTask, setNewTask] = useState("");
   const [newNote, setNewNote] = useState("");
   const [noteTags, setNoteTags] = useState("");
   const [materialTitle, setMaterialTitle] = useState("");
   const [materialUrl, setMaterialUrl] = useState("");
   const [materialNotes, setMaterialNotes] = useState("");
-  const [materialProjectId, setMaterialProjectId] = useState("");
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [projectCreateOpen, setProjectCreateOpen] = useState(false);
+  const [focusDraft, setFocusDraft] = useState<FocusDraft | null>(null);
+  const [activityOpen, setActivityOpen] = useState(false);
   const [activityTime, setActivityTime] = useState("");
   const [activityDuration, setActivityDuration] = useState("30");
   const [activityCategory, setActivityCategory] = useState(activityCategories[0]);
   const [activityTaskId, setActivityTaskId] = useState("");
-  const [activityProjectId, setActivityProjectId] = useState("");
   const [activityNote, setActivityNote] = useState("");
   const [activityError, setActivityError] = useState("");
-  const [compactMode, setCompactMode] = useState(false);
   const [savingDiary, setSavingDiary] = useState(false);
-  const [noteProjectId, setNoteProjectId] = useState("");
-  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
-  const [projectCreateOpen, setProjectCreateOpen] = useState(false);
   const [dismissedUnfinished, setDismissedUnfinished] = useState<string[]>([]);
-  const [scheduleUndoTaskId, setScheduleUndoTaskId] = useState<string | null>(null);
-  const [focusDraft, setFocusDraft] = useState<FocusDraft | null>(null);
+  const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
+  const [firstRunSeen, setFirstRunSeen] = useState<boolean | null>(null);
+  const [appAnnouncement, setAppAnnouncement] = useState("");
+  const [appError, setAppError] = useState("");
 
   useEffect(() => {
     setActivityTime(formatTimeInput(new Date()));
+    setFirstRunSeen(window.localStorage.getItem("dayflow-first-run-seen") === "1");
     void refresh();
   }, []);
 
   useEffect(() => {
-    if (activityRevision > 0) void refresh();
-  }, [activityRevision]);
+    if (focus.activityRevision > 0) void refresh();
+  }, [focus.activityRevision]);
+
+  useEffect(() => {
+    if (phoneLayout && focus.pendingCompletion) setRailExpanded(true);
+  }, [focus.pendingCompletion, phoneLayout]);
+
+  useEffect(() => {
+    function onShortcut(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setPaletteOpen((open) => !open);
+      }
+      if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        if (!focus.active) {
+          setFocusDraft({ revision: Date.now(), plannedMinutes: 25 });
+          if (screen !== "today") setRailExpanded(true);
+        }
+      }
+      if (event.key === "Escape") setPaletteOpen(false);
+    }
+    window.addEventListener("keydown", onShortcut);
+    return () => window.removeEventListener("keydown", onShortcut);
+  }, [focus.active, screen]);
 
   async function refresh() {
     const response = await fetch("/api/bootstrap", { cache: "no-store" });
@@ -225,93 +259,108 @@ export function Dashboard() {
       .sort((a, b) => a.sortOrder - b.sortOrder);
   }, [data]);
 
-  const futureTasks = useMemo(() => {
-    if (!data) return [];
-    const key = data.today.slice(0, 10);
-    return data.tasks.filter((task) => task.date && task.date.slice(0, 10) > key);
-  }, [data]);
-
-  const planningTasks = useMemo(
-    () => [...todayTasks, ...futureTasks].filter((task) => task.status !== "DONE"),
-    [futureTasks, todayTasks]
-  );
-
-  const generalBacklogTasks = useMemo(
+  const openTodayTasks = todayTasks.filter((task) => task.status !== "DONE");
+  const doneTodayTasks = todayTasks.filter((task) => task.status === "DONE");
+  const backlogTasks = useMemo(
     () =>
-      (data?.tasks ?? []).filter(
-        (task) => !task.date && !task.projectId && task.status !== "DONE"
-      ),
+      (data?.tasks ?? [])
+        .filter((task) => !task.date && task.status !== "DONE")
+        .sort((a, b) => a.sortOrder - b.sortOrder),
     [data]
   );
-
-  const openTodayTasks = useMemo(
-    () => todayTasks.filter((task) => task.status !== "DONE"),
-    [todayTasks]
-  );
-
-  const completedTodayTasks = useMemo(
-    () => todayTasks.filter((task) => task.status === "DONE"),
-    [todayTasks]
-  );
-
-  const todayActivities = useMemo(() => data?.activities ?? [], [data]);
-  const selectedActivityTask = useMemo(
-    () => todayTasks.find((task) => task.id === activityTaskId) ?? null,
-    [activityTaskId, todayTasks]
-  );
-
   const projectById = useMemo(
     () => new Map((data?.projects ?? []).map((project) => [project.id, project])),
     [data]
   );
-
-  const visibleUnfinishedTasks = useMemo(
-    () =>
-      (data?.unfinishedTasks ?? []).filter(
-        (task) => !dismissedUnfinished.includes(task.id)
-      ),
-    [data, dismissedUnfinished]
+  const visibleUnfinished = (data?.unfinishedTasks ?? []).filter(
+    (task) => !dismissedUnfinished.includes(task.id)
+  );
+  const plannedMinutes = todayTasks.reduce(
+    (sum, task) => sum + task.estimateMinutes,
+    0
+  );
+  const activityMinutes = (data?.activities ?? []).reduce(
+    (sum, activity) => sum + activity.durationMinutes,
+    0
   );
 
-  const movedProjects = useMemo(() => {
-    if (!data) return [];
-    const weekStart = new Date(data.today);
-    weekStart.setDate(weekStart.getDate() - 6);
-    return data.projects.filter(
-      (project) => project.lastProgressAt && new Date(project.lastProgressAt) >= weekStart
-    );
-  }, [data]);
+  function navigate(next: Screen) {
+    setScreen(next);
+    setRailExpanded(false);
+    setPaletteOpen(false);
+    setMobileMoreOpen(false);
+    if (next !== "projects") setSelectedProjectId(null);
+  }
 
-  const summary = useMemo(() => {
-    const completed = todayTasks.filter((task) => task.status === "DONE").length;
-    const estimate = todayTasks.reduce((sum, task) => sum + task.estimateMinutes, 0);
-    const recordedMinutes = todayActivities.reduce(
-      (sum, activity) => sum + activity.durationMinutes,
-      0
-    );
-    const legacyActualMinutes = todayTasks.reduce((sum, task) => sum + task.actualMinutes, 0);
-    const actual = todayActivities.length ? recordedMinutes : legacyActualMinutes;
-    return {
-      completed,
-      total: todayTasks.length,
-      rate: todayTasks.length ? Math.round((completed / todayTasks.length) * 100) : 0,
-      estimate,
-      actual
-    };
-  }, [todayActivities, todayTasks]);
+  function openFocus(target: FocusTarget) {
+    if (compactLayout && target.plannedMinutes) {
+      void focus.start({
+        kind: "FOCUS",
+        plannedMinutes: target.plannedMinutes,
+        label: target.label,
+        taskId: target.taskId ?? null,
+        projectId: target.taskId ? null : target.projectId ?? null
+      });
+      return;
+    }
+    setFocusDraft({ ...target, revision: Date.now() });
+    setPaletteOpen(false);
+    if (screen !== "today") setRailExpanded(true);
+  }
 
-  async function addTask() {
+  function openProject(id: string) {
+    setSelectedProjectId(id);
+    setScreen("projects");
+    setRailExpanded(false);
+  }
+
+  function openProjectBacklog(id: string) {
+    setBacklogArrange("project");
+    setBacklogScopeProjectId(id);
+    navigate("backlog");
+  }
+
+  async function addTask(date: string | null = data?.today.slice(0, 10) ?? null) {
     if (!newTask.trim()) return;
     await fetch("/api/tasks", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: newTask, estimateMinutes: 30 })
+      body: JSON.stringify({ title: newTask.trim(), date, estimateMinutes: 30 })
     });
     setNewTask("");
     await refresh();
   }
 
-  async function updateTask(id: string, patch: Partial<Task> & { scheduleSource?: string }) {
+  async function beginFirstRun(title: string, startFocus: boolean) {
+    const trimmed = title.trim();
+    if (!trimmed || !data) return;
+    const response = await fetch("/api/tasks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: trimmed,
+        date: data.today.slice(0, 10),
+        estimateMinutes: 25
+      })
+    });
+    if (!response.ok) return;
+    const task = (await response.json()) as Task;
+    window.localStorage.setItem("dayflow-first-run-seen", "1");
+    setFirstRunSeen(true);
+    await refresh();
+    if (startFocus) {
+      openFocus({
+        taskId: task.id,
+        label: task.title,
+        plannedMinutes: 25
+      });
+    }
+  }
+
+  async function updateTask(
+    id: string,
+    patch: Partial<Task> & { scheduleSource?: string }
+  ) {
     const { scheduleSource: _scheduleSource, ...taskPatch } = patch;
     setData((current) =>
       current
@@ -323,19 +372,29 @@ export function Dashboard() {
           }
         : current
     );
-    try {
-      const response = await fetch(`/api/tasks/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(patch)
-      });
-      if (!response.ok) throw new Error("Task could not be saved.");
-      await refresh();
-      return true;
-    } catch {
-      await refresh();
-      return false;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const response = await fetch(`/api/tasks/${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(patch)
+        });
+        if (!response.ok) throw new Error("Task could not be saved.");
+        setAppError("");
+        setAppAnnouncement("Changes saved.");
+        await refresh();
+        return true;
+      } catch {
+        if (attempt < 2) {
+          await new Promise((resolve) =>
+            window.setTimeout(resolve, attempt === 0 ? 1000 : 4000)
+          );
+        }
+      }
     }
+    setAppError("Couldn’t save that change. Your text is still here — retry.");
+    setAppAnnouncement("Changes were not saved.");
+    return false;
   }
 
   async function deleteTask(id: string) {
@@ -344,27 +403,43 @@ export function Dashboard() {
   }
 
   async function reorderTask(draggedId: string, targetId: string) {
-    if (draggedId === targetId) return;
+    if (draggedId === targetId) return true;
     const oldIndex = todayTasks.findIndex((task) => task.id === draggedId);
     const newIndex = todayTasks.findIndex((task) => task.id === targetId);
-    if (oldIndex < 0 || newIndex < 0) return;
-
+    if (oldIndex < 0 || newIndex < 0) return false;
     const reordered = [...todayTasks];
     const [item] = reordered.splice(oldIndex, 1);
     reordered.splice(newIndex, 0, item);
-
-    // Optimistic update
-    setData((current) => current ? { ...current, tasks: current.tasks.map(t => {
-      const found = reordered.find(r => r.id === t.id);
-      return found ? { ...t, sortOrder: reordered.indexOf(found) } : t;
-    }) } : current);
-
-    await fetch("/api/tasks/reorder", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ids: reordered.map((task) => task.id) })
-    });
-    await refresh();
+    setData((current) =>
+      current
+        ? {
+            ...current,
+            tasks: current.tasks.map((task) => {
+              const index = reordered.findIndex((candidate) => candidate.id === task.id);
+              return index < 0 ? task : { ...task, sortOrder: index };
+            })
+          }
+        : current
+    );
+    try {
+      const response = await fetch("/api/tasks/reorder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: reordered.map((task) => task.id) })
+      });
+      if (!response.ok) throw new Error("Order could not be saved.");
+      setAppError("");
+      setAppAnnouncement(
+        `Moved "${item.title}" to position ${newIndex + 1} of ${reordered.length}.`
+      );
+      await refresh();
+      return true;
+    } catch {
+      setAppError("Couldn’t save the new order. Retry the move.");
+      setAppAnnouncement("The new task order was not saved.");
+      await refresh();
+      return false;
+    }
   }
 
   async function addNote() {
@@ -373,8 +448,7 @@ export function Dashboard() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        content: newNote,
-        projectId: noteProjectId || null,
+        content: newNote.trim(),
         tags: noteTags
           .split(",")
           .map((tag) => tag.trim())
@@ -383,19 +457,6 @@ export function Dashboard() {
     });
     setNewNote("");
     setNoteTags("");
-    setNoteProjectId("");
-    await refresh();
-  }
-
-  async function saveDiary(patch?: Partial<Diary>) {
-    if (!data) return;
-    setSavingDiary(true);
-    await fetch("/api/diary", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...data.diary, ...patch })
-    });
-    setSavingDiary(false);
     await refresh();
   }
 
@@ -405,123 +466,77 @@ export function Dashboard() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        title: materialTitle,
-        url: materialUrl,
-        notes: materialNotes,
-        projectId: materialProjectId || null
+        title: materialTitle.trim(),
+        url: materialUrl.trim(),
+        notes: materialNotes.trim()
       })
     });
     setMaterialTitle("");
     setMaterialUrl("");
     setMaterialNotes("");
-    setMaterialProjectId("");
     await refresh();
   }
 
+  async function saveDiary() {
+    if (!data) return;
+    setSavingDiary(true);
+    try {
+      const response = await fetch("/api/diary", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data.diary)
+      });
+      if (!response.ok) throw new Error("Journal could not be saved.");
+      setAppAnnouncement("Journal saved.");
+      setAppError("");
+      await refresh();
+    } catch {
+      setAppAnnouncement("Journal was not saved.");
+      setAppError("Couldn’t save the journal. Your writing is still here — retry.");
+    } finally {
+      setSavingDiary(false);
+    }
+  }
+
+  function setDiaryValue<K extends keyof Diary>(key: K, value: Diary[K]) {
+    setData((current) =>
+      current
+        ? { ...current, diary: { ...current.diary, [key]: value } }
+        : current
+    );
+  }
+
   async function addActivity() {
-    const durationMinutes = Number(activityDuration);
+    const minutes = Number(activityDuration);
     if (!activityNote.trim()) {
       setActivityError("Add a short note about what happened.");
       return;
     }
-    if (!Number.isFinite(durationMinutes) || durationMinutes < 1 || durationMinutes > 1440) {
+    if (!Number.isFinite(minutes) || minutes < 1 || minutes > 1440) {
       setActivityError("Duration must be between 1 and 1440 minutes.");
       return;
     }
-
-    setActivityError("");
     const response = await fetch("/api/activities", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         date: data?.today,
         startTime: activityTime,
-        durationMinutes,
+        durationMinutes: minutes,
         category: activityCategory,
         taskId: activityTaskId || null,
-        projectId: activityProjectId || null,
-        note: activityNote
+        note: activityNote.trim()
       })
     });
-
     if (!response.ok) {
       const result = await response.json().catch(() => null);
       setActivityError(result?.error ?? "Activity could not be saved.");
       return;
     }
-
     setActivityNote("");
     setActivityTaskId("");
-    setActivityProjectId("");
-    setActivityTime(formatTimeInput(new Date()));
-    setActivityComposerOpen(false);
-    await refresh();
-  }
-
-  async function deleteActivity(id: string) {
-    await fetch(`/api/activities/${id}`, { method: "DELETE" });
-    await refresh();
-  }
-
-  function setDiaryValue<K extends keyof Diary>(key: K, value: Diary[K]) {
-    setData((current) =>
-      current ? { ...current, diary: { ...current.diary, [key]: value } } : current
-    );
-  }
-
-  function openCapture(target: CaptureTarget) {
-    const destination: Record<CaptureTarget, { section: Section; field: string }> = {
-      task: { section: "today", field: "new-task" },
-      project: { section: "plan", field: "new-project-name" },
-      activity: { section: "today", field: "activity-note" },
-      note: { section: "journal", field: "new-note" },
-      material: { section: "journal", field: "material-url" }
-    };
-
-    if (target === "note") setJournalView("notes");
-    if (target === "material") setJournalView("materials");
-    if (target === "activity") setActivityComposerOpen(true);
-    if (target === "project") {
-      setPlanMode("projects");
-      setSelectedProjectId(null);
-      setProjectCreateOpen(true);
-    }
-    setActive(destination[target].section);
-    setCaptureOpen(false);
-    setToolsOpen(false);
-    window.setTimeout(() => document.getElementById(destination[target].field)?.focus(), 0);
-  }
-
-  function openProject(id: string) {
-    setSelectedProjectId(id);
-    setPlanMode("projects");
-    setActive("plan");
-    setCaptureOpen(false);
-    setToolsOpen(false);
-  }
-
-  function openFocus(target: FocusTarget) {
-    setFocusDraft({ ...target, revision: Date.now() });
-    setActive("today");
-    setCaptureOpen(false);
-    setToolsOpen(false);
-    window.setTimeout(
-      () => document.getElementById("focus-timer-title")?.scrollIntoView({
-        behavior: "smooth",
-        block: "center"
-      }),
-      0
-    );
-  }
-
-  async function resolveUnfinishedTask(id: string, date: string | null, source: string) {
-    await updateTask(id, { date, scheduleSource: source });
-    setScheduleUndoTaskId(id);
-  }
-
-  async function undoScheduleChange(id: string) {
-    await fetch(`/api/tasks/${id}/schedule/undo`, { method: "POST" });
-    setScheduleUndoTaskId(null);
+    setActivityError("");
+    setActivityOpen(false);
     await refresh();
   }
 
@@ -534,860 +549,893 @@ export function Dashboard() {
     );
   }
 
+  const isToday = screen === "today";
+  const liveFocus = focus.active ?? focus.pendingCompletion;
+  const showFullRail =
+    (!compactLayout && (isToday || railExpanded)) ||
+    (phoneLayout && railExpanded && Boolean(liveFocus));
+  const showStrip =
+    Boolean(liveFocus) &&
+    !railExpanded &&
+    (compactLayout || !isToday);
+  const focusedMinutes = focus.snapshot?.today.focusedMinutes ?? 0;
+  const completedSessions = focus.snapshot?.today.completedSessions ?? 0;
+  const firstRun =
+    firstRunSeen === false &&
+    data.tasks.length === 0 &&
+    data.projects.length === 0 &&
+    data.activities.length === 0;
+
   return (
-    <main className="app-shell">
+    <main className="app-shell focus-shell">
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-mark">D</div>
-          <div>
-            <strong>Dayflow</strong>
-            <span>Local notebook</span>
-          </div>
+          <strong>Dayflow</strong>
         </div>
+        <button className="search-trigger" onClick={() => setPaletteOpen(true)}>
+          <Plus size={15} />
+          <span>Search or add</span>
+          <kbd>⌘K</kbd>
+        </button>
         <nav className="nav-list" aria-label="Primary">
           {nav.map((item) => {
             const Icon = item.icon;
+            const itemScreen = item.id === "day" ? "day-stream" : item.id;
+            const active =
+              item.id === "day" ? screen.startsWith("day-") : screen === itemScreen;
+            const count =
+              item.id === "today"
+                ? openTodayTasks.length
+                : item.id === "projects"
+                  ? data.projects.filter((project) => project.status === "ACTIVE").length
+                  : item.id === "backlog"
+                    ? backlogTasks.length
+                    : null;
             return (
               <button
                 key={item.id}
-                className={active === item.id ? "nav-item active" : "nav-item"}
-                onClick={() => {
-                  setActive(item.id);
-                  setCaptureOpen(false);
-                  setToolsOpen(false);
-                }}
+                className={active ? "nav-item active" : "nav-item"}
+                data-nav-id={item.id}
+                onClick={() => navigate(itemScreen as Screen)}
               >
-                <Icon size={17} />
-                {item.label}
+                <Icon size={16} />
+                <span>{item.label}</span>
+                {count !== null && <small>{count}</small>}
               </button>
             );
           })}
+          <button
+            className={mobileMoreOpen ? "nav-item mobile-more active" : "nav-item mobile-more"}
+            onClick={() => setMobileMoreOpen((open) => !open)}
+          >
+            <Menu size={16} />
+            <span>More</span>
+          </button>
         </nav>
-        <p className="sidebar-note">Decide. Do. Capture. Review.</p>
+        {!liveFocus && !isToday && (
+          <button
+            className="sidebar-focus-button"
+            onClick={() => {
+              setFocusDraft({ revision: Date.now(), plannedMinutes: 25 });
+              setRailExpanded(true);
+            }}
+          >
+            <Play size={14} />
+            Start focus
+            <kbd>⌘⇧F</kbd>
+          </button>
+        )}
+        <footer className="sidebar-focus-summary">
+          <span className="eyebrow">Today&apos;s focus</span>
+          <strong>{formatMinutes(focusedMinutes)}</strong>
+          <div className="focus-pips" aria-label={`${completedSessions} of 4 planned blocks`}>
+            {[0, 1, 2, 3].map((index) => (
+              <i key={index} className={index < completedSessions ? "filled" : ""} />
+            ))}
+          </div>
+          <small>{completedSessions} of 4 planned blocks</small>
+        </footer>
       </aside>
 
-      <section className={compactMode ? "workspace compact-mode" : "workspace"}>
-        <header className="topbar">
-          <div className="page-intro">
-            <p className="date-line">{formatLongDate(data.today)}</p>
-            <h1>{headlineFor(active)}</h1>
-          </div>
-          <div className="topbar-actions">
-            <div className="menu-anchor">
-              <button
-                className="capture-button"
-                aria-expanded={captureOpen}
-                onClick={() => {
-                  setCaptureOpen((open) => !open);
-                  setToolsOpen(false);
-                }}
-              >
-                <Plus size={16} />
-                Capture
-              </button>
-              {captureOpen && (
-                <div className="action-menu capture-menu" aria-label="Capture options">
-                  <button onClick={() => openCapture("task")}>New task</button>
-                  <button onClick={() => openCapture("project")}>New project</button>
-                  <button onClick={() => openCapture("activity")}>Record activity</button>
-                  <button onClick={() => openCapture("note")}>Write note</button>
-                  <button onClick={() => openCapture("material")}>Save reference</button>
-                </div>
-              )}
-            </div>
-            <div className="menu-anchor">
-              <button
-                className="icon-button"
-                aria-label="Open tools"
-                aria-expanded={toolsOpen}
-                onClick={() => {
-                  setToolsOpen((open) => !open);
-                  setCaptureOpen(false);
-                }}
-              >
-                <Settings2 size={17} />
-              </button>
-              {toolsOpen && (
-                <div className="action-menu tools-menu" aria-label="Tools">
-                  <button
-                    title="Toggle compact mode"
-                    onClick={() => {
-                      setCompactMode((compact) => !compact);
-                      setToolsOpen(false);
-                    }}
-                  >
-                    {compactMode ? <Expand size={16} /> : <Shrink size={16} />}
-                    {compactMode ? "Comfortable density" : "Compact density"}
-                  </button>
-                  <a href="/api/agent-export" target="_blank">
-                    <Sparkles size={16} />
-                    Agent export
-                  </a>
-                  <span>More data tools will live here.</span>
-                </div>
-              )}
-            </div>
-          </div>
-        </header>
-
-        {active !== "today" && (
-          <FocusSessionBanner
-            onOpenToday={() => {
-              setActive("today");
-              window.setTimeout(
-                () => document.getElementById("focus-timer-title")?.scrollIntoView({
-                  behavior: "smooth",
-                  block: "center"
-                }),
-                0
-              );
-            }}
+      <section className="workspace">
+        <button
+          className="mobile-capture-button"
+          aria-label="Search or add"
+          onClick={() => setPaletteOpen(true)}
+        >
+          <Plus size={19} />
+        </button>
+        {screen === "today" && firstRun && (
+          <FirstRunPage today={data.today} onBegin={beginFirstRun} />
+        )}
+        {screen === "today" && !firstRun && (
+          <TodayPage
+            today={data.today}
+            tasks={todayTasks}
+            backlogTasks={backlogTasks}
+            unfinishedTasks={visibleUnfinished}
+            projects={data.projects}
+            projectById={projectById}
+            plannedMinutes={plannedMinutes}
+            focusedMinutes={focusedMinutes}
+            activeFocus={focus.active}
+            focusNow={focus.now}
+            focusBusy={focus.busy}
+            onFocusTransition={focus.transition}
+            onAddTask={addTask}
+            newTask={newTask}
+            onNewTaskChange={setNewTask}
+            onUpdateTask={updateTask}
+            onDeleteTask={deleteTask}
+            onReorderTask={reorderTask}
+            onAnnounce={setAppAnnouncement}
+            onStartFocus={openFocus}
+            onOpenProject={openProject}
+            onOpenBacklog={() => navigate("backlog")}
+            onLeaveUnfinished={(id) =>
+              setDismissedUnfinished((current) => [...current, id])
+            }
+            activities={data.activities}
           />
         )}
 
-        {active === "today" && (
-          <div className="today-layout">
-            <section className="panel task-panel">
-              <PanelTitle icon={<Check size={18} />} title="Today" detail={`${summary.completed}/${summary.total} done`} />
-              {visibleUnfinishedTasks.length > 0 && (
-                <UnfinishedTray
-                  tasks={visibleUnfinishedTasks}
-                  projects={projectById}
-                  today={data.today}
-                  onResolve={resolveUnfinishedTask}
-                  onLeave={(id) =>
-                    setDismissedUnfinished((current) => [...current, id])
-                  }
-                />
-              )}
-              {scheduleUndoTaskId && (
-                <div className="schedule-undo">
-                  <span>Task schedule updated.</span>
-                  <button
-                    className="text-button"
-                    onClick={() => void undoScheduleChange(scheduleUndoTaskId)}
-                  >
-                    <RefreshCw size={14} />
-                    Undo
-                  </button>
-                </div>
-              )}
-              <div className="task-input-row">
-                <input
-                  id="new-task"
-                  value={newTask}
-                  onChange={(event) => setNewTask(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") void addTask();
-                  }}
-                  placeholder="Add a task for today"
-                />
-                <button className="primary-button" onClick={() => void addTask()}>
-                  <Plus size={16} />
-                  Add
-                </button>
-              </div>
-              <div className="task-list">
-                {openTodayTasks.map((task) => (
-                  <TaskRow
-                    key={task.id}
-                    task={task}
-                    onUpdate={updateTask}
-                    onDelete={deleteTask}
-                    onReorder={reorderTask}
-                    project={task.projectId ? projectById.get(task.projectId) : undefined}
-                    projects={data.projects}
-                    onOpenProject={openProject}
-                    onStartFocus={(task) =>
-                      openFocus({
-                        taskId: task.id,
-                        projectId: task.projectId ?? undefined,
-                        label: task.title
-                      })
-                    }
-                  />
-                ))}
-                {!openTodayTasks.length && !completedTodayTasks.length && (
-                  <div className="quiet-empty">
-                    <strong>Your day is open.</strong>
-                    <span>Add one thing that would make today feel complete.</span>
-                  </div>
-                )}
-              </div>
-              {completedTodayTasks.length > 0 && (
-                <details className="completed-group">
-                  <summary>Completed · {completedTodayTasks.length}</summary>
-                  <div className="task-list completed-list">
-                    {completedTodayTasks.map((task) => (
-                      <TaskRow
-                        key={task.id}
-                        task={task}
-                        onUpdate={updateTask}
-                        onDelete={deleteTask}
-                        onReorder={reorderTask}
-                        project={task.projectId ? projectById.get(task.projectId) : undefined}
-                        projects={data.projects}
-                        onOpenProject={openProject}
-                        onStartFocus={(task) =>
-                          openFocus({
-                            taskId: task.id,
-                            projectId: task.projectId ?? undefined,
-                            label: task.title
-                          })
-                        }
-                      />
-                    ))}
-                  </div>
-                </details>
-              )}
-            </section>
-
-            <div className="today-side">
-              <section className="pulse-strip" aria-label="Daily pulse">
-                <div className="pulse-heading">
-                  <div>
-                    <Clock3 size={18} />
-                    <h2>Daily pulse</h2>
-                  </div>
-                  <span>{summary.rate}% complete</span>
-                </div>
-                <div className="pulse-grid">
-                  <Metric label="Planned" value={`${summary.estimate}m`} />
-                  <Metric label="Spent" value={`${summary.actual}m`} />
-                  <Metric label="Energy" value={`${data.diary.energy}/5`} />
-                  <Metric label="Mood" value={`${data.diary.mood}/5`} />
-                </div>
-              </section>
-
-              <FocusTimer
-                tasks={data.tasks.filter((task) => task.status !== "DONE")}
-                projects={data.projects}
-                today={data.today}
-                draft={focusDraft}
-              />
-
-              <section className="panel activity-panel">
-                <PanelTitle
-                  icon={<Clock3 size={18} />}
-                  title="Activity"
-                  detail={`${summary.actual}m recorded`}
-                />
-                <details
-                  className="composer"
-                  open={activityComposerOpen}
-                  onToggle={(event) => setActivityComposerOpen(event.currentTarget.open)}
-                >
-                  <summary>
-                    <Plus size={15} />
-                    Record activity
-                  </summary>
-                  <div className="activity-form">
-                    <textarea
-                      id="activity-note"
-                      value={activityNote}
-                      onChange={(event) => {
-                        setActivityNote(event.target.value);
-                        if (activityError) setActivityError("");
-                      }}
-                      placeholder="Record a small win or what moved forward."
-                    />
-                    <div className="activity-form-grid">
-                      <label>
-                        Minutes
-                        <input
-                          type="number"
-                          min="1"
-                          max="1440"
-                          step="5"
-                          value={activityDuration}
-                          onChange={(event) => setActivityDuration(event.target.value)}
-                        />
-                      </label>
-                      <label>
-                        Category
-                        <select
-                          value={activityCategory}
-                          onChange={(event) => setActivityCategory(event.target.value)}
-                        >
-                          {activityCategories.map((category) => (
-                            <option key={category} value={category}>
-                              {category}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    </div>
-                    <div className="activity-form-grid secondary-fields">
-                      <label>
-                        Time
-                        <input
-                          type="time"
-                          value={activityTime}
-                          onChange={(event) => setActivityTime(event.target.value)}
-                        />
-                      </label>
-                      <label className="activity-task-field">
-                        Linked task
-                        <select
-                          value={activityTaskId}
-                          onChange={(event) => {
-                            const taskId = event.target.value;
-                            setActivityTaskId(taskId);
-                            const task = todayTasks.find((item) => item.id === taskId);
-                            if (task?.projectId) setActivityProjectId("");
-                          }}
-                        >
-                          <option value="">No linked task</option>
-                          {todayTasks.map((task) => (
-                            <option key={task.id} value={task.id}>
-                              {task.title}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="activity-project-field">
-                        Project
-                        <select
-                          value={
-                            selectedActivityTask?.projectId ?? activityProjectId
-                          }
-                          disabled={Boolean(selectedActivityTask?.projectId)}
-                          onChange={(event) => setActivityProjectId(event.target.value)}
-                        >
-                          <option value="">No linked project</option>
-                          {data.projects
-                            .filter((project) => project.status !== "ARCHIVED")
-                            .map((project) => (
-                              <option key={project.id} value={project.id}>
-                                {project.name}
-                              </option>
-                            ))}
-                        </select>
-                      </label>
-                    </div>
-                    {activityError && <p className="form-error">{activityError}</p>}
-                    <button className="secondary-button" onClick={() => void addActivity()}>
-                      <Plus size={16} />
-                      Add activity
-                    </button>
-                  </div>
-                </details>
-                <ActivityList
-                  activities={todayActivities}
-                  tasks={todayTasks}
-                  projects={projectById}
-                  onDelete={deleteActivity}
-                />
-              </section>
-            </div>
-          </div>
+        {screen.startsWith("day-") && (
+          <DayPage
+            view={screen.replace("day-", "") as DayView}
+            today={data.today}
+            tasks={openTodayTasks}
+            activities={data.activities}
+            timeBlocks={data.timeBlocks}
+            projects={projectById}
+            plannedMinutes={plannedMinutes}
+            recordedMinutes={activityMinutes}
+            noteCount={data.notes.length}
+            activeFocus={focus.active}
+            focusNow={focus.now}
+            focusBusy={focus.busy}
+            onViewChange={(view) => navigate(`day-${view}`)}
+            onStartFocus={openFocus}
+            onFocusTransition={focus.transition}
+            onOpenPalette={() => setPaletteOpen(true)}
+          />
         )}
 
-        {active === "plan" && (
-          <div className="section-stack">
-            <div className="view-switcher plan-mode-switcher" role="tablist" aria-label="Plan mode">
-              {(["day", "projects"] as PlanMode[]).map((mode) => (
-                <button
-                  key={mode}
-                  className={planMode === mode ? "active" : ""}
-                  aria-selected={planMode === mode}
-                  role="tab"
-                  onClick={() => setPlanMode(mode)}
-                >
-                  {mode === "day" ? "Day plan" : "Projects"}
-                </button>
-              ))}
-            </div>
-            {planMode === "day" && (
-              <div className="day-plan-workspace" role="tabpanel" aria-label="Day plan">
-                <div
-                  className="view-switcher secondary-view-switcher"
-                  role="tablist"
-                  aria-label="Day plan view"
-                >
-                  {(["list", "timeline", "matrix"] as DayPlanView[]).map((view) => (
-                    <button
-                      key={view}
-                      className={dayPlanView === view ? "active" : ""}
-                      aria-selected={dayPlanView === view}
-                      role="tab"
-                      onClick={() => setDayPlanView(view)}
-                    >
-                      {`${view[0].toUpperCase()}${view.slice(1)}`}
-                    </button>
-                  ))}
-                </div>
-                {dayPlanView === "list" && (
-                  <section className="panel focused-panel">
-                    <PanelTitle icon={<Circle size={18} />} title="What comes next" detail={`${planningTasks.length} open`} />
-                    <TaskCompactList tasks={planningTasks} />
-                    <div className="plan-backlog">
-                      <div>
-                        <strong>Backlog</strong>
-                        <span>{generalBacklogTasks.length} unscheduled</span>
-                      </div>
-                      <BacklogList tasks={generalBacklogTasks} onUpdate={updateTask} />
-                    </div>
-                  </section>
-                )}
-                {dayPlanView === "timeline" && (
-                  <section className="panel focused-panel">
-                    <PanelTitle icon={<CalendarDays size={18} />} title="Timeline" detail="Today and tomorrow" />
-                    <MiniTimeline blocks={data.timeBlocks} tasks={data.tasks} today={data.today} expanded />
-                  </section>
-                )}
-                {dayPlanView === "matrix" && (
-                  <section className="panel matrix-panel focused-panel">
-                    <PanelTitle icon={<LayoutDashboard size={18} />} title="Urgency and importance" detail="Optional planning tool" />
-                    <UrgencyImportanceMatrix tasks={planningTasks} today={data.today} onUpdate={updateTask} />
-                  </section>
-                )}
-              </div>
-            )}
-            {planMode === "projects" && (
-              <div role="tabpanel" aria-label="Projects">
-                <ProjectsWorkspace
-                  projects={data.projects}
-                  selectedProjectId={selectedProjectId}
-                  createOpen={projectCreateOpen}
-                  today={data.today}
-                  onSelectedProjectChange={setSelectedProjectId}
-                  onCreateOpenChange={setProjectCreateOpen}
-                  onDataChanged={refresh}
-                  onStartFocus={openFocus}
-                />
-              </div>
-            )}
-          </div>
+        {screen === "projects" && (
+          <ProjectsWorkspace
+            projects={data.projects}
+            selectedProjectId={selectedProjectId}
+            createOpen={projectCreateOpen}
+            today={data.today}
+            onSelectedProjectChange={setSelectedProjectId}
+            onCreateOpenChange={setProjectCreateOpen}
+            onDataChanged={refresh}
+            onStartFocus={openFocus}
+            onOpenBacklog={openProjectBacklog}
+          />
         )}
 
-        {active === "journal" && (
-          <div className="section-stack">
-            <div className="view-switcher" role="tablist" aria-label="Journal view">
-              {(["diary", "notes", "materials"] as JournalView[]).map((view) => (
-                <button
-                  key={view}
-                  className={journalView === view ? "active" : ""}
-                  aria-selected={journalView === view}
-                  role="tab"
-                  onClick={() => setJournalView(view)}
-                >
-                  {`${view[0].toUpperCase()}${view.slice(1)}`}
-                </button>
-              ))}
-            </div>
-            {journalView === "diary" && (
-              <section className="panel journal-editor focused-panel">
-                <PanelTitle icon={<BookOpen size={18} />} title="Daily page" detail={savingDiary ? "Saving" : "Today"} />
-                <textarea
-                  className="large-textarea"
-                  value={data.diary.content}
-                  onChange={(event) => setDiaryValue("content", event.target.value)}
-                  placeholder="Write a few lines about the day."
-                />
-                <div className="range-row">
-                  <label>
-                    Mood · {data.diary.mood}/5
-                    <input
-                      type="range"
-                      min="1"
-                      max="5"
-                      value={data.diary.mood}
-                      onChange={(event) => setDiaryValue("mood", Number(event.target.value))}
-                    />
-                  </label>
-                  <label>
-                    Energy · {data.diary.energy}/5
-                    <input
-                      type="range"
-                      min="1"
-                      max="5"
-                      value={data.diary.energy}
-                      onChange={(event) => setDiaryValue("energy", Number(event.target.value))}
-                    />
-                  </label>
-                  <button className="primary-button" onClick={() => void saveDiary()}>
-                    <Save size={16} />
-                    Save
-                  </button>
-                </div>
-              </section>
-            )}
-            {journalView === "notes" && (
-              <TwoColumnView
-                left={
-                  <section className="panel">
-                    <PanelTitle icon={<NotebookPen size={18} />} title="Notes" detail={`${data.notes.length} saved`} />
-                    <NoteList notes={data.notes} projects={projectById} />
-                  </section>
-                }
-                right={
-                  <section className="panel">
-                    <PanelTitle icon={<Plus size={18} />} title="New note" detail="Quick capture" />
-                    <div className="note-input">
-                      <textarea
-                        id="new-note"
-                        value={newNote}
-                        onChange={(event) => setNewNote(event.target.value)}
-                        placeholder="Capture a thought, decision, or reminder."
-                      />
-                      <input
-                        value={noteTags}
-                        onChange={(event) => setNoteTags(event.target.value)}
-                        placeholder="Tags, comma separated"
-                      />
-                      <select
-                        value={noteProjectId}
-                        onChange={(event) => setNoteProjectId(event.target.value)}
-                        aria-label="Note project"
-                      >
-                        <option value="">No linked project</option>
-                        {data.projects
-                          .filter((project) => project.status !== "ARCHIVED")
-                          .map((project) => (
-                            <option key={project.id} value={project.id}>
-                              {project.name}
-                            </option>
-                          ))}
-                      </select>
-                      <button className="primary-button" onClick={() => void addNote()}>
-                        <Plus size={16} />
-                        Save note
-                      </button>
-                    </div>
-                  </section>
-                }
-              />
-            )}
-            {journalView === "materials" && (
-              <TwoColumnView
-                left={
-                  <section className="panel">
-                    <PanelTitle icon={<Library size={18} />} title="References" detail={`${data.materials.length} saved`} />
-                    <MaterialList materials={data.materials} projects={projectById} />
-                  </section>
-                }
-                right={
-                  <section className="panel">
-                    <PanelTitle icon={<LinkIcon size={18} />} title="Save reference" detail="Link with context" />
-                    <div className="material-form roomy">
-                      <input value={materialTitle} onChange={(event) => setMaterialTitle(event.target.value)} placeholder="Title" />
-                      <input id="material-url" value={materialUrl} onChange={(event) => setMaterialUrl(event.target.value)} placeholder="URL" />
-                      <textarea value={materialNotes} onChange={(event) => setMaterialNotes(event.target.value)} placeholder="Why this matters" />
-                      <select
-                        value={materialProjectId}
-                        onChange={(event) => setMaterialProjectId(event.target.value)}
-                        aria-label="Reference project"
-                      >
-                        <option value="">No linked project</option>
-                        {data.projects
-                          .filter((project) => project.status !== "ARCHIVED")
-                          .map((project) => (
-                            <option key={project.id} value={project.id}>
-                              {project.name}
-                            </option>
-                          ))}
-                      </select>
-                      <button className="primary-button" onClick={() => void addMaterial()}>
-                        <Plus size={16} />
-                        Save reference
-                      </button>
-                    </div>
-                  </section>
-                }
-              />
-            )}
-          </div>
+        {screen === "backlog" && (
+          <BacklogPage
+            tasks={backlogTasks}
+            projects={projectById}
+            today={data.today}
+            arrangement={backlogArrange}
+            onArrangementChange={setBacklogArrange}
+            scopeProjectId={backlogScopeProjectId}
+            onClearScope={() => setBacklogScopeProjectId(null)}
+            onOpenProject={openProject}
+            activeTaskId={focus.active?.taskId ?? null}
+            onStartFocus={openFocus}
+            onUpdateTask={updateTask}
+            onOpenPalette={() => setPaletteOpen(true)}
+          />
         )}
 
-        {active === "review" && (
-          <div className="review-page">
-            <div className="two-column review-summary">
-              <section className="panel">
-                <PanelTitle icon={<Sparkles size={18} />} title="Today reviewed" detail={`${summary.completed} completed`} />
-                <div className="review-stack">
-                  <Metric label="Completion" value={`${summary.rate}%`} />
-                  <Metric label="Remaining" value={`${Math.max(summary.total - summary.completed, 0)}`} />
-                  <Metric label="Actual time" value={`${summary.actual}m`} />
-                </div>
-                <TaskCompactList tasks={todayTasks.filter((task) => task.status !== "DONE")} />
-              </section>
-              <section className="panel">
-                <PanelTitle icon={<FileText size={18} />} title="Reflection" detail="Plan tomorrow" />
-                <textarea
-                  className="large-textarea"
-                  value={data.diary.reflection}
-                  onChange={(event) => setDiaryValue("reflection", event.target.value)}
-                  placeholder="What worked, what needs attention, and what should move to tomorrow?"
-                />
-                <button className="primary-button wide" onClick={() => void saveDiary()}>
-                  <Save size={16} />
-                  Save reflection
-                </button>
-              </section>
-            </div>
-            <section className="panel project-review-panel">
-              <PanelTitle
-                icon={<FolderKanban size={18} />}
-                title="Projects moved forward"
-                detail={`${movedProjects.length} this week`}
-              />
-              {movedProjects.length ? (
-                <div className="project-review-list">
-                  {movedProjects.slice(0, 5).map((project) => (
-                    <button key={project.id} onClick={() => openProject(project.id)}>
-                      <span>{project.name}</span>
-                      <small>
-                        {project.completedTaskCount}/{project.taskCount} tasks ·{" "}
-                        {project.investedMinutes}m invested
-                      </small>
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <p className="empty-copy">
-                  Record an activity or complete a Project task to make progress visible here.
-                </p>
-              )}
-            </section>
-            <section className="panel insights-panel">
-              <PanelTitle icon={<LayoutDashboard size={18} />} title="Seven-day view" detail="Patterns, not pressure" />
-              <Charts stats={data.stats} />
-            </section>
-          </div>
+        {screen === "journal" && (
+          <JournalPage
+            today={data.today}
+            view={journalView}
+            onViewChange={setJournalView}
+            diary={data.diary}
+            notes={data.notes}
+            materials={data.materials}
+            projects={projectById}
+            saving={savingDiary}
+            onDiaryChange={setDiaryValue}
+            onSaveDiary={saveDiary}
+            newNote={newNote}
+            noteTags={noteTags}
+            onNewNoteChange={setNewNote}
+            onNoteTagsChange={setNoteTags}
+            onAddNote={addNote}
+            materialTitle={materialTitle}
+            materialUrl={materialUrl}
+            materialNotes={materialNotes}
+            onMaterialTitleChange={setMaterialTitle}
+            onMaterialUrlChange={setMaterialUrl}
+            onMaterialNotesChange={setMaterialNotes}
+            onAddMaterial={addMaterial}
+          />
+        )}
+
+        {screen === "review" && (
+          <ReviewPage
+            today={data.today}
+            stats={data.stats}
+            projects={data.projects}
+            diary={data.diary}
+            summary={data.reviewSummary}
+            onDiaryChange={setDiaryValue}
+            onSaveDiary={saveDiary}
+            onOpenProject={openProject}
+          />
         )}
       </section>
+
+      {mobileMoreOpen && (
+        <div className="mobile-more-menu" role="menu" aria-label="More destinations">
+          <button role="menuitem" onClick={() => navigate("backlog")}>
+            <FolderKanban size={17} />
+            Backlog
+            <small>{backlogTasks.length}</small>
+          </button>
+          <button role="menuitem" onClick={() => navigate("journal")}>
+            <NotebookPen size={17} />
+            Journal
+          </button>
+        </div>
+      )}
+
+      {phoneLayout && railExpanded && liveFocus && (
+        <button
+          className="focus-sheet-backdrop"
+          aria-label="Close focus sheet"
+          onClick={() => setRailExpanded(false)}
+        />
+      )}
+      {showFullRail && (
+        <FocusRail
+          tasks={data.tasks.filter((task) => task.status !== "DONE")}
+          projects={data.projects}
+          today={data.today}
+          draft={focusDraft}
+          activities={data.activities}
+          mode="full"
+          collapsible={!isToday || phoneLayout}
+          onCollapse={() => setRailExpanded(false)}
+          onOpenPalette={() => setPaletteOpen(true)}
+        />
+      )}
+      {showStrip && (
+        <FocusRail
+          tasks={data.tasks.filter((task) => task.status !== "DONE")}
+          projects={data.projects}
+          today={data.today}
+          draft={focusDraft}
+          activities={data.activities}
+          mode="strip"
+          onExpand={
+            phoneLayout || !compactLayout ? () => setRailExpanded(true) : undefined
+          }
+        />
+      )}
+
+      {paletteOpen && (
+        <CommandPalette
+          projects={data.projects}
+          onClose={() => setPaletteOpen(false)}
+          onStartFocus={() => {
+            openFocus({ plannedMinutes: 50 });
+            if (screen !== "today") setRailExpanded(true);
+          }}
+          onNewTask={() => {
+            navigate("today");
+            window.setTimeout(() => document.getElementById("new-task")?.focus(), 0);
+          }}
+          onLogActivity={() => {
+            setPaletteOpen(false);
+            setActivityOpen(true);
+          }}
+          onWriteNote={() => {
+            navigate("journal");
+            setJournalView("notes");
+            window.setTimeout(() => document.getElementById("new-note")?.focus(), 0);
+          }}
+          onSaveReference={() => {
+            navigate("journal");
+            setJournalView("references");
+            window.setTimeout(() => document.getElementById("material-url")?.focus(), 0);
+          }}
+          onOpenProject={openProject}
+        />
+      )}
+
+      {activityOpen && (
+        <ActivityDialog
+          tasks={todayTasks}
+          time={activityTime}
+          duration={activityDuration}
+          category={activityCategory}
+          taskId={activityTaskId}
+          note={activityNote}
+          error={activityError}
+          onTimeChange={setActivityTime}
+          onDurationChange={setActivityDuration}
+          onCategoryChange={setActivityCategory}
+          onTaskChange={setActivityTaskId}
+          onNoteChange={(value) => {
+            setActivityNote(value);
+            setActivityError("");
+          }}
+          onClose={() => setActivityOpen(false)}
+          onSave={addActivity}
+        />
+      )}
+      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {appAnnouncement}
+      </div>
+      {appError && (
+        <div className="app-error-toast" role="alert">
+          <span>{appError}</span>
+          <button className="text-button" onClick={() => setAppError("")}>
+            Dismiss
+          </button>
+        </div>
+      )}
     </main>
   );
 }
 
-function UnfinishedTray({
-  tasks,
-  projects,
+function TodayPage({
   today,
-  onResolve,
-  onLeave
+  tasks,
+  backlogTasks,
+  unfinishedTasks,
+  projects,
+  projectById,
+  plannedMinutes,
+  focusedMinutes,
+  activeFocus,
+  focusNow,
+  focusBusy,
+  onFocusTransition,
+  onAddTask,
+  newTask,
+  onNewTaskChange,
+  onUpdateTask,
+  onDeleteTask,
+  onReorderTask,
+  onAnnounce,
+  onStartFocus,
+  onOpenProject,
+  onOpenBacklog,
+  onLeaveUnfinished,
+  activities
 }: {
-  tasks: Task[];
-  projects: Map<string, ProjectSummary>;
   today: string;
-  onResolve: (id: string, date: string | null, source: string) => Promise<void>;
-  onLeave: (id: string) => void;
+  tasks: Task[];
+  backlogTasks: Task[];
+  unfinishedTasks: Task[];
+  projects: ProjectSummary[];
+  projectById: Map<string, ProjectSummary>;
+  plannedMinutes: number;
+  focusedMinutes: number;
+  activeFocus: ReturnType<typeof useFocusSession>["active"];
+  focusNow: number;
+  focusBusy: boolean;
+  onFocusTransition: ReturnType<typeof useFocusSession>["transition"];
+  onAddTask: () => Promise<void>;
+  newTask: string;
+  onNewTaskChange: (value: string) => void;
+  onUpdateTask: (
+    id: string,
+    patch: Partial<Task> & { scheduleSource?: string }
+  ) => Promise<boolean>;
+  onDeleteTask: (id: string) => Promise<void>;
+  onReorderTask: (source: string, target: string) => Promise<boolean>;
+  onAnnounce: (message: string) => void;
+  onStartFocus: (target: FocusTarget) => void;
+  onOpenProject: (id: string) => void;
+  onOpenBacklog: () => void;
+  onLeaveUnfinished: (id: string) => void;
+  activities: ActivityEntry[];
 }) {
+  const open = tasks.filter((task) => task.status !== "DONE");
+  const done = tasks.filter((task) => task.status === "DONE");
+  const firstCarry = unfinishedTasks[0];
+  const [reorderMode, setReorderMode] = useState(false);
+  const reorderButtonRef = useRef<HTMLButtonElement | null>(null);
+  const instructionDoneRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    if (!reorderMode) return;
+    instructionDoneRef.current?.focus();
+    function exitOnEscape(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setReorderMode(false);
+      window.setTimeout(() => reorderButtonRef.current?.focus(), 0);
+    }
+    window.addEventListener("keydown", exitOnEscape);
+    return () => window.removeEventListener("keydown", exitOnEscape);
+  }, [reorderMode]);
+
+  function finishReordering() {
+    setReorderMode(false);
+    window.setTimeout(() => reorderButtonRef.current?.focus(), 0);
+  }
+
+  async function moveTask(task: Task, index: number, direction: -1 | 1) {
+    const target = open[index + direction];
+    if (!target) return;
+    const moved = await onReorderTask(task.id, target.id);
+    if (!moved) return;
+    const nextIndex = index + direction;
+    onAnnounce(`Moved "${task.title}" to position ${nextIndex + 1} of ${open.length}.`);
+    window.requestAnimationFrame(() => {
+      const preferredDirection =
+        nextIndex === 0 ? "down" : nextIndex === open.length - 1 ? "up" : direction < 0 ? "up" : "down";
+      document
+        .querySelector<HTMLButtonElement>(
+          `[data-reorder-task="${task.id}"][data-reorder-direction="${preferredDirection}"]`
+        )
+        ?.focus();
+    });
+  }
+
   return (
-    <details className="unfinished-tray" open>
-      <summary>
-        <span>
+    <div className="today-page page-stack">
+      <PageHeader
+        eyebrow={formatLongDate(today)}
+        title={`${numberWord(open.length)} ${open.length === 1 ? "block" : "blocks"} left`}
+        actions={
+          <div className="today-metrics">
+            <span>{plannedMinutes}m planned</span>
+            <strong>{focusedMinutes}m done</strong>
+          </div>
+        }
+      />
+
+      {firstCarry && (
+        <section className="carry-over-strip">
           <RefreshCw size={15} />
-          {tasks.length} unfinished {tasks.length === 1 ? "task" : "tasks"}
-        </span>
-        <small>Choose what should happen</small>
-      </summary>
-      <div className="unfinished-list">
-        {tasks.map((task) => {
-          const project = task.projectId ? projects.get(task.projectId) : null;
-          return (
-            <article key={task.id}>
-              <div className="unfinished-copy">
-                <strong>{task.title}</strong>
-                <span>
-                  {task.date ? formatShortDate(task.date) : "Previously scheduled"}
-                  {project ? ` · ${project.name}` : ""}
-                </span>
-              </div>
-              <div className="unfinished-actions">
-                <button
-                  className="secondary-button"
-                  onClick={() =>
-                    void onResolve(task.id, today.slice(0, 10), "unfinished-to-today")
+          <p>
+            <strong>{firstCarry.title}</strong> was left on{" "}
+            {firstCarry.date ? formatShortDate(firstCarry.date) : "an earlier day"}
+          </p>
+          <div>
+            <button
+              className="secondary-button"
+              onClick={() =>
+                void onUpdateTask(firstCarry.id, {
+                  date: today.slice(0, 10),
+                  scheduleSource: "unfinished-to-today"
+                })
+              }
+            >
+              Do it today
+            </button>
+            <label className="pick-day-button">
+              Pick a day
+              <input
+                type="date"
+                aria-label={`Pick a day for ${firstCarry.title}`}
+                onChange={(event) => {
+                  if (event.target.value) {
+                    void onUpdateTask(firstCarry.id, {
+                      date: event.target.value,
+                      scheduleSource: "unfinished-date-picker"
+                    });
                   }
-                >
-                  Move to today
-                </button>
-                <label className="unfinished-date-action">
-                  <span>Another day</span>
-                  <input
-                    type="date"
-                    aria-label={`Choose another day for ${task.title}`}
-                    onChange={(event) => {
-                      if (event.target.value) {
-                        void onResolve(task.id, event.target.value, "unfinished-date-picker");
-                      }
-                    }}
-                  />
-                </label>
-                <button
-                  className="text-button"
-                  title="Move to the backlog by removing the scheduled date"
-                  onClick={() => void onResolve(task.id, null, "unfinished-to-backlog")}
-                >
-                  Remove date
-                </button>
-                <button
-                  className="text-button"
-                  title="Keep the original date and hide this prompt until the page reloads"
-                  onClick={() => onLeave(task.id)}
-                >
-                  {task.date ? `Keep on ${formatShortDate(task.date)}` : "Skip for now"}
-                </button>
-              </div>
-            </article>
-          );
-        })}
-      </div>
-    </details>
+                }}
+              />
+            </label>
+            <button
+              className="text-button"
+              onClick={() =>
+                void onUpdateTask(firstCarry.id, {
+                  date: null,
+                  scheduleSource: "unfinished-to-backlog"
+                })
+              }
+            >
+              Unschedule
+            </button>
+            <button className="text-button" onClick={() => onLeaveUnfinished(firstCarry.id)}>
+              Leave on {firstCarry.date ? formatShortDate(firstCarry.date) : "that day"}
+            </button>
+          </div>
+        </section>
+      )}
+
+      {activeFocus && (
+        <section className="today-section now-section">
+          <div className="section-heading">
+            <span className="eyebrow focus-eyebrow">Now</span>
+            <small>
+              {activeFocus.status === "PAUSED" ? "paused" : "running"} ·{" "}
+              {formatFocusClock(focusRemainingSeconds(activeFocus, focusNow))} left
+            </small>
+          </div>
+          <div className="now-card">
+            <MiniFocusRing session={activeFocus} now={focusNow} />
+            <div>
+              <h2>{activeFocus.task?.title ?? activeFocus.label}</h2>
+              <p>
+                {[
+                  activeFocus.task?.project?.name ?? activeFocus.project?.name,
+                  activeFocus.task?.phase?.name,
+                  activeFocus.label !== activeFocus.task?.title
+                    ? activeFocus.label
+                    : null
+                ]
+                  .filter(Boolean)
+                  .join(" · ") || "Independent focus"}
+              </p>
+            </div>
+            <div className="now-actions">
+              <button
+                className="secondary-button"
+                disabled={focusBusy}
+                onClick={() =>
+                  void onFocusTransition(
+                    activeFocus.status === "PAUSED" ? "resume" : "pause"
+                  )
+                }
+              >
+                {activeFocus.status === "PAUSED" ? <Play size={14} /> : <Pause size={14} />}
+                {activeFocus.status === "PAUSED" ? "Resume" : "Pause"}
+              </button>
+              <button
+                className="primary-button"
+                disabled={focusBusy}
+                onClick={() => void onFocusTransition("complete")}
+              >
+                <Check size={14} />
+                Finish
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
+
+      <section className="today-section next-section">
+        <div className="section-heading">
+          <span className="eyebrow">Next</span>
+          <button
+            ref={reorderButtonRef}
+            className="text-button"
+            aria-pressed={reorderMode}
+            onClick={() => {
+              if (reorderMode) finishReordering();
+              else setReorderMode(true);
+            }}
+          >
+            {reorderMode ? "Done reordering" : "Reorder"}
+          </button>
+        </div>
+        {reorderMode && (
+          <div className="reorder-instruction" role="region" aria-label="Reorder tasks">
+            <span>
+              Reordering. Drag a row, or focus one and press ↑ ↓ to move it.
+            </span>
+            <button
+              ref={instructionDoneRef}
+              className="text-button"
+              onClick={finishReordering}
+            >
+              Done
+            </button>
+          </div>
+        )}
+        <div className="task-input-row">
+          <input
+            id="new-task"
+            value={newTask}
+            onChange={(event) => onNewTaskChange(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") void onAddTask();
+            }}
+            placeholder="Add a task for today"
+          />
+          <button className="primary-button" onClick={() => void onAddTask()}>
+            <Plus size={15} />
+            Add
+          </button>
+        </div>
+        <div className="task-list">
+          {open.map((task, index) => (
+            <TaskRow
+              key={task.id}
+              task={task}
+              suggested={index === 0}
+              project={task.projectId ? projectById.get(task.projectId) : undefined}
+              projects={projects}
+              reorderMode={reorderMode}
+              position={index}
+              total={open.length}
+              onMove={(direction) => void moveTask(task, index, direction)}
+              onUpdate={onUpdateTask}
+              onDelete={onDeleteTask}
+              onReorder={onReorderTask}
+              onOpenProject={onOpenProject}
+              onStartFocus={onStartFocus}
+            />
+          ))}
+          {!open.length && (
+            <div className="quiet-empty">
+              <strong>The day is clear.</strong>
+              <span>Add one deliberate block when you are ready.</span>
+            </div>
+          )}
+        </div>
+      </section>
+
+      {done.length > 0 && (
+        <details className="completed-group">
+          <summary>Done today · {done.length}</summary>
+          <div className="task-list completed-list">
+            {done.map((task) => (
+              <TaskRow
+                key={task.id}
+                task={task}
+                project={task.projectId ? projectById.get(task.projectId) : undefined}
+                projects={projects}
+                reorderMode={false}
+                onUpdate={onUpdateTask}
+                onDelete={onDeleteTask}
+                onReorder={onReorderTask}
+                onOpenProject={onOpenProject}
+                onStartFocus={onStartFocus}
+              />
+            ))}
+          </div>
+        </details>
+      )}
+
+      <section className="later-section">
+        <span className="eyebrow">Later · not today</span>
+        <div>
+          {backlogTasks.slice(0, 5).map((task) => (
+            <button
+              key={task.id}
+              onClick={() =>
+                void onUpdateTask(task.id, {
+                  date: today.slice(0, 10),
+                  scheduleSource: "later-pill"
+                })
+              }
+            >
+              {task.title} <strong>+ today</strong>
+            </button>
+          ))}
+          <button className="all-backlog-pill" onClick={onOpenBacklog}>
+            All backlog · {backlogTasks.length}
+          </button>
+        </div>
+      </section>
+
+      <section className="rail-card captured-card tablet-captured-card">
+        <div className="captured-heading">
+          <span className="eyebrow">Captured today</span>
+          <strong>
+            {activities.reduce((sum, activity) => sum + activity.durationMinutes, 0)}m
+          </strong>
+        </div>
+        <div className="captured-list">
+          {activities.slice(0, 4).map((activity) => (
+            <div key={activity.id}>
+              <time>
+                {new Date(activity.startedAt).toLocaleTimeString("en-US", {
+                  hour: "numeric",
+                  minute: "2-digit"
+                })}
+              </time>
+              <span>
+                <strong>{activity.note}</strong>
+                <small>{activity.durationMinutes}m · {activity.category}</small>
+              </span>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
   );
 }
 
 function TaskRow({
   task,
+  suggested = false,
+  project,
+  projects,
+  reorderMode = false,
+  position = 0,
+  total = 0,
+  onMove,
   onUpdate,
   onDelete,
   onReorder,
-  project,
-  projects,
   onOpenProject,
   onStartFocus
 }: {
   task: Task;
-  onUpdate: (id: string, patch: Partial<Task> & { scheduleSource?: string }) => Promise<boolean>;
-  onDelete: (id: string) => Promise<void>;
-  onReorder: (draggedId: string, targetId: string) => Promise<void>;
+  suggested?: boolean;
   project?: ProjectSummary;
   projects: ProjectSummary[];
+  reorderMode?: boolean;
+  position?: number;
+  total?: number;
+  onMove?: (direction: -1 | 1) => void;
+  onUpdate: (
+    id: string,
+    patch: Partial<Task> & { scheduleSource?: string }
+  ) => Promise<boolean>;
+  onDelete: (id: string) => Promise<void>;
+  onReorder: (source: string, target: string) => Promise<boolean>;
   onOpenProject: (id: string) => void;
-  onStartFocus: (task: Task) => void;
+  onStartFocus: (target: FocusTarget) => void;
 }) {
-  const isDone = task.status === "DONE";
-  const [isDraggable, setIsDraggable] = useState(false);
+  const done = task.status === "DONE";
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [titleDraft, setTitleDraft] = useState(task.title);
-  const [titleSaveState, setTitleSaveState] = useState<"idle" | "saving" | "saved" | "error">(
+  const [draggable, setDraggable] = useState(false);
+  const [title, setTitle] = useState(task.title);
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">(
     "idle"
   );
+  const titleSaveTimer = useRef<number | null>(null);
 
-  useEffect(() => setTitleDraft(task.title), [task.title]);
+  useEffect(() => setTitle(task.title), [task.title]);
 
-  async function saveTitle() {
-    const title = titleDraft.trim();
-    if (!title) {
-      setTitleDraft(task.title);
-      setTitleSaveState("error");
-      return;
-    }
-    if (title === task.title) return;
-    setTitleSaveState("saving");
-    const saved = await onUpdate(task.id, { title });
-    setTitleSaveState(saved ? "saved" : "error");
-    if (!saved) setTitleDraft(task.title);
+  useEffect(() => {
+    if (!title.trim() || title.trim() === task.title) return;
+    if (titleSaveTimer.current !== null) window.clearTimeout(titleSaveTimer.current);
+    titleSaveTimer.current = window.setTimeout(() => {
+      void saveTitle(title);
+    }, 600);
+    return () => {
+      if (titleSaveTimer.current !== null) window.clearTimeout(titleSaveTimer.current);
+    };
+  }, [title, task.title]);
+
+  async function saveTitle(value = title, force = false) {
+    if (!value.trim() || (!force && value.trim() === task.title)) return;
+    setSaveState("saving");
+    const saved = await onUpdate(task.id, { title: value.trim() });
+    setSaveState(saved ? "saved" : "error");
   }
 
   return (
     <article
-      className={isDone ? "task-row done" : "task-row"}
+      className={done ? "task-row done" : "task-row"}
       aria-label={`Task: ${task.title}`}
-      draggable={isDraggable}
-      onDragStart={(e) => {
-        e.dataTransfer.setData("text/plain", task.id);
-        e.dataTransfer.effectAllowed = "move";
-      }}
-      onDragOver={(e) => {
-        e.preventDefault();
-        e.dataTransfer.dropEffect = "move";
-      }}
-      onDrop={(e) => {
-        e.preventDefault();
-        const draggedId = e.dataTransfer.getData("text/plain");
-        if (draggedId && draggedId !== task.id) {
-          void onReorder(draggedId, task.id);
-        }
-        setIsDraggable(false);
+      draggable={reorderMode && draggable}
+      onDragStart={(event) => event.dataTransfer.setData("text/plain", task.id)}
+      onDragOver={(event) => event.preventDefault()}
+      onDrop={(event) => {
+        event.preventDefault();
+        const source = event.dataTransfer.getData("text/plain");
+        if (source) void onReorder(source, task.id);
       }}
     >
       <button
         className="check-button"
-        title={isDone ? "Mark incomplete" : "Complete task"}
-        onClick={() => void onUpdate(task.id, { status: isDone ? "TODO" : "DONE" })}
+        aria-label={done ? `Mark ${task.title} incomplete` : `Complete ${task.title}`}
+        onClick={() =>
+          void onUpdate(task.id, { status: done ? "TODO" : "DONE" })
+        }
       >
-        {isDone ? <Check size={16} /> : <Circle size={16} />}
+        {done ? <Check size={15} /> : <Circle size={15} />}
       </button>
       <div
-        onMouseEnter={() => setIsDraggable(true)}
-        onMouseLeave={() => setIsDraggable(false)}
-        className="drag-handle"
+        className={`drag-handle ${reorderMode ? "visible" : ""}`}
+        aria-hidden={!reorderMode}
+        onMouseEnter={() => setDraggable(true)}
+        onMouseLeave={() => setDraggable(false)}
       >
-        <GripVertical className="drag-icon" size={16} />
+        <GripVertical size={14} />
       </div>
-      <div className="task-title-editor">
-        <input
-          className="task-title-input"
-          value={titleDraft}
-          aria-label={`Task title: ${task.title}`}
-          onChange={(event) => {
-            setTitleDraft(event.target.value);
-            setTitleSaveState("idle");
-          }}
-          onBlur={() => void saveTitle()}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") event.currentTarget.blur();
-            if (event.key === "Escape") {
-              setTitleDraft(task.title);
-              setTitleSaveState("idle");
-              event.currentTarget.blur();
-            }
-          }}
-        />
-        {titleSaveState !== "idle" && (
-          <span
-            className={`task-save-state ${titleSaveState}`}
-            role="status"
-            aria-live="polite"
-          >
-            {titleSaveState === "saving"
-              ? "Saving"
-              : titleSaveState === "saved"
-                ? "Saved"
-                : "Not saved"}
-          </span>
-        )}
+      <div className="task-main">
+        <div className="task-title-editor">
+          <input
+            className="task-title-input"
+            aria-label={`Task title: ${task.title}`}
+            value={title}
+            onChange={(event) => {
+              setTitle(event.target.value);
+              setSaveState("idle");
+            }}
+            onBlur={() => void saveTitle()}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") event.currentTarget.blur();
+            }}
+          />
+          {saveState !== "idle" && (
+            <small className={`task-save-state ${saveState}`}>
+              {saveState === "saving"
+                ? "Saving"
+                : saveState === "saved"
+                  ? "Saved"
+                  : "Not saved"}
+              {saveState === "error" && (
+                <button type="button" onClick={() => void saveTitle(title, true)}>
+                  Retry
+                </button>
+              )}
+            </small>
+          )}
+        </div>
+        <p>
+          {task.estimateMinutes}m
+          {task.deadline ? ` · due ${formatShortDate(task.deadline)}` : ""}
+          {project ? ` · ${project.name}` : " · standalone"}
+        </p>
       </div>
-      <div className="task-glance">
-        <span>
-          {statusLabel[task.status]} · {task.estimateMinutes}m
-          {task.deadline ? ` · ${formatShortDate(task.deadline)}` : ""}
-        </span>
-        {project && (
+      <span className="duration-pill">{task.estimateMinutes}m</span>
+      {reorderMode && !done && (
+        <div className="task-reorder-controls">
+          <span>{position + 1} of {total}</span>
           <button
-            className="project-chip"
-            aria-label={`Open project ${project.name}`}
-            onClick={() => onOpenProject(project.id)}
+            type="button"
+            disabled={position === 0}
+            aria-label={`Move ${task.title} up`}
+            data-reorder-task={task.id}
+            data-reorder-direction="up"
+            onClick={() => onMove?.(-1)}
           >
-            <FolderKanban size={12} />
-            {project.name}
+            <ChevronUp size={15} />
           </button>
-        )}
-      </div>
-      <button
-        className="icon-button task-details-toggle"
-        aria-label={`${detailsOpen ? "Hide" : "Show"} task details: ${task.title}`}
-        aria-expanded={detailsOpen}
-        onClick={() => setDetailsOpen((open) => !open)}
-      >
-        {detailsOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-      </button>
+          <button
+            type="button"
+            disabled={position === total - 1}
+            aria-label={`Move ${task.title} down`}
+            data-reorder-task={task.id}
+            data-reorder-direction="down"
+            onClick={() => onMove?.(1)}
+          >
+            <ChevronDown size={15} />
+          </button>
+        </div>
+      )}
+      {!done && !reorderMode && (
+        <button
+          className={suggested ? "focus-row-button suggested" : "focus-row-button"}
+          onClick={() =>
+            onStartFocus({
+              taskId: task.id,
+              projectId: task.projectId ?? undefined,
+              label: task.title,
+              plannedMinutes: task.estimateMinutes
+            })
+          }
+        >
+          <Play size={13} />
+          Focus {task.estimateMinutes}m
+        </button>
+      )}
+      {done && <span className="session-count">1 session</span>}
+      {!reorderMode && (
+        <button
+          className="task-details-toggle"
+          aria-label={`${detailsOpen ? "Hide" : "Show"} task details: ${task.title}`}
+          onClick={() => setDetailsOpen((open) => !open)}
+        >
+          {detailsOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+        </button>
+      )}
       {detailsOpen && (
         <div className="task-details">
           <div className="task-controls">
-            <label className="score-field">
-              Urgency
+            <label>
+              Urgency · {task.urgentScore} of 5
               <ScoreDots
                 value={task.urgentScore}
                 tone="urgent"
                 onChange={(value) => void onUpdate(task.id, { urgentScore: value })}
               />
             </label>
-            <label className="score-field">
-              Importance
+            <label>
+              Importance · {task.importanceScore} of 5
               <ScoreDots
                 value={task.importanceScore}
                 tone="important"
@@ -1398,19 +1446,30 @@ function TaskRow({
               Deadline
               <input
                 type="date"
-                value={task.deadline ? task.deadline.slice(0, 10) : ""}
-                onChange={(event) => void onUpdate(task.id, { deadline: event.target.value || null })}
+                aria-label="Deadline"
+                value={task.deadline?.slice(0, 10) ?? ""}
+                onChange={(event) =>
+                  void onUpdate(task.id, { deadline: event.target.value || null })
+                }
               />
             </label>
             <label>
-              Status
-              <select value={task.status} onChange={(event) => void onUpdate(task.id, { status: event.target.value as TaskStatus })}>
-                {Object.entries(statusLabel).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
+              Estimate
+              <span className="task-estimate-input">
+                <input
+                  type="number"
+                  aria-label="Estimate in minutes"
+                  min="1"
+                  max="1440"
+                  value={task.estimateMinutes}
+                  onChange={(event) =>
+                    void onUpdate(task.id, {
+                      estimateMinutes: Number(event.target.value)
+                    })
+                  }
+                />
+                <small>min</small>
+              </span>
             </label>
             <label>
               Project
@@ -1424,51 +1483,1454 @@ function TaskRow({
                 }
               >
                 <option value="">No project</option>
-                {projects
-                  .filter(
-                    (item) =>
-                      (item.status !== "ARCHIVED" && item.status !== "COMPLETED") ||
-                      item.id === task.projectId
-                  )
-                  .map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.name}
-                    </option>
-                  ))}
+                {projects.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}
+                  </option>
+                ))}
               </select>
             </label>
             <label>
-              Estimate
-              <input
-                className="mini-number"
-                type="number"
-                min="5"
-                step="5"
-                value={task.estimateMinutes}
-                onChange={(event) => void onUpdate(task.id, { estimateMinutes: Number(event.target.value) })}
-                aria-label="Estimated minutes"
-              />
+              Status
+              <select
+                aria-label="Task status"
+                value={task.status}
+                onChange={(event) =>
+                  void onUpdate(task.id, {
+                    status: event.target.value as TaskStatus
+                  })
+                }
+              >
+                <option value="TODO">To do</option>
+                <option value="IN_PROGRESS">In progress</option>
+                <option value="DONE">Done</option>
+              </select>
             </label>
           </div>
           <div className="task-detail-actions">
-            {!isDone && (
-              <button className="text-button" onClick={() => onStartFocus(task)}>
-                <Play size={15} />
-                Start focus
-              </button>
-            )}
+            <span className="task-lands-label">Lands in</span>
+            <span className={`task-quadrant-readout ${taskQuadrant(task, new Date().toISOString()).id}`}>
+              {taskQuadrant(task, new Date().toISOString()).label}
+            </span>
+            <i />
             <button
               className="text-button danger"
               aria-label={`Delete task: ${task.title}`}
               onClick={() => void onDelete(task.id)}
             >
-              <Trash2 size={15} />
+              <Trash2 size={13} />
               Delete task
             </button>
           </div>
         </div>
       )}
     </article>
+  );
+}
+
+function FirstRunPage({
+  today,
+  onBegin
+}: {
+  today: string;
+  onBegin: (title: string, startFocus: boolean) => Promise<void>;
+}) {
+  const [title, setTitle] = useState("");
+  return (
+    <div className="first-run-page page-stack">
+      <PageHeader eyebrow={formatLongDate(today)} title="Nothing here yet" />
+      <p className="first-run-intro">
+        Dayflow keeps one honest record of where your attention went. There is nothing
+        to import and nothing to configure — the first block of focus is the whole setup.
+      </p>
+      <section className="first-run-start">
+        <span className="eyebrow focus-eyebrow">Start here</span>
+        <label>
+          What are you working on right now?
+          <input
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            placeholder="Name one thing"
+          />
+        </label>
+        <div>
+          <button
+            className="primary-button"
+            disabled={!title.trim()}
+            onClick={() => void onBegin(title, true)}
+          >
+            <Play size={15} />
+            Focus on it for 25m
+          </button>
+          <button
+            className="secondary-button"
+            disabled={!title.trim()}
+            onClick={() => void onBegin(title, false)}
+          >
+            Just add it to today
+          </button>
+        </div>
+      </section>
+      <section className="first-run-ready">
+        <span className="eyebrow">When you are ready</span>
+        <button>
+          <Layers3 size={17} />
+          <span>
+            <strong>Group work under a project</strong>
+            <small>Only worth it when something takes more than a few days.</small>
+          </span>
+        </button>
+        <button>
+          <NotebookPen size={17} />
+          <span>
+            <strong>Capture anything with ⌘K</strong>
+            <small>Tasks, notes, links and time you already spent.</small>
+          </span>
+        </button>
+      </section>
+      <p className="first-run-footnote">
+        Review and Log stay empty until there is something to show. That is
+        intentional — they fill themselves in.
+      </p>
+    </div>
+  );
+}
+
+function DayPage({
+  view,
+  today,
+  tasks,
+  activities,
+  timeBlocks,
+  projects,
+  plannedMinutes,
+  recordedMinutes,
+  noteCount,
+  activeFocus,
+  focusNow,
+  focusBusy,
+  onViewChange,
+  onStartFocus,
+  onFocusTransition,
+  onOpenPalette
+}: {
+  view: DayView;
+  today: string;
+  tasks: Task[];
+  activities: ActivityEntry[];
+  timeBlocks: TimeBlock[];
+  projects: Map<string, ProjectSummary>;
+  plannedMinutes: number;
+  recordedMinutes: number;
+  noteCount: number;
+  activeFocus: ReturnType<typeof useFocusSession>["active"];
+  focusNow: number;
+  focusBusy: boolean;
+  onViewChange: (view: DayView) => void;
+  onStartFocus: (target: FocusTarget) => void;
+  onFocusTransition: ReturnType<typeof useFocusSession>["transition"];
+  onOpenPalette: () => void;
+}) {
+  return (
+    <div className="day-page log-page page-stack">
+      <PageHeader
+        eyebrow={formatLongDate(today)}
+        title="Log"
+        actions={
+          <SegmentedControl
+            value={view}
+            options={[
+              ["stream", "Stream"],
+              ["timeline", "Timeline"]
+            ]}
+            onChange={onViewChange}
+          />
+        }
+      />
+      <div className="log-totals" aria-label="Today’s log totals">
+        <span>{formatMinutes(plannedMinutes)} planned</span>
+        <strong>{formatMinutes(recordedMinutes)} recorded</strong>
+        <span>
+          {activities.length} {activities.length === 1 ? "session" : "sessions"} ·{" "}
+          {noteCount} {noteCount === 1 ? "note" : "notes"}
+        </span>
+        <small>so far today</small>
+      </div>
+      {view === "stream" && (
+        <DayStream
+          tasks={tasks}
+          activities={activities}
+          projects={projects}
+          activeFocus={activeFocus}
+          focusNow={focusNow}
+          focusBusy={focusBusy}
+          onStartFocus={onStartFocus}
+          onFocusTransition={onFocusTransition}
+          onOpenPalette={onOpenPalette}
+        />
+      )}
+      {view === "timeline" && (
+        <DayTimeline
+          today={today}
+          blocks={timeBlocks}
+          activities={activities}
+          activeFocus={activeFocus}
+          focusNow={focusNow}
+        />
+      )}
+    </div>
+  );
+}
+
+function DayStream({
+  tasks,
+  activities,
+  projects,
+  activeFocus,
+  focusNow,
+  focusBusy,
+  onStartFocus,
+  onFocusTransition,
+  onOpenPalette
+}: {
+  tasks: Task[];
+  activities: ActivityEntry[];
+  projects: Map<string, ProjectSummary>;
+  activeFocus: ReturnType<typeof useFocusSession>["active"];
+  focusNow: number;
+  focusBusy: boolean;
+  onStartFocus: (target: FocusTarget) => void;
+  onFocusTransition: ReturnType<typeof useFocusSession>["transition"];
+  onOpenPalette: () => void;
+}) {
+  let cursor = new Date();
+  const idleNext = !activeFocus ? tasks[0] ?? null : null;
+  const plannedTasks = activeFocus ? tasks : tasks.slice(1);
+  return (
+    <section className="day-view">
+      <p className="view-explainer">
+        One spine for what happened and what is still planned. Sessions, notes and
+        completions are the record; the dashed section below the marker is the part
+        you can still change.
+      </p>
+      <div className="day-stream">
+        {[...activities].reverse().map((activity) => (
+          <article className="stream-row complete" key={activity.id}>
+            <time>{formatActivityTime(activity.startedAt)}</time>
+            <div>
+              <i />
+              <strong>
+                {activity.durationMinutes}m · {activity.category}
+              </strong>
+              <p>{activity.note}</p>
+              {activity.projectId && projects.get(activity.projectId) && (
+                <span>{projects.get(activity.projectId)?.name}</span>
+              )}
+            </div>
+          </article>
+        ))}
+        {activeFocus && (
+          <article className="stream-row now">
+            <time>now</time>
+            <div>
+              <i />
+              <section className="stream-now-card">
+                <MiniFocusRing session={activeFocus} now={focusNow} />
+                <span>
+                  <strong>{activeFocus.label}</strong>
+                  <small>{formatFocusClock(focusRemainingSeconds(activeFocus, focusNow))} left</small>
+                </span>
+                <button
+                  className="secondary-button"
+                  disabled={focusBusy}
+                  onClick={() =>
+                    void onFocusTransition(
+                      activeFocus.status === "PAUSED" ? "resume" : "pause"
+                    )
+                  }
+                >
+                  {activeFocus.status === "PAUSED" ? "Resume" : "Pause"}
+                </button>
+                <button
+                  className="primary-button"
+                  disabled={focusBusy}
+                  onClick={() => void onFocusTransition("complete")}
+                >
+                  Finish
+                </button>
+              </section>
+            </div>
+          </article>
+        )}
+        {idleNext && (
+          <article className="stream-row now idle-now">
+            <time>now</time>
+            <div>
+              <i />
+              <section className="stream-task-card">
+                <span>
+                  <strong>Nothing running · {tasks.length} blocks planned</strong>
+                  <small>{idleNext.title} · {idleNext.estimateMinutes}m</small>
+                </span>
+                <button
+                  className="secondary-button"
+                  onClick={() =>
+                    onStartFocus({
+                      taskId: idleNext.id,
+                      projectId: idleNext.projectId ?? undefined,
+                      label: idleNext.title,
+                      plannedMinutes: idleNext.estimateMinutes
+                    })
+                  }
+                >
+                  Start this block
+                </button>
+              </section>
+            </div>
+          </article>
+        )}
+        {plannedTasks.slice(0, 4).map((task, index) => {
+          if (index > 0) {
+            cursor = new Date(
+              cursor.getTime() + plannedTasks[index - 1].estimateMinutes * 60000
+            );
+          }
+          return (
+            <article className="stream-row planned" key={task.id}>
+              <time>{index === 0 ? "still planned" : `≈ ${formatClockTime(cursor)}`}</time>
+              <div>
+                <i />
+                <section className="stream-task-card">
+                  <span>
+                    <strong>{task.title}</strong>
+                    <small>
+                      {task.estimateMinutes}m
+                      {task.projectId && projects.get(task.projectId)
+                        ? ` · ${projects.get(task.projectId)?.name}`
+                        : ""}
+                    </small>
+                  </span>
+                  <button
+                    className={index === 0 ? "secondary-button" : "plain-button"}
+                    onClick={() =>
+                      onStartFocus({
+                        taskId: task.id,
+                        projectId: task.projectId ?? undefined,
+                        label: task.title,
+                        plannedMinutes: task.estimateMinutes
+                      })
+                    }
+                  >
+                    {index === 0 ? "Focus next" : "Focus"}
+                  </button>
+                </section>
+              </div>
+            </article>
+          );
+        })}
+        <article className="stream-row planned add">
+          <time />
+          <div>
+            <i />
+            <button onClick={onOpenPalette}>Add to the day · ⌘K</button>
+          </div>
+        </article>
+      </div>
+    </section>
+  );
+}
+
+function DayTimeline({
+  today,
+  blocks,
+  activities,
+  activeFocus,
+  focusNow
+}: {
+  today: string;
+  blocks: TimeBlock[];
+  activities: ActivityEntry[];
+  activeFocus: ReturnType<typeof useFocusSession>["active"];
+  focusNow: number;
+}) {
+  const key = today.slice(0, 10);
+  const todayBlocks = blocks.filter((block) => block.date.slice(0, 10) === key);
+  return (
+    <section className="day-view">
+      <p className="view-explainer">
+        Planned time and focused time share one grid so gaps and overages stay honest.
+      </p>
+      <div className="day-timeline-panel">
+        <div className="timeline-corner" />
+        <span className="timeline-column-label">Planned</span>
+        <span className="timeline-column-label focused">Focused</span>
+        <div className="timeline-hours">
+          {Array.from({ length: 10 }, (_, index) => (
+            <span key={index}>{formatHour(index + 8)}</span>
+          ))}
+        </div>
+        <div className="timeline-column">
+          {todayBlocks.map((block) => {
+            const start = parseTime(block.startTime);
+            const end = parseTime(block.endTime);
+            return (
+              <article
+                className="planned-block"
+                key={block.id}
+                style={timelinePosition(start, Math.max(15, end - start))}
+              >
+                <strong>{block.title}</strong>
+                <small>
+                  {block.startTime}–{block.endTime}
+                </small>
+              </article>
+            );
+          })}
+          <button className="timeline-empty" style={timelinePosition(15 * 60, 60)}>
+            Nothing planned · block 3:00–4:00
+          </button>
+        </div>
+        <div className="timeline-column actual">
+          {activities.map((activity) => {
+            const date = new Date(activity.startedAt);
+            const start = date.getHours() * 60 + date.getMinutes();
+            return (
+              <article
+                className="focused-block"
+                key={activity.id}
+                style={timelinePosition(start, activity.durationMinutes)}
+              >
+                <strong>{activity.note}</strong>
+                <small>{activity.durationMinutes}m</small>
+              </article>
+            );
+          })}
+          {activeFocus && (
+            <article
+              className="focused-block running"
+              style={timelinePosition(
+                new Date(activeFocus.startedAt).getHours() * 60 +
+                  new Date(activeFocus.startedAt).getMinutes(),
+                Math.max(20, Math.floor(focusElapsedSeconds(activeFocus, focusNow) / 60))
+              )}
+            >
+              <strong>{activeFocus.label}</strong>
+              <small>running</small>
+            </article>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function DayMatrix({
+  tasks,
+  today,
+  projects,
+  arrangement,
+  preferredProjectId,
+  activeTaskId,
+  onStartFocus,
+  onUpdateTask
+}: {
+  tasks: Task[];
+  today: string;
+  projects: Map<string, ProjectSummary>;
+  arrangement: BacklogArrange;
+  preferredProjectId?: string | null;
+  activeTaskId: string | null;
+  onStartFocus: (target: FocusTarget) => void;
+  onUpdateTask: (
+    id: string,
+    patch: Partial<Task> & { scheduleSource?: string }
+  ) => Promise<unknown>;
+}) {
+  const mode = arrangement === "figure" ? "figure" : "tables";
+  const [layout, setLayout] = useState<"figure" | "tables">(mode);
+  const [phase, setPhase] = useState<"closed" | "open">("open");
+  const [hovered, setHovered] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
+  const transitionTimer = useRef<number | null>(null);
+  const visibleTasks = tasks.filter((task) => task.status !== "DONE").slice(0, 60);
+  const groups = matrixGroups(
+    visibleTasks,
+    today,
+    projects,
+    arrangement,
+    preferredProjectId
+  );
+  const tableGeometry = matrixTableGeometry(groups);
+  const stageHeight = tableGeometry.height;
+
+  useEffect(
+    () => () => {
+      if (transitionTimer.current !== null) window.clearTimeout(transitionTimer.current);
+    },
+    []
+  );
+
+  useEffect(() => {
+    const next = arrangement === "figure" ? "figure" : "tables";
+    if (transitionTimer.current !== null) window.clearTimeout(transitionTimer.current);
+    if (next === "tables") {
+      setLayout("tables");
+      setPhase("closed");
+      transitionTimer.current = window.setTimeout(() => setPhase("open"), 190);
+    } else {
+      setPhase("closed");
+      transitionTimer.current = window.setTimeout(() => {
+        setLayout("figure");
+        setPhase("open");
+      }, 130);
+    }
+  }, [arrangement]);
+
+  const calloutTask =
+    visibleTasks.find((task) => task.id === (hovered ?? selected)) ?? null;
+  const selectedTask = visibleTasks.find((task) => task.id === selected) ?? null;
+
+  return (
+    <section className="day-view matrix-5a">
+      <div className="matrix-mode-heading">
+        <p>
+          {mode === "tables"
+            ? "Tables — act here: schedule, focus, relabel."
+            : "Figure — read here; hover a dot for its title."}
+        </p>
+      </div>
+      <div
+        className={`matrix-stage matrix-layout-${layout} matrix-phase-${phase}`}
+        style={{ height: layout === "tables" ? `${stageHeight}px` : "386px" }}
+      >
+        <div className="matrix-figure-furniture">
+          <span className="matrix-axis-y">Importance →</span>
+          <div className="matrix-figure-plot">
+            <span className="figure-quadrant schedule">Schedule</span>
+            <span className="figure-quadrant do-now">Do now</span>
+            <span className="figure-quadrant later">Later</span>
+            <span className="figure-quadrant quick">Quick wins</span>
+          </div>
+          <div className="matrix-axis-x">
+            <span>7+ days out</span>
+            <strong>Urgency →</strong>
+            <span>due today</span>
+          </div>
+          {calloutTask && (
+            <div
+              className="matrix-hover-callout"
+              style={{ top: `${matrixFigurePoint(calloutTask, today).y - 18}px` }}
+            >
+              <strong>{calloutTask.title}</strong>
+              <span>
+                {taskQuadrant(calloutTask, today).shortLabel} ·{" "}
+                {matrixProjectName(calloutTask, projects)} ·{" "}
+                {formatMinutes(calloutTask.estimateMinutes)}
+                {calloutTask.deadline
+                  ? ` · due ${formatShortDate(calloutTask.deadline)}`
+                  : ""}
+              </span>
+            </div>
+          )}
+        </div>
+        {groups.map((group) => {
+          const geometry = tableGeometry.groups.get(group.id);
+          if (!geometry) return null;
+          return (
+            <header
+              className={`matrix-table-heading arrangement-${arrangement} quadrant-${group.id}`}
+              key={group.id}
+              style={{ top: `${geometry.top}px` }}
+            >
+              {group.rank ? (
+                <span>{group.rank}</span>
+              ) : group.dotColor ? (
+                <span className="matrix-project-dot" style={{ background: group.dotColor }} />
+              ) : (
+                <span aria-hidden="true" />
+              )}
+              <div>
+                <strong>{group.name}</strong>
+                <small>{group.definition}</small>
+              </div>
+              <b>
+                {group.tasks.length} ·{" "}
+                {formatMinutes(
+                  group.tasks.reduce((sum, task) => sum + task.estimateMinutes, 0)
+                )}
+              </b>
+              <div className="matrix-column-heads">
+                <span>Task</span>
+                <span>Project</span>
+                <span>Time</span>
+                <span>Due</span>
+              </div>
+            </header>
+          );
+        })}
+        {visibleTasks.map((task, index) => {
+          const figure = matrixFigurePoint(task, today);
+          const table = tableGeometry.tasks.get(task.id) ?? { x: 14, y: 15 };
+          const color = matrixProjectColor(task.projectId);
+          const position = layout === "tables" ? table : figure;
+          const diameter =
+            layout === "tables"
+              ? 8
+              : Math.min(36, Math.max(10, 9 + task.estimateMinutes * 0.13));
+          const dueSoon = daysUntilTaskDeadline(task, today) <= 1;
+          return (
+            <button
+              key={task.id}
+              className={`matrix-persistent-task ${activeTaskId === task.id ? "running" : ""} ${dueSoon ? "due-soon" : ""}`}
+              style={{
+                left: `${position.x}px`,
+                top: `${position.y}px`,
+                width: `${diameter}px`,
+                height: `${diameter}px`,
+                backgroundColor: color,
+                transitionDelay: `${(index % 5) * 22}ms`
+              }}
+              aria-label={`${task.title}, ${matrixProjectName(task, projects)}, ${formatMinutes(task.estimateMinutes)}`}
+              onMouseEnter={() => setHovered(task.id)}
+              onMouseLeave={() => setHovered(null)}
+              onFocus={() => setHovered(task.id)}
+              onBlur={() => setHovered(null)}
+              onClick={() => {
+                if (mode === "figure") {
+                  setSelected(task.id);
+                  return;
+                }
+                onStartFocus({
+                  taskId: task.id,
+                  projectId: task.projectId ?? undefined,
+                  label: task.title,
+                  plannedMinutes: task.estimateMinutes
+                });
+              }}
+            >
+              <span className="matrix-row-unroll">
+                <span className="matrix-row-content">
+                  <strong>{task.title}</strong>
+                  <span className="matrix-row-project">
+                    <i style={{ backgroundColor: color }} />
+                    {matrixProjectName(task, projects)}
+                  </span>
+                  <time>{formatMinutes(task.estimateMinutes)}</time>
+                  <time className={task.deadline ? "has-deadline" : ""}>
+                    {task.deadline ? formatShortDate(task.deadline) : "—"}
+                  </time>
+                </span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      {mode === "figure" && selectedTask && (
+        <div className="matrix-selection-caption">
+          <span>
+            <strong>{selectedTask.title}</strong>
+            <small>
+              {taskQuadrant(selectedTask, today).shortLabel} ·{" "}
+              {matrixProjectName(selectedTask, projects)} ·{" "}
+              {formatMinutes(selectedTask.estimateMinutes)}
+            </small>
+          </span>
+          <label className="pick-day-button compact">
+            Pick day
+            <input
+              type="date"
+              aria-label={`Pick a day for ${selectedTask.title}`}
+              onChange={(event) => {
+                if (event.target.value) {
+                  void onUpdateTask(selectedTask.id, {
+                    date: event.target.value,
+                    scheduleSource: "backlog-matrix-date"
+                  });
+                }
+              }}
+            />
+          </label>
+          <button
+            className="secondary-button"
+            onClick={() =>
+              void onUpdateTask(selectedTask.id, {
+                date: today.slice(0, 10),
+                scheduleSource: "backlog-matrix-today"
+              })
+            }
+          >
+            Today
+          </button>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function BacklogPage({
+  tasks,
+  projects,
+  today,
+  arrangement,
+  onArrangementChange,
+  scopeProjectId,
+  onClearScope,
+  onOpenProject,
+  activeTaskId,
+  onStartFocus,
+  onUpdateTask,
+  onOpenPalette
+}: {
+  tasks: Task[];
+  projects: Map<string, ProjectSummary>;
+  today: string;
+  arrangement: BacklogArrange;
+  onArrangementChange: (arrangement: BacklogArrange) => void;
+  scopeProjectId: string | null;
+  onClearScope: () => void;
+  onOpenProject: (id: string) => void;
+  activeTaskId: string | null;
+  onStartFocus: (target: FocusTarget) => void;
+  onUpdateTask: (
+    id: string,
+    patch: Partial<Task> & { scheduleSource?: string }
+  ) => Promise<unknown>;
+  onOpenPalette: () => void;
+}) {
+  const phoneLayout = useMediaQuery("(max-width: 699px)");
+  const arrangements: Array<[BacklogArrange, string]> = phoneLayout
+    ? [
+        ["quadrant", "Quadrant"],
+        ["project", "Project"],
+        ["due", "Due"]
+      ]
+    : [
+        ["figure", "Figure"],
+        ["quadrant", "Quadrant"],
+        ["project", "Project"],
+        ["due", "Due"]
+      ];
+
+  useEffect(() => {
+    if (phoneLayout && arrangement === "figure") onArrangementChange("quadrant");
+  }, [arrangement, phoneLayout, onArrangementChange]);
+
+  const explainer =
+    arrangement === "figure"
+      ? "Read the shape of the whole backlog by urgency and importance. Select a dot to act on it."
+      : arrangement === "quadrant"
+        ? "Ranked by what deserves attention first. Deadlines lead within each quadrant, then importance."
+        : arrangement === "project"
+          ? "Grouped by project without filtering anything out. The same tasks keep their identity as they move."
+          : "Grouped by when a decision is due: Today, Next three days, Later this week, then No deadline.";
+
+  return (
+    <div className="backlog-page page-stack">
+      <PageHeader
+        eyebrow={`Defined, not scheduled · ${tasks.length}`}
+        title="Backlog"
+        actions={
+          tasks.length ? (
+            <ArrangementControl
+              value={arrangement}
+              options={arrangements}
+              onChange={onArrangementChange}
+            />
+          ) : null
+        }
+      />
+      {!tasks.length ? (
+        <section className="backlog-empty-state">
+          <h2>Everything defined has a day</h2>
+          <p>
+            Work lands here when you capture it without choosing a date. An empty
+            backlog is the healthy state, not a gap to fill.
+          </p>
+          <button className="secondary-button" onClick={onOpenPalette}>
+            <Plus size={14} />
+            Capture something · ⌘K
+          </button>
+          <small>
+            Arrange is hidden while the backlog is empty — there is nothing to regroup.
+          </small>
+        </section>
+      ) : (
+        <>
+          <p className="view-explainer">
+            One place for everything defined but not given a day. There is no second
+            view — Arrange regroups the same {tasks.length} tasks, and each task stays
+            the same element as it travels.
+          </p>
+          <p className="backlog-arrangement-note">{explainer}</p>
+          {scopeProjectId && projects.get(scopeProjectId) && (
+            <div className="backlog-scope-bar">
+              <span>
+                All backlog tasks are visible ·{" "}
+                <strong>{projects.get(scopeProjectId)?.name} first</strong>
+              </span>
+              <div>
+                <button className="text-button" onClick={onClearScope}>
+                  Restore project order
+                </button>
+                <button
+                  className="secondary-button"
+                  onClick={() => onOpenProject(scopeProjectId)}
+                >
+                  Back to project
+                </button>
+              </div>
+            </div>
+          )}
+          <DayMatrix
+            tasks={tasks}
+            today={today}
+            projects={projects}
+            arrangement={arrangement}
+            preferredProjectId={scopeProjectId}
+            activeTaskId={activeTaskId}
+            onStartFocus={onStartFocus}
+            onUpdateTask={onUpdateTask}
+          />
+        </>
+      )}
+    </div>
+  );
+}
+
+function JournalPage({
+  today,
+  view,
+  onViewChange,
+  diary,
+  notes,
+  materials,
+  projects,
+  saving,
+  onDiaryChange,
+  onSaveDiary,
+  newNote,
+  noteTags,
+  onNewNoteChange,
+  onNoteTagsChange,
+  onAddNote,
+  materialTitle,
+  materialUrl,
+  materialNotes,
+  onMaterialTitleChange,
+  onMaterialUrlChange,
+  onMaterialNotesChange,
+  onAddMaterial
+}: {
+  today: string;
+  view: JournalView;
+  onViewChange: (view: JournalView) => void;
+  diary: Diary;
+  notes: Note[];
+  materials: Material[];
+  projects: Map<string, ProjectSummary>;
+  saving: boolean;
+  onDiaryChange: <K extends keyof Diary>(key: K, value: Diary[K]) => void;
+  onSaveDiary: () => Promise<void>;
+  newNote: string;
+  noteTags: string;
+  onNewNoteChange: (value: string) => void;
+  onNoteTagsChange: (value: string) => void;
+  onAddNote: () => Promise<void>;
+  materialTitle: string;
+  materialUrl: string;
+  materialNotes: string;
+  onMaterialTitleChange: (value: string) => void;
+  onMaterialUrlChange: (value: string) => void;
+  onMaterialNotesChange: (value: string) => void;
+  onAddMaterial: () => Promise<void>;
+}) {
+  return (
+    <div className="journal-page page-stack">
+      <PageHeader
+        eyebrow={formatLongDate(today)}
+        title="Journal"
+        actions={
+          <SegmentedControl
+            value={view}
+            options={[
+              ["daily", "Daily page"],
+              ["notes", `Notes · ${notes.length}`],
+              ["references", `References · ${materials.length}`]
+            ]}
+            onChange={onViewChange}
+          />
+        }
+      />
+      {view === "daily" && (
+        <div className="journal-grid">
+          <section className="panel daily-page-card">
+            <div className="journal-card-heading">
+              <h2>Daily page</h2>
+              <small>{saving ? "Saving…" : "Ready to save"}</small>
+            </div>
+            <textarea
+              value={diary.content}
+              onChange={(event) => onDiaryChange("content", event.target.value)}
+              placeholder="Write a few lines about the day."
+            />
+            <div className="journal-footer">
+              <label>
+                Mood · {diary.mood}/5
+                <input
+                  type="range"
+                  aria-label="Mood"
+                  min="1"
+                  max="5"
+                  value={diary.mood}
+                  onChange={(event) => onDiaryChange("mood", Number(event.target.value))}
+                />
+              </label>
+              <label>
+                Energy · {diary.energy}/5
+                <input
+                  type="range"
+                  aria-label="Energy"
+                  min="1"
+                  max="5"
+                  value={diary.energy}
+                  onChange={(event) => onDiaryChange("energy", Number(event.target.value))}
+                />
+              </label>
+              <button className="primary-button" onClick={() => void onSaveDiary()}>
+                <Save size={14} />
+                Save
+              </button>
+            </div>
+          </section>
+          <aside className="journal-captured">
+            <span className="eyebrow">Captured today</span>
+            <NoteCards notes={notes.slice(0, 2)} projects={projects} />
+            <button className="rail-link" onClick={() => onViewChange("notes")}>
+              New note · ⌘K
+            </button>
+            <span className="eyebrow references-label">References</span>
+            <ReferenceCards materials={materials.slice(0, 3)} projects={projects} />
+          </aside>
+        </div>
+      )}
+      {view === "notes" && (
+        <div className="capture-workspace">
+          <section className="panel capture-form">
+            <h2>New note</h2>
+            <textarea
+              id="new-note"
+              value={newNote}
+              onChange={(event) => onNewNoteChange(event.target.value)}
+              placeholder="Capture a thought, decision, or reminder."
+            />
+            <input
+              value={noteTags}
+              onChange={(event) => onNoteTagsChange(event.target.value)}
+              placeholder="Tags, comma separated"
+            />
+            <button className="primary-button" onClick={() => void onAddNote()}>
+              <Plus size={14} />
+              Save note
+            </button>
+          </section>
+          <section>
+            <NoteCards notes={notes} projects={projects} />
+          </section>
+        </div>
+      )}
+      {view === "references" && (
+        <div className="capture-workspace">
+          <section className="panel capture-form">
+            <h2>Save reference</h2>
+            <input
+              value={materialTitle}
+              onChange={(event) => onMaterialTitleChange(event.target.value)}
+              placeholder="Title"
+            />
+            <input
+              id="material-url"
+              value={materialUrl}
+              onChange={(event) => onMaterialUrlChange(event.target.value)}
+              placeholder="URL"
+            />
+            <textarea
+              value={materialNotes}
+              onChange={(event) => onMaterialNotesChange(event.target.value)}
+              placeholder="Why this matters"
+            />
+            <button className="primary-button" onClick={() => void onAddMaterial()}>
+              <LinkIcon size={14} />
+              Save reference
+            </button>
+          </section>
+          <section>
+            <ReferenceCards materials={materials} projects={projects} />
+          </section>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ReviewPage({
+  today,
+  stats,
+  projects,
+  diary,
+  summary,
+  onDiaryChange,
+  onSaveDiary,
+  onOpenProject
+}: {
+  today: string;
+  stats: DayStat[];
+  projects: ProjectSummary[];
+  diary: Diary;
+  summary: ReviewSummary;
+  onDiaryChange: <K extends keyof Diary>(key: K, value: Diary[K]) => void;
+  onSaveDiary: () => Promise<void>;
+  onOpenProject: (id: string) => void;
+}) {
+  const chartData = stats.map((stat) => ({
+    ...stat,
+    label: new Date(`${stat.day}T00:00:00`).toLocaleDateString("en-US", {
+      weekday: "short"
+    })
+  }));
+  const taskDone = stats.reduce((sum, stat) => sum + stat.completed, 0);
+  const taskTotal = stats.reduce((sum, stat) => sum + stat.total, 0);
+  const longestWhen = summary.longestStartedAt
+    ? formatBlockMoment(summary.longestStartedAt)
+    : "No completed focus block yet";
+  const moved = projects.filter((project) => project.lastProgressAt).slice(0, 4);
+  const recordedDays = chartData.filter((stat) => stat.actualHours > 0);
+  const isFirstWeek = recordedDays.length === 1 && summary.focusedMinutes > 0;
+  return (
+    <div className="review-page page-stack">
+      <PageHeader
+        eyebrow={`Seven days ending ${formatShortDate(today)}`}
+        title="Review"
+        actions={
+          <span className="review-focus-pill">
+            {formatMinutes(summary.focusedMinutes)} focused this week
+          </span>
+        }
+      />
+      {isFirstWeek ? (
+        <>
+          <div className="review-metrics review-first-week-metrics">
+            <ReviewMetric
+              label="Recorded"
+              value={formatMinutes(summary.focusedMinutes)}
+              note="today, the only day with records"
+            />
+            <ReviewMetric
+              label="Vs last week"
+              value="—"
+              note="needs a second week"
+            />
+            <ReviewMetric
+              label="Completed"
+              value={String(taskDone)}
+              note={taskDone === 1 ? "task" : "tasks"}
+            />
+          </div>
+          <section className="panel review-charts-panel review-first-week-chart">
+            <span>Planned vs focused</span>
+            <div className="review-first-week-plot">
+              <ResponsiveContainer width="100%" height={250}>
+                <BarChart data={chartData}>
+                  <CartesianGrid stroke="#eee8de" vertical={false} />
+                  <XAxis dataKey="label" tickLine={false} axisLine={false} />
+                  <YAxis width={25} />
+                  <Tooltip />
+                  <Bar dataKey="plannedHours" fill="#d4c6aa" radius={[5, 5, 0, 0]} />
+                  <Bar dataKey="actualHours" fill="#637a5c" radius={[5, 5, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+              <p>
+                One day of records. The axes stay so the shape of the week is visible
+                as it fills — three more days and the week-over-week comparison appears.
+              </p>
+            </div>
+            <small>
+              {recordedDays[0]?.label ?? "One day"} only · the other days have no sessions
+            </small>
+          </section>
+        </>
+      ) : (
+        <>
+          <div className="review-metrics">
+            <ReviewMetric
+              label="Focused"
+              value={formatMinutes(summary.focusedMinutes)}
+              note="Protected focus time"
+            />
+            <ReviewMetric
+              label="Sessions"
+              value={String(summary.completedSessions)}
+              note={`${summary.cancelledSessions} cancelled`}
+            />
+            <ReviewMetric
+              label="Tasks done"
+              value={String(taskDone)}
+              note={`of ${taskTotal} planned`}
+            />
+            <ReviewMetric
+              label="Longest block"
+              value={`${summary.longestMinutes}m`}
+              note={longestWhen}
+            />
+          </div>
+          <section className="panel review-charts-panel">
+            <h2>Where the focus went</h2>
+            <div className="review-charts">
+              <div>
+                <span>Focused hours per day</span>
+                <ResponsiveContainer width="100%" height={190}>
+                  <BarChart data={chartData}>
+                    <CartesianGrid stroke="#eee8de" vertical={false} />
+                    <XAxis dataKey="label" tickLine={false} axisLine={false} />
+                    <YAxis width={25} />
+                    <Tooltip />
+                    <Bar dataKey="actualHours" fill="#637a5c" radius={[5, 5, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+              <div>
+                <span>Planned vs focused</span>
+                <ResponsiveContainer width="100%" height={190}>
+                  <BarChart data={chartData}>
+                    <CartesianGrid stroke="#eee8de" vertical={false} />
+                    <XAxis dataKey="label" tickLine={false} axisLine={false} />
+                    <YAxis width={25} />
+                    <Tooltip />
+                    <Bar dataKey="plannedHours" fill="#d4c6aa" radius={[5, 5, 0, 0]} />
+                    <Bar dataKey="actualHours" fill="#637a5c" radius={[5, 5, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          </section>
+        </>
+      )}
+      <div className="review-lower">
+        <section className="panel moved-projects">
+          <h2>Projects moved forward</h2>
+          {moved.map((project) => (
+            <button key={project.id} onClick={() => onOpenProject(project.id)}>
+              <strong>{project.name}</strong>
+              <div className="meter">
+                <i style={{ width: `${project.progressPercent ?? 0}%` }} />
+              </div>
+              <small>
+                {project.completedTaskCount}/{project.taskCount} tasks ·{" "}
+                {formatInvestedMinutes(project.investedMinutes)} invested this week
+              </small>
+            </button>
+          ))}
+          {!moved.length && <p>No project movement recorded yet this week.</p>}
+        </section>
+        <section className="panel reflection-card">
+          <h2>Reflection</h2>
+          <textarea
+            value={diary.reflection}
+            onChange={(event) => onDiaryChange("reflection", event.target.value)}
+            placeholder="What worked, and what deserves protection next week?"
+          />
+          <button className="primary-button" onClick={() => void onSaveDiary()}>
+            <Save size={14} />
+            Save reflection
+          </button>
+        </section>
+      </div>
+    </div>
+  );
+}
+
+function CommandPalette({
+  projects,
+  onClose,
+  onStartFocus,
+  onNewTask,
+  onLogActivity,
+  onWriteNote,
+  onSaveReference,
+  onOpenProject
+}: {
+  projects: ProjectSummary[];
+  onClose: () => void;
+  onStartFocus: () => void;
+  onNewTask: () => void;
+  onLogActivity: () => void;
+  onWriteNote: () => void;
+  onSaveReference: () => void;
+  onOpenProject: (id: string) => void;
+}) {
+  return (
+    <div className="palette-overlay" role="presentation" onMouseDown={onClose}>
+      <section
+        className="command-palette"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Search or add"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="palette-input">
+          <Plus size={17} />
+          <input
+            autoFocus
+            aria-label="Search commands and tasks"
+            placeholder="Type anything — a task, a note, a URL, “focus 50”"
+          />
+          <kbd>esc</kbd>
+        </div>
+        <div className="palette-results">
+          <button className="highlighted" onClick={onStartFocus}>
+            <Timer size={16} />
+            <span>Start a 50m focus block</span>
+            <kbd>⌘⇧F</kbd>
+          </button>
+          <button onClick={onNewTask}>
+            <Check size={16} />
+            <span>New task for today</span>
+            <kbd>⌘T</kbd>
+          </button>
+          <button onClick={onLogActivity}>
+            <Clock3 size={16} />
+            <span>Log an activity by hand</span>
+            <kbd>⌘L</kbd>
+          </button>
+          <button onClick={onWriteNote}>
+            <NotebookPen size={16} />
+            <span>Write a note</span>
+            <kbd>⌘N</kbd>
+          </button>
+          <button onClick={onSaveReference}>
+            <LinkIcon size={16} />
+            <span>Save a reference</span>
+          </button>
+          {projects.length > 0 && <span className="palette-label">Jump to</span>}
+          {projects.slice(0, 3).map((project) => (
+            <button key={project.id} onClick={() => onOpenProject(project.id)}>
+              <FolderKanban size={16} />
+              <span>{project.name}</span>
+            </button>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ActivityDialog({
+  tasks,
+  time,
+  duration,
+  category,
+  taskId,
+  note,
+  error,
+  onTimeChange,
+  onDurationChange,
+  onCategoryChange,
+  onTaskChange,
+  onNoteChange,
+  onClose,
+  onSave
+}: {
+  tasks: Task[];
+  time: string;
+  duration: string;
+  category: string;
+  taskId: string;
+  note: string;
+  error: string;
+  onTimeChange: (value: string) => void;
+  onDurationChange: (value: string) => void;
+  onCategoryChange: (value: string) => void;
+  onTaskChange: (value: string) => void;
+  onNoteChange: (value: string) => void;
+  onClose: () => void;
+  onSave: () => Promise<void>;
+}) {
+  return (
+    <div className="palette-overlay" role="presentation" onMouseDown={onClose}>
+      <section
+        className="activity-dialog panel"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Log activity"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="dialog-heading">
+          <div>
+            <span className="eyebrow">Captured today</span>
+            <h2>Log activity</h2>
+          </div>
+          <button className="text-button" onClick={onClose}>Close</button>
+        </div>
+        <textarea
+          autoFocus
+          value={note}
+          onChange={(event) => onNoteChange(event.target.value)}
+          placeholder="Record a small win or what moved forward."
+        />
+        <div className="activity-dialog-grid">
+          <label>
+            Time
+            <input type="time" value={time} onChange={(event) => onTimeChange(event.target.value)} />
+          </label>
+          <label>
+            Minutes
+            <input
+              type="number"
+              min="1"
+              max="1440"
+              value={duration}
+              onChange={(event) => onDurationChange(event.target.value)}
+            />
+          </label>
+          <label>
+            Category
+            <select value={category} onChange={(event) => onCategoryChange(event.target.value)}>
+              {activityCategories.map((item) => <option key={item}>{item}</option>)}
+            </select>
+          </label>
+          <label>
+            Linked task
+            <select value={taskId} onChange={(event) => onTaskChange(event.target.value)}>
+              <option value="">No linked task</option>
+              {tasks.map((task) => <option key={task.id} value={task.id}>{task.title}</option>)}
+            </select>
+          </label>
+        </div>
+        {error && <p className="form-error">{error}</p>}
+        <button className="primary-button" onClick={() => void onSave()}>
+          <Plus size={14} />
+          Add activity
+        </button>
+      </section>
+    </div>
+  );
+}
+
+function PageHeader({
+  eyebrow,
+  title,
+  actions
+}: {
+  eyebrow: string;
+  title: string;
+  actions?: React.ReactNode;
+}) {
+  return (
+    <header className="page-header">
+      <div>
+        <span className="page-eyebrow">{eyebrow}</span>
+        <h1>{title}</h1>
+      </div>
+      {actions}
+    </header>
+  );
+}
+
+function SegmentedControl<T extends string>({
+  value,
+  options,
+  onChange
+}: {
+  value: T;
+  options: Array<[T, string]>;
+  onChange: (value: T) => void;
+}) {
+  return (
+    <div className="segmented-control">
+      {options.map(([id, label]) => (
+        <button
+          key={id}
+          className={value === id ? "active" : ""}
+          onClick={() => onChange(id)}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function ArrangementControl({
+  value,
+  options,
+  onChange
+}: {
+  value: BacklogArrange;
+  options: Array<[BacklogArrange, string]>;
+  onChange: (value: BacklogArrange) => void;
+}) {
+  function moveSelection(
+    event: React.KeyboardEvent<HTMLButtonElement>,
+    index: number
+  ) {
+    if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
+      return;
+    }
+    event.preventDefault();
+    const direction =
+      event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 1;
+    const nextIndex = (index + direction + options.length) % options.length;
+    const group = event.currentTarget.parentElement;
+    onChange(options[nextIndex][0]);
+    window.requestAnimationFrame(() => {
+      group?.querySelectorAll<HTMLButtonElement>('[role="radio"]')[nextIndex]?.focus();
+    });
+  }
+
+  return (
+    <div className="arrange-control">
+      <span>Arrange</span>
+      <div
+        className="segmented-control"
+        role="radiogroup"
+        aria-label="Arrange backlog by"
+      >
+        {options.map(([id, label], index) => (
+          <button
+            key={id}
+            type="button"
+            role="radio"
+            aria-checked={value === id}
+            tabIndex={value === id ? 0 : -1}
+            className={value === id ? "active" : ""}
+            onKeyDown={(event) => moveSelection(event, index)}
+            onClick={() => onChange(id)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MiniFocusRing({
+  session,
+  now
+}: {
+  session: NonNullable<ReturnType<typeof useFocusSession>["active"]>;
+  now: number;
+}) {
+  const elapsed = focusElapsedSeconds(session, now);
+  const progress = Math.min(100, (elapsed / (session.plannedMinutes * 60)) * 100);
+  return (
+    <div
+      className="mini-focus-ring"
+      style={{
+        background: `conic-gradient(var(--sage) ${progress}%, #e2e0d5 ${progress}% 100%)`
+      }}
+    >
+      <span>{formatFocusClock(focusRemainingSeconds(session, now))}</span>
+    </div>
   );
 }
 
@@ -1482,7 +2944,16 @@ function ScoreDots({
   onChange: (value: number) => void;
 }) {
   const label = tone === "urgent" ? "Urgency" : "Importance";
-
+  const optionLabels =
+    tone === "urgent"
+      ? ["Not urgent", "Slightly urgent", "Urgent", "Very urgent", "Critical urgency"]
+      : [
+          "Not important",
+          "Slightly important",
+          "Important",
+          "Very important",
+          "Critical importance"
+        ];
   return (
     <div className={`score-dots ${tone}`} role="radiogroup" aria-label={label}>
       {[1, 2, 3, 4, 5].map((score) => (
@@ -1490,86 +2961,335 @@ function ScoreDots({
           key={score}
           type="button"
           className={`score-${score} ${score <= value ? "selected" : ""}`}
-          aria-label={`${label} ${score} of 5`}
+          aria-label={optionLabels[score - 1]}
           aria-checked={score === value}
+          tabIndex={score === value ? 0 : -1}
           role="radio"
-          title={`${score} of 5`}
           onClick={() => onChange(score)}
+          onKeyDown={(event) => {
+            if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
+              return;
+            }
+            event.preventDefault();
+            const direction =
+              event.key === "ArrowLeft" || event.key === "ArrowDown" ? -1 : 1;
+            const next = Math.min(5, Math.max(1, score + direction));
+            const group = event.currentTarget.parentElement;
+            onChange(next);
+            window.requestAnimationFrame(() => {
+              group?.querySelectorAll<HTMLButtonElement>('[role="radio"]')[next - 1]?.focus();
+            });
+          }}
         />
       ))}
     </div>
   );
 }
 
-function UrgencyImportanceMatrix({
-  tasks,
-  today,
-  onUpdate,
-  compact = false
+function NoteCards({
+  notes,
+  projects
 }: {
-  tasks: Task[];
-  today: string;
-  onUpdate: (id: string, patch: Partial<Task>) => Promise<unknown>;
-  compact?: boolean;
+  notes: Note[];
+  projects: Map<string, ProjectSummary>;
 }) {
-  const activeTasks = tasks.filter((task) => task.status !== "DONE");
-
-  function onDrop(event: React.DragEvent<HTMLDivElement>) {
-    event.preventDefault();
-    const taskId = event.dataTransfer.getData("text/task-id");
-    if (!taskId) return;
-
-    const rect = event.currentTarget.getBoundingClientRect();
-    const x = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
-    const y = Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height));
-    const urgentScore = coordinateToScore(x);
-    const importanceScore = coordinateToScore(1 - y);
-    void onUpdate(taskId, { urgentScore, importanceScore });
-  }
-
   return (
-    <div className={compact ? "matrix compact" : "matrix"}>
-      <div className="matrix-y-label">Importance</div>
-      <div className="matrix-x-label">Urgency</div>
-      <div className="matrix-board" onDragOver={(event) => event.preventDefault()} onDrop={onDrop}>
-        <div className="quadrant q-plan">
-          <strong>Schedule</strong>
-          <span>Important, not urgent</span>
-        </div>
-        <div className="quadrant q-do">
-          <strong>Do now</strong>
-          <span>Important and urgent</span>
-        </div>
-        <div className="quadrant q-later">
-          <strong>Later</strong>
-          <span>Not urgent, less important</span>
-        </div>
-        <div className="quadrant q-delegate">
-          <strong>Quick wins</strong>
-          <span>Urgent, less important</span>
-        </div>
-        {activeTasks.map((task) => {
-          const effectiveUrgency = effectiveUrgentScore(task, today);
-          const x = scoreToCoordinate(effectiveUrgency);
-          const y = 100 - scoreToCoordinate(task.importanceScore);
-          const deadlineBoost = effectiveUrgency > task.urgentScore;
-          return (
-            <button
-              key={task.id}
-              className={deadlineBoost ? "matrix-task boosted" : "matrix-task"}
-              draggable
-              style={{ left: `${x}%`, top: `${y}%` }}
-              title={deadlineBoost ? "Deadline moved this task into a more urgent slot" : "Drag to relabel urgency and importance"}
-              onDragStart={(event) => event.dataTransfer.setData("text/task-id", task.id)}
-            >
-              {task.title}
-              {deadlineBoost && <span>deadline</span>}
-            </button>
-          );
-        })}
-      </div>
+    <div className="note-list">
+      {notes.map((note) => (
+        <article className="note-card" key={note.id}>
+          <p>{note.content}</p>
+          <small>
+            {note.tags.map((tag) => `#${tag}`).join(" ")}
+            {note.projectId && projects.get(note.projectId)
+              ? ` · ${projects.get(note.projectId)?.name}`
+              : ""}
+          </small>
+        </article>
+      ))}
+      {!notes.length && <p className="empty-copy">No notes captured today.</p>}
     </div>
   );
+}
+
+function ReferenceCards({
+  materials,
+  projects
+}: {
+  materials: Material[];
+  projects: Map<string, ProjectSummary>;
+}) {
+  return (
+    <div className="material-list">
+      {materials.map((material) => (
+        <a
+          className="material-item"
+          href={material.url}
+          target="_blank"
+          rel="noreferrer"
+          key={material.id}
+        >
+          <span>{material.type}</span>
+          <strong>{material.title}</strong>
+          <small>
+            {material.notes}
+            {material.projectId && projects.get(material.projectId)
+              ? ` · ${projects.get(material.projectId)?.name}`
+              : ""}
+          </small>
+          <ExternalLink size={13} />
+        </a>
+      ))}
+      {!materials.length && <p className="empty-copy">No references saved yet.</p>}
+    </div>
+  );
+}
+
+function ReviewMetric({
+  label,
+  value,
+  note
+}: {
+  label: string;
+  value: string;
+  note: string;
+}) {
+  return (
+    <div>
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <small>{note}</small>
+    </div>
+  );
+}
+
+function timelinePosition(startMinutes: number, durationMinutes: number) {
+  const top = ((startMinutes - 8 * 60) / 60) * 52;
+  const height = Math.max(20, (durationMinutes / 60) * 52);
+  return { top: `${top}px`, height: `${height}px` };
+}
+
+function parseTime(value: string) {
+  const [hours, minutes] = value.split(":").map(Number);
+  return hours * 60 + minutes;
+}
+
+function formatHour(hour: number) {
+  const date = new Date();
+  date.setHours(hour, 0, 0, 0);
+  return date.toLocaleTimeString("en-US", { hour: "numeric" });
+}
+
+type MatrixQuadrantId = "do-now" | "schedule" | "quick-wins" | "later";
+type MatrixGroup = {
+  id: string;
+  rank?: number;
+  name: string;
+  definition: string;
+  dotColor?: string;
+  tasks: Task[];
+};
+
+function taskQuadrant(task: Task, today: string) {
+  const important = task.importanceScore >= 3;
+  const urgent = effectiveUrgentScore(task, today) >= 3;
+  if (important && urgent) {
+    return {
+      id: "do-now" as const,
+      label: "Do now — important and urgent",
+      shortLabel: "Do now"
+    };
+  }
+  if (important) {
+    return {
+      id: "schedule" as const,
+      label: "Schedule — important, not urgent",
+      shortLabel: "Schedule"
+    };
+  }
+  if (urgent) {
+    return {
+      id: "quick-wins" as const,
+      label: "Quick wins — urgent, less important",
+      shortLabel: "Quick wins"
+    };
+  }
+  return {
+    id: "later" as const,
+    label: "Later — neither urgent nor important",
+    shortLabel: "Later"
+  };
+}
+
+function matrixGroups(
+  tasks: Task[],
+  today: string,
+  projects: Map<string, ProjectSummary>,
+  arrangement: BacklogArrange,
+  preferredProjectId?: string | null
+): MatrixGroup[] {
+  if (arrangement === "project") {
+    const projectIds = [
+      ...new Set(tasks.map((task) => task.projectId ?? "standalone"))
+    ].sort((a, b) => {
+      if (a === preferredProjectId) return -1;
+      if (b === preferredProjectId) return 1;
+      return (
+        a === "standalone" ? "Standalone" : projects.get(a)?.name ?? "Project"
+      ).localeCompare(
+        b === "standalone" ? "Standalone" : projects.get(b)?.name ?? "Project"
+      );
+    });
+    return projectIds.map((projectId) => ({
+      id: `project-${projectId}`,
+      name:
+        projectId === "standalone"
+          ? "Standalone"
+          : projects.get(projectId)?.name ?? "Project",
+      definition:
+        projectId === "standalone"
+          ? "Independent work"
+          : "Project work · all unscheduled tasks",
+      dotColor: matrixProjectColor(projectId === "standalone" ? null : projectId),
+      tasks: sortBacklogGroup(
+        tasks.filter((task) => (task.projectId ?? "standalone") === projectId)
+      )
+    }));
+  }
+
+  if (arrangement === "due") {
+    const definitions = [
+      {
+        id: "due-today",
+        name: "Today",
+        definition: "Due now",
+        includes: (task: Task) => Boolean(task.deadline) && daysUntilTaskDeadline(task, today) <= 0
+      },
+      {
+        id: "due-next-three",
+        name: "Next three days",
+        definition: "Close enough to decide",
+        includes: (task: Task) => {
+          const days = daysUntilTaskDeadline(task, today);
+          return Boolean(task.deadline) && days > 0 && days <= 3;
+        }
+      },
+      {
+        id: "due-later-week",
+        name: "Later this week",
+        definition: "Visible, not immediate",
+        includes: (task: Task) => Boolean(task.deadline) && daysUntilTaskDeadline(task, today) > 3
+      },
+      {
+        id: "due-none",
+        name: "No deadline",
+        definition: "Date it or drop it",
+        includes: (task: Task) => !task.deadline
+      }
+    ];
+    return definitions
+      .map((definition) => ({
+        id: definition.id,
+        name: definition.name,
+        definition: definition.definition,
+        tasks: tasks
+          .filter(definition.includes)
+          .sort(
+            (a, b) =>
+              b.importanceScore - a.importanceScore ||
+              b.urgentScore - a.urgentScore ||
+              a.sortOrder - b.sortOrder
+          )
+      }))
+      .filter((group) => group.tasks.length > 0);
+  }
+
+  const definitions: Array<{
+    id: MatrixQuadrantId;
+    rank: number;
+    name: string;
+    definition: string;
+  }> = [
+    { id: "do-now", rank: 1, name: "Do now", definition: "Important and urgent" },
+    { id: "schedule", rank: 2, name: "Schedule", definition: "Important, not urgent" },
+    { id: "quick-wins", rank: 3, name: "Quick wins", definition: "Urgent, less important" },
+    { id: "later", rank: 4, name: "Later", definition: "Neither" }
+  ];
+  return definitions.map((definition) => ({
+    ...definition,
+    tasks: sortBacklogGroup(
+      tasks.filter((task) => taskQuadrant(task, today).id === definition.id)
+    )
+  }));
+}
+
+function sortBacklogGroup(tasks: Task[]) {
+  return [...tasks].sort((a, b) => {
+    if (a.deadline && b.deadline) {
+      return (
+        new Date(a.deadline).getTime() - new Date(b.deadline).getTime() ||
+        b.importanceScore - a.importanceScore
+      );
+    }
+    if (a.deadline) return -1;
+    if (b.deadline) return 1;
+    return b.importanceScore - a.importanceScore || a.sortOrder - b.sortOrder;
+  });
+}
+
+function matrixTableGeometry(groups: MatrixGroup[]) {
+  const groupGeometry = new Map<string, { top: number }>();
+  const taskGeometry = new Map<string, { x: number; y: number }>();
+  let top = 0;
+  for (const group of groups) {
+    groupGeometry.set(group.id, { top });
+    group.tasks.forEach((task, index) => {
+      taskGeometry.set(task.id, {
+        x: 14,
+        y: top + 63 + index * 30 + 15
+      });
+    });
+    top += 78 + group.tasks.length * 30 + 26;
+  }
+  return {
+    groups: groupGeometry,
+    tasks: taskGeometry,
+    height: Math.max(380, top - 26)
+  };
+}
+
+function matrixFigurePoint(task: Task, today: string) {
+  const days = daysUntilTaskDeadline(task, today);
+  const x = 20 + (1 - Math.min(7, Math.max(0, days)) / 7) * 480;
+  const importance = Math.min(5, Math.max(1, task.importanceScore));
+  const y = 20 + ((5 - importance) / 4) * 300;
+  return { x, y };
+}
+
+function daysUntilTaskDeadline(task: Task, today: string) {
+  if (!task.deadline) return 7;
+  return Math.max(
+    0,
+    Math.ceil(
+      (startOfDay(new Date(task.deadline)) - startOfDay(new Date(today))) / 86400000
+    )
+  );
+}
+
+function matrixProjectColor(projectId: string | null) {
+  const palette = ["#4f76a8", "#96667c", "#8a6a3c", "#777066"];
+  if (!projectId) return palette[3];
+  let hash = 0;
+  for (const character of projectId) {
+    hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
+  }
+  return palette[hash % palette.length];
+}
+
+function matrixProjectName(
+  task: Task,
+  projects: Map<string, ProjectSummary>
+) {
+  return task.projectId ? projects.get(task.projectId)?.name ?? "Project" : "Standalone";
 }
 
 function coordinateToScore(value: number) {
@@ -1580,346 +3300,31 @@ function scoreToCoordinate(score: number) {
   return ((Math.min(5, Math.max(1, score)) - 1) / 4) * 86 + 7;
 }
 
-function effectiveUrgentScore(task: Task, todayValue: string) {
+function effectiveUrgentScore(task: Task, today: string) {
   if (!task.deadline) return task.urgentScore;
-
-  const today = new Date(todayValue);
-  const deadline = new Date(task.deadline);
-  const daysLeft = Math.ceil((startOfDayTime(deadline) - startOfDayTime(today)) / 86400000);
-  const deadlineScore = daysLeft <= 1 ? 5 : daysLeft <= 3 ? 4 : daysLeft <= 7 ? 3 : daysLeft <= 14 ? 2 : 1;
-
+  const days = Math.ceil(
+    (startOfDay(new Date(task.deadline)) - startOfDay(new Date(today))) / 86400000
+  );
+  const deadlineScore =
+    days <= 1 ? 5 : days <= 3 ? 4 : days <= 7 ? 3 : days <= 14 ? 2 : 1;
   return Math.max(task.urgentScore, deadlineScore);
 }
 
-function startOfDayTime(value: Date) {
-  const date = new Date(value);
-  date.setHours(0, 0, 0, 0);
-  return date.getTime();
+function startOfDay(value: Date) {
+  value.setHours(0, 0, 0, 0);
+  return value.getTime();
 }
 
-function PanelTitle({ icon, title, detail }: { icon: React.ReactNode; title: string; detail: string }) {
-  return (
-    <div className="panel-title">
-      <div>
-        {icon}
-        <h2>{title}</h2>
-      </div>
-      <span>{detail}</span>
-    </div>
-  );
-}
-
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="metric">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
-}
-
-function Charts({ stats }: { stats: DayStat[] }) {
-  const chartData = stats.map((stat) => ({
-    ...stat,
-    label: new Date(`${stat.day}T00:00:00`).toLocaleDateString("en-US", { weekday: "short" })
-  }));
-
-  return (
-    <div className="chart-grid">
-      <div className="chart-box">
-        <span>Completion</span>
-        <ResponsiveContainer width="100%" height={145}>
-          <AreaChart data={chartData}>
-            <defs>
-              <linearGradient id="completion" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#78906f" stopOpacity={0.35} />
-                <stop offset="95%" stopColor="#78906f" stopOpacity={0} />
-              </linearGradient>
-            </defs>
-            <CartesianGrid stroke="#eee8de" vertical={false} />
-            <XAxis dataKey="label" tickLine={false} axisLine={false} />
-            <YAxis hide domain={[0, 100]} />
-            <Tooltip />
-            <Area type="monotone" dataKey="completionRate" stroke="#637a5c" fill="url(#completion)" strokeWidth={2} />
-          </AreaChart>
-        </ResponsiveContainer>
-      </div>
-      <div className="chart-box">
-        <span>Tasks done</span>
-        <ResponsiveContainer width="100%" height={145}>
-          <BarChart data={chartData}>
-            <CartesianGrid stroke="#eee8de" vertical={false} />
-            <XAxis dataKey="label" tickLine={false} axisLine={false} />
-            <YAxis allowDecimals={false} width={24} />
-            <Tooltip />
-            <Bar dataKey="completed" fill="#a8785c" radius={[5, 5, 0, 0]} />
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
-      <div className="chart-box">
-        <span>Planned vs actual</span>
-        <ResponsiveContainer width="100%" height={145}>
-          <BarChart data={chartData}>
-            <CartesianGrid stroke="#eee8de" vertical={false} />
-            <XAxis dataKey="label" tickLine={false} axisLine={false} />
-            <YAxis width={24} />
-            <Tooltip />
-            <Bar dataKey="plannedHours" fill="#d4c6aa" radius={[5, 5, 0, 0]} />
-            <Bar dataKey="actualHours" fill="#607d86" radius={[5, 5, 0, 0]} />
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
-      <div className="chart-box">
-        <span>Mood and energy</span>
-        <ResponsiveContainer width="100%" height={145}>
-          <LineChart data={chartData}>
-            <CartesianGrid stroke="#eee8de" vertical={false} />
-            <XAxis dataKey="label" tickLine={false} axisLine={false} />
-            <YAxis domain={[1, 5]} width={24} />
-            <Tooltip />
-            <Line type="monotone" dataKey="mood" stroke="#9b6f68" strokeWidth={2} dot={false} />
-            <Line type="monotone" dataKey="energy" stroke="#637a5c" strokeWidth={2} dot={false} />
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
-    </div>
-  );
-}
-
-function MiniTimeline({
-  blocks,
-  tasks,
-  today,
-  expanded = false
-}: {
-  blocks: TimeBlock[];
-  tasks: Task[];
-  today: string;
-  expanded?: boolean;
-}) {
-  const todayKey = today.slice(0, 10);
-  const visible = expanded ? blocks : blocks.filter((block) => block.date.slice(0, 10) === todayKey);
-
-  return (
-    <div className={expanded ? "timeline expanded" : "timeline"}>
-      {visible.map((block) => {
-        const task = tasks.find((item) => item.id === block.taskId);
-        return (
-          <div className="time-block" key={block.id}>
-            <span>{block.startTime}</span>
-            <div>
-              <strong>{block.title}</strong>
-              <small>{task?.title ?? formatShortDate(block.date)}</small>
-            </div>
-            <span>{block.endTime}</span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function ActivityList({
-  activities,
-  tasks,
-  projects,
-  onDelete
-}: {
-  activities: ActivityEntry[];
-  tasks: Task[];
-  projects: Map<string, ProjectSummary>;
-  onDelete: (id: string) => Promise<void>;
-}) {
-  if (!activities.length) {
-    return (
-      <div className="activity-empty">
-        <p>No activity recorded yet. Add one small piece of evidence from your day.</p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="activity-list">
-      {activities.map((activity) => {
-        const task = tasks.find((item) => item.id === activity.taskId);
-        const project = task?.projectId
-          ? projects.get(task.projectId)
-          : activity.projectId
-            ? projects.get(activity.projectId)
-            : null;
-        return (
-          <article className="activity-item" key={activity.id}>
-            <div className="activity-item-header">
-              <div className="activity-meta">
-                <time dateTime={activity.startedAt}>{formatActivityTime(activity.startedAt)}</time>
-                <span>{activity.durationMinutes}m</span>
-                <span className="activity-category">{activity.category}</span>
-              </div>
-              <button
-                className="icon-button danger"
-                title="Delete activity"
-                aria-label={`Delete activity: ${activity.note}`}
-                onClick={() => void onDelete(activity.id)}
-              >
-                <Trash2 size={15} />
-              </button>
-            </div>
-            <p>{activity.note}</p>
-            {(task || project) && (
-              <small>
-                {task ? `Linked to ${task.title}` : ""}
-                {task && project ? " · " : ""}
-                {project ? project.name : ""}
-              </small>
-            )}
-          </article>
-        );
-      })}
-    </div>
-  );
-}
-
-function NoteList({
-  notes,
-  projects
-}: {
-  notes: Note[];
-  projects: Map<string, ProjectSummary>;
-}) {
-  if (notes.length === 0) {
-    return (
-      <div className="empty-state">
-        <NotebookPen size={32} />
-        <p>No notes yet. Capture your thoughts and decisions above.</p>
-      </div>
-    );
-  }
-  return (
-    <div className="note-list">
-      {notes.map((note) => (
-        <article key={note.id} className="note-card">
-          <p>{note.content}</p>
-          <div>
-            {note.tags.map((tag) => (
-              <span key={tag}>#{tag}</span>
-            ))}
-            {note.projectId && projects.get(note.projectId) && (
-              <span className="linked-project">
-                <FolderKanban size={11} />
-                {projects.get(note.projectId)?.name}
-              </span>
-            )}
-          </div>
-        </article>
-      ))}
-    </div>
-  );
-}
-
-function MaterialList({
-  materials,
-  projects
-}: {
-  materials: Material[];
-  projects: Map<string, ProjectSummary>;
-}) {
-  if (materials.length === 0) {
-    return (
-      <div className="empty-state">
-        <Library size={32} />
-        <p>Your library is empty. Save an article, video, or link above.</p>
-      </div>
-    );
-  }
-  return (
-    <div className="material-list">
-      {materials.map((material) => (
-        <a href={material.url} target="_blank" rel="noreferrer" className="material-item" key={material.id}>
-          <span>{material.type}</span>
-          <strong>{material.title}</strong>
-          <small>
-            {material.notes || material.url}
-            {material.projectId && projects.get(material.projectId)
-              ? ` · ${projects.get(material.projectId)?.name}`
-              : ""}
-          </small>
-          <ExternalLink size={15} />
-        </a>
-      ))}
-    </div>
-  );
-}
-
-function TaskCompactList({ tasks }: { tasks: Task[] }) {
-  if (!tasks.length) return <p className="empty-copy">No unfinished tasks here.</p>;
-  return (
-    <div className="compact-tasks">
-      {tasks.map((task) => (
-        <div key={task.id}>
-          <Circle size={14} />
-          <span>{task.title}</span>
-          <small>{priorityLabel[task.priority]}</small>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function BacklogList({
-  tasks,
-  onUpdate
-}: {
-  tasks: Task[];
-  onUpdate: (
-    id: string,
-    patch: Partial<Task> & { scheduleSource?: string }
-  ) => Promise<unknown>;
-}) {
-  if (!tasks.length) {
-    return <p className="empty-copy">No standalone tasks are waiting here.</p>;
-  }
-
-  return (
-    <div className="backlog-list">
-      {tasks.map((task) => (
-        <article key={task.id}>
-          <Circle size={14} />
-          <span>{task.title}</span>
-          <input
-            type="date"
-            aria-label={`Schedule backlog task ${task.title}`}
-            onChange={(event) => {
-              if (event.target.value) {
-                void onUpdate(task.id, {
-                  date: event.target.value,
-                  scheduleSource: "general-backlog"
-                });
-              }
-            }}
-          />
-        </article>
-      ))}
-    </div>
-  );
-}
-
-function TwoColumnView({ left, right }: { left: React.ReactNode; right: React.ReactNode }) {
-  return (
-    <div className="two-column">
-      {left}
-      {right}
-    </div>
-  );
-}
-
-function headlineFor(active: string) {
-  const labels: Record<string, string> = {
-    today: "Make today legible",
-    plan: "Plan with intention",
-    journal: "Keep what matters",
-    review: "Close the day with intention"
-  };
-  return labels[active] ?? labels.today;
+function useMediaQuery(query: string) {
+  const [matches, setMatches] = useState(false);
+  useEffect(() => {
+    const media = window.matchMedia(query);
+    const update = () => setMatches(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, [query]);
+  return matches;
 }
 
 function formatLongDate(value: string) {
@@ -1931,13 +3336,57 @@ function formatLongDate(value: string) {
 }
 
 function formatShortDate(value: string) {
-  return new Date(value).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return new Date(value).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric"
+  });
+}
+
+function formatBacklogDue(value: string | null, today: string) {
+  if (!value) return "—";
+  const days = Math.ceil(
+    (startOfDay(new Date(value)) - startOfDay(new Date(today))) / 86400000
+  );
+  if (days <= 0) return "Today";
+  return formatShortDate(value);
 }
 
 function formatActivityTime(value: string) {
-  return new Date(value).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  return new Date(value).toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit"
+  });
+}
+
+function formatBlockMoment(value: string) {
+  const date = new Date(value);
+  const part =
+    date.getHours() < 12
+      ? "morning"
+      : date.getHours() < 17
+        ? "afternoon"
+        : "evening";
+  return `${date.toLocaleDateString("en-US", { weekday: "long" })} ${part}`;
+}
+
+function formatClockTime(value: Date) {
+  return value.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 }
 
 function formatTimeInput(value: Date) {
-  return `${String(value.getHours()).padStart(2, "0")}:${String(value.getMinutes()).padStart(2, "0")}`;
+  return `${String(value.getHours()).padStart(2, "0")}:${String(
+    value.getMinutes()
+  ).padStart(2, "0")}`;
+}
+
+function formatMinutes(minutes: number) {
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest ? `${hours}h ${rest}m` : `${hours}h`;
+}
+
+function numberWord(value: number) {
+  const words = ["No", "One", "Two", "Three", "Four", "Five", "Six"];
+  return words[value] ?? String(value);
 }

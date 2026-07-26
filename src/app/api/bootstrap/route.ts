@@ -7,6 +7,7 @@ export async function GET() {
   const today = startOfLocalDay();
   const weekStart = addDays(today, -6);
   const weekEnd = addDays(today, 2);
+  const reviewEnd = addDays(today, 1);
   const { start, end } = sameDayRange(today);
 
   const [
@@ -19,6 +20,7 @@ export async function GET() {
     weekTasks,
     diaries,
     weekActivities,
+    weekFocusSessions,
     projects
   ] =
     await Promise.all([
@@ -27,7 +29,7 @@ export async function GET() {
           OR: [
             { date: { gte: weekStart, lt: weekEnd } },
             { date: { lt: today }, status: { not: "DONE" } },
-            { date: null, projectId: null }
+            { date: null }
           ]
         },
         orderBy: [{ date: "asc" }, { sortOrder: "asc" }, { createdAt: "asc" }]
@@ -47,16 +49,28 @@ export async function GET() {
         orderBy: [{ startedAt: "desc" }, { createdAt: "desc" }]
       }),
       prisma.task.findMany({
-        where: { date: { gte: weekStart, lt: weekEnd } },
+        where: { date: { gte: weekStart, lt: reviewEnd } },
         orderBy: { date: "asc" }
       }),
       prisma.diaryEntry.findMany({
-        where: { date: { gte: weekStart, lt: weekEnd } },
+        where: { date: { gte: weekStart, lt: reviewEnd } },
         orderBy: { date: "asc" }
       }),
       prisma.activityEntry.findMany({
-        where: { startedAt: { gte: weekStart, lt: weekEnd } },
+        where: { startedAt: { gte: weekStart, lt: reviewEnd } },
         orderBy: { startedAt: "asc" }
+      }),
+      prisma.focusSession.findMany({
+        where: {
+          kind: "FOCUS",
+          completedAt: { gte: weekStart, lt: reviewEnd },
+          status: { in: ["COMPLETED", "CANCELED"] }
+        },
+        select: {
+          status: true,
+          actualMinutes: true,
+          startedAt: true
+        }
       }),
       listProjectSummaries()
     ]);
@@ -66,6 +80,14 @@ export async function GET() {
     (await prisma.diaryEntry.create({
       data: { date: start, content: "", reflection: "", mood: 3, energy: 3 }
     }));
+  const stats = buildStats(weekTasks, diaries, weekActivities, weekStart);
+  const reviewSummary = {
+    ...buildReviewSummary(weekFocusSessions),
+    focusedMinutes: weekActivities.reduce(
+      (sum, activity) => sum + activity.durationMinutes,
+      0
+    )
+  };
 
   return NextResponse.json({
     today: start.toISOString(),
@@ -79,7 +101,8 @@ export async function GET() {
     unfinishedTasks: tasks.filter(
       (task) => task.date && task.date < today && task.status !== "DONE"
     ),
-    stats: buildStats(weekTasks, diaries, weekActivities)
+    stats,
+    reviewSummary
   });
 }
 
@@ -110,7 +133,12 @@ type StatActivity = {
   durationMinutes: number;
 };
 
-function buildStats(tasks: StatTask[], diaries: StatDiary[], activities: StatActivity[]) {
+function buildStats(
+  tasks: StatTask[],
+  diaries: StatDiary[],
+  activities: StatActivity[],
+  weekStart: Date
+) {
   const byDay = new Map<string, StatTask[]>();
   for (const task of tasks) {
     if (!task.date) continue;
@@ -118,7 +146,9 @@ function buildStats(tasks: StatTask[], diaries: StatDiary[], activities: StatAct
     byDay.set(key, [...(byDay.get(key) ?? []), task]);
   }
 
-  return Array.from(byDay.entries()).map(([day, dayTasks]) => {
+  return Array.from({ length: 7 }, (_, index) => {
+    const day = localDateKey(addDays(weekStart, index));
+    const dayTasks = byDay.get(day) ?? [];
     const done = dayTasks.filter((task) => task.status === "DONE").length;
     const diary = diaries.find((entry) => localDateKey(entry.date) === day);
     const dayActivities = activities.filter((entry) => localDateKey(entry.startedAt) === day);
@@ -138,6 +168,30 @@ function buildStats(tasks: StatTask[], diaries: StatDiary[], activities: StatAct
       energy: diary?.energy ?? null
     };
   });
+}
+
+function buildReviewSummary(
+  sessions: Array<{
+    status: string;
+    actualMinutes: number;
+    startedAt: Date;
+  }>
+) {
+  const completed = sessions.filter((session) => session.status === "COMPLETED");
+  const longest =
+    [...completed].sort((a, b) => b.actualMinutes - a.actualMinutes)[0] ?? null;
+  return {
+    focusedMinutes: completed.reduce(
+      (sum, session) => sum + session.actualMinutes,
+      0
+    ),
+    completedSessions: completed.length,
+    cancelledSessions: sessions.filter(
+      (session) => session.status === "CANCELED"
+    ).length,
+    longestMinutes: longest?.actualMinutes ?? 0,
+    longestStartedAt: longest?.startedAt ?? null
+  };
 }
 
 function roundHours(minutes: number) {

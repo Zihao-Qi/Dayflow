@@ -194,6 +194,10 @@ model FocusSession {
   accumulatedPauseSeconds Int                @default(0)
   status                  FocusSessionStatus @default(RUNNING)
   completedAt             DateTime?
+  needsRecord             Boolean            @default(false)
+  recordedAt              DateTime?
+  completionNote          String?
+  completionCategory      String?
   taskId                  String?
   projectId               String?
   task                    Task?              @relation(fields: [taskId], references: [id], onDelete: SetNull)

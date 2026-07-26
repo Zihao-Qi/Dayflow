@@ -29,6 +29,7 @@ type FocusTransition = "pause" | "resume" | "complete" | "cancel";
 type FocusSessionContextValue = {
   snapshot: FocusSnapshot | null;
   active: FocusSessionRecord | null;
+  pendingCompletion: FocusSessionRecord | null;
   now: number;
   busy: boolean;
   error: string;
@@ -37,6 +38,12 @@ type FocusSessionContextValue = {
   activityRevision: number;
   start: (input: FocusStartInput) => Promise<boolean>;
   transition: (action: FocusTransition) => Promise<boolean>;
+  recordCompletion: (input: {
+    note: string;
+    category: string;
+    taskCompleted: boolean;
+    takeBreak: boolean;
+  }) => Promise<boolean>;
   dismissBreakSuggestion: () => void;
   requestNotificationPermission: () => Promise<void>;
 };
@@ -44,6 +51,7 @@ type FocusSessionContextValue = {
 type TransitionResult = {
   completed: boolean;
   suggestedBreakMinutes: number | null;
+  completedSession?: FocusSessionRecord | null;
   snapshot: FocusSnapshot;
   error?: string;
 };
@@ -62,6 +70,7 @@ export function FocusSessionProvider({ children }: { children: React.ReactNode }
   const [activityRevision, setActivityRevision] = useState(0);
   const autoFinishingId = useRef<string | null>(null);
   const active = snapshot?.active ?? null;
+  const pendingCompletion = snapshot?.pendingCompletion ?? null;
 
   useEffect(() => {
     let live = true;
@@ -81,9 +90,12 @@ export function FocusSessionProvider({ children }: { children: React.ReactNode }
   }, []);
 
   useEffect(() => {
-    if (active?.status !== "RUNNING") return;
+    if (active?.status !== "RUNNING" && active?.status !== "PAUSED") return;
     setNow(Date.now());
-    const interval = window.setInterval(() => setNow(Date.now()), 1000);
+    const interval = window.setInterval(
+      () => setNow(Date.now()),
+      active.status === "RUNNING" ? 1000 : 30_000
+    );
     return () => window.clearInterval(interval);
   }, [active?.id, active?.status]);
 
@@ -115,9 +127,6 @@ export function FocusSessionProvider({ children }: { children: React.ReactNode }
         if (action === "complete") {
           notifyCompletion(current);
           setSuggestedBreak(result.suggestedBreakMinutes);
-          if (current.kind === "FOCUS") {
-            setActivityRevision((revision) => revision + 1);
-          }
         } else if (action === "cancel") {
           setSuggestedBreak(null);
         }
@@ -190,6 +199,66 @@ export function FocusSessionProvider({ children }: { children: React.ReactNode }
     [busy]
   );
 
+  const recordCompletion = useCallback(
+    async (input: {
+      note: string;
+      category: string;
+      taskCompleted: boolean;
+      takeBreak: boolean;
+    }) => {
+      const completion = snapshot?.pendingCompletion;
+      if (!completion || busy) return false;
+      setBusy(true);
+      setError("");
+      try {
+        const response = await fetch(`/api/focus-session/${completion.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "record",
+            note: input.note,
+            category: input.category,
+            taskCompleted: input.taskCompleted
+          })
+        });
+        const result = (await response.json()) as TransitionResult;
+        if (!response.ok) {
+          throw new Error(result.error ?? "The completion record could not be saved.");
+        }
+        let nextSnapshot = result.snapshot;
+        if (input.takeBreak && result.suggestedBreakMinutes) {
+          const breakResponse = await fetch("/api/focus-session", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              kind: "BREAK",
+              plannedMinutes: result.suggestedBreakMinutes
+            })
+          });
+          const breakResult = (await breakResponse.json()) as {
+            snapshot?: FocusSnapshot;
+            error?: string;
+          };
+          if (!breakResponse.ok || !breakResult.snapshot) {
+            throw new Error(breakResult.error ?? "The break could not be started.");
+          }
+          nextSnapshot = breakResult.snapshot;
+        }
+        setSnapshot(nextSnapshot);
+        setSuggestedBreak(null);
+        setNow(Date.now());
+        setActivityRevision((revision) => revision + 1);
+        return true;
+      } catch (caught) {
+        setError(messageFrom(caught));
+        return false;
+      } finally {
+        setBusy(false);
+      }
+    },
+    [busy, snapshot]
+  );
+
   const requestNotificationPermission = useCallback(async () => {
     if (!("Notification" in window)) return;
     setNotificationState(await Notification.requestPermission());
@@ -199,6 +268,7 @@ export function FocusSessionProvider({ children }: { children: React.ReactNode }
     () => ({
       snapshot,
       active,
+      pendingCompletion,
       now,
       busy,
       error,
@@ -207,12 +277,14 @@ export function FocusSessionProvider({ children }: { children: React.ReactNode }
       activityRevision,
       start,
       transition,
+      recordCompletion,
       dismissBreakSuggestion: () => setSuggestedBreak(null),
       requestNotificationPermission
     }),
     [
       snapshot,
       active,
+      pendingCompletion,
       now,
       busy,
       error,
@@ -221,6 +293,7 @@ export function FocusSessionProvider({ children }: { children: React.ReactNode }
       activityRevision,
       start,
       transition,
+      recordCompletion,
       requestNotificationPermission
     ]
   );

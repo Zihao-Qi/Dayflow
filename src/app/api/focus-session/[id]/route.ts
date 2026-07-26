@@ -12,7 +12,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   const body = await request.json();
 
   try {
-    const result = await transitionFocusSession(id, String(body.action ?? ""));
+    const result = await transitionFocusSession(id, String(body.action ?? ""), body);
     return NextResponse.json({
       ...result,
       snapshot: await getFocusSnapshot()

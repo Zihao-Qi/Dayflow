@@ -43,10 +43,12 @@ type ProjectsWorkspaceProps = {
   onSelectedProjectChange: (id: string | null) => void;
   onCreateOpenChange: (open: boolean) => void;
   onDataChanged: () => Promise<void>;
+  onOpenBacklog: (projectId: string) => void;
   onStartFocus: (target: {
     taskId?: string;
     projectId?: string;
     label?: string;
+    plannedMinutes?: number;
   }) => void;
 };
 
@@ -61,8 +63,6 @@ type ProjectPatch = Partial<{
   confirm: boolean;
 }>;
 
-type ProjectDetailView = "overview" | "plan" | "evidence";
-
 export function ProjectsWorkspace({
   projects,
   selectedProjectId,
@@ -71,6 +71,7 @@ export function ProjectsWorkspace({
   onSelectedProjectChange,
   onCreateOpenChange,
   onDataChanged,
+  onOpenBacklog,
   onStartFocus
 }: ProjectsWorkspaceProps) {
   const [filter, setFilter] = useState<ProjectStatus>("ACTIVE");
@@ -135,13 +136,6 @@ export function ProjectsWorkspace({
 
   async function deleteProject() {
     if (!detail) return;
-    if (
-      !window.confirm(
-        `Delete “${detail.name}”? Its tasks, activities, notes, and materials will be preserved and detached.`
-      )
-    ) {
-      return;
-    }
     const response = await fetch(`/api/projects/${detail.id}?confirm=true`, { method: "DELETE" });
     if (!response.ok) {
       const result = await response.json().catch(() => null);
@@ -164,6 +158,7 @@ export function ProjectsWorkspace({
         onDeleteProject={deleteProject}
         onSync={sync}
         onError={setError}
+        onOpenBacklog={onOpenBacklog}
         onStartFocus={onStartFocus}
       />
     );
@@ -177,7 +172,7 @@ export function ProjectsWorkspace({
         <div className="projects-heading">
           <div>
             <span className="eyebrow">Long-term work</span>
-            <h2>Projects</h2>
+            <h1>Projects</h1>
             <p>Keep a finishable outcome connected to the work you do each day.</p>
           </div>
           <button className="primary-button" onClick={() => onCreateOpenChange(true)}>
@@ -220,8 +215,17 @@ export function ProjectsWorkspace({
             key={project.id}
             project={project}
             onOpen={() => onSelectedProjectChange(project.id)}
+            onStartFocus={onStartFocus}
           />
         ))}
+        <button
+          className="project-create-card"
+          onClick={() => onCreateOpenChange(true)}
+        >
+          <Plus size={20} />
+          <strong>Start a finishable outcome</strong>
+          <span>Name it first. Duration, weekly effort and phases are optional.</span>
+        </button>
         {!visibleProjects.length && (
           <div className="panel project-empty">
             <FolderKanban size={32} />
@@ -248,12 +252,18 @@ function ProjectCreateForm({
   const [name, setName] = useState("");
   const [desiredOutcome, setDesiredOutcome] = useState("");
   const [targetDate, setTargetDate] = useState("");
-  const [targetDurationValue, setTargetDurationValue] = useState("");
-  const [targetDurationUnit, setTargetDurationUnit] =
-    useState<ProjectDurationUnit>("WEEKS");
-  const [weeklyMinutesBudget, setWeeklyMinutesBudget] = useState("");
+  const [durationChoice, setDurationChoice] = useState<"1" | "3" | "6" | "date">("3");
+  const [weeklyHours, setWeeklyHours] = useState("5");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") onCancel();
+    }
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [onCancel]);
 
   async function createProject() {
     if (!name.trim()) {
@@ -268,10 +278,12 @@ function ProjectCreateForm({
       body: JSON.stringify({
         name,
         desiredOutcome,
-        targetDate: targetDate || null,
-        targetDurationValue: targetDurationValue || null,
-        targetDurationUnit: targetDurationValue ? targetDurationUnit : null,
-        weeklyMinutesBudget: weeklyMinutesBudget || null
+        targetDate: durationChoice === "date" ? targetDate || null : null,
+        targetDurationValue: durationChoice === "date" ? null : Number(durationChoice),
+        targetDurationUnit: durationChoice === "date" ? null : "WEEKS",
+        weeklyMinutesBudget: weeklyHours
+          ? Math.max(0, Math.round(Number(weeklyHours) * 60))
+          : null
       })
     });
     const result = await response.json().catch(() => null);
@@ -284,107 +296,141 @@ function ProjectCreateForm({
   }
 
   return (
-    <div className="project-create-form" aria-label="Create project">
-      <label>
-        Project name <span>Required</span>
-        <input
-          id="new-project-name"
-          autoFocus
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") void createProject();
-          }}
-          placeholder="Complete the machine learning course"
-        />
-      </label>
-      <details>
-        <summary>Optional details</summary>
-        <div className="project-form-grid">
-          <label className="full">
-            Desired outcome
+    <div className="project-dialog-overlay" role="presentation" onMouseDown={onCancel}>
+      <section
+        className="project-create-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Create project"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header>
+          <div>
+            <span className="eyebrow focus-eyebrow">New project</span>
+            <h2>A finishable outcome</h2>
+          </div>
+          <kbd>esc</kbd>
+        </header>
+        <div className="project-dialog-body">
+          <label>
+            Name <strong>required</strong>
+            <input
+              id="new-project-name"
+              autoFocus
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") void createProject();
+              }}
+              placeholder="What will be true when this is done?"
+            />
+          </label>
+          <label>
+            Outcome
             <textarea
               value={desiredOutcome}
               onChange={(event) => setDesiredOutcome(event.target.value)}
-              placeholder="What will be true when this is finished?"
+              placeholder="One or two sentences. Optional."
             />
           </label>
-          <label>
-            Target date
-            <input
-              type="date"
-              value={targetDate}
-              onChange={(event) => setTargetDate(event.target.value)}
-            />
-          </label>
-          <div className="project-duration-field">
-            <span>Target duration</span>
+          <fieldset className="project-duration-chips">
+            <legend>Target duration <span>optional — how long the whole thing should take</span></legend>
             <div>
-              <input
-                aria-label="Target duration value"
-                type="number"
-                min="1"
-                step="1"
-                value={targetDurationValue}
-                onChange={(event) => setTargetDurationValue(event.target.value)}
-                placeholder="Amount"
-              />
-              <select
-                aria-label="Target duration unit"
-                value={targetDurationUnit}
-                onChange={(event) =>
-                  setTargetDurationUnit(event.target.value as ProjectDurationUnit)
-                }
+              {(["1", "3", "6"] as const).map((value) => (
+                <button
+                  type="button"
+                  key={value}
+                  className={durationChoice === value ? "active" : ""}
+                  onClick={() => setDurationChoice(value)}
+                >
+                  {value} {value === "1" ? "week" : "weeks"}
+                </button>
+              ))}
+              <button
+                type="button"
+                className={durationChoice === "date" ? "active pick-date" : "pick-date"}
+                onClick={() => setDurationChoice("date")}
               >
-                <option value="DAYS">Days</option>
-                <option value="WEEKS">Weeks</option>
-              </select>
+                Pick an end date
+              </button>
             </div>
-          </div>
+            {durationChoice === "date" && (
+              <input
+                type="date"
+                aria-label="Project end date"
+                value={targetDate}
+                onChange={(event) => setTargetDate(event.target.value)}
+              />
+            )}
+          </fieldset>
           <label>
-            Weekly effort budget
-            <input
-              type="number"
-              min="5"
-              step="5"
-              value={weeklyMinutesBudget}
-              onChange={(event) => setWeeklyMinutesBudget(event.target.value)}
-              placeholder="Minutes per week"
-            />
+            Weekly effort <span>optional — hours per week you expect to give it</span>
+            <span className="project-weekly-input">
+              <input
+                type="number"
+                min="0"
+                step="0.5"
+                value={weeklyHours}
+                onChange={(event) => setWeeklyHours(event.target.value)}
+              />
+              <small>h / week</small>
+            </span>
           </label>
+          <p className="project-duration-note">
+            Duration and weekly effort are separate on purpose — one is a deadline,
+            the other is a budget. Phases and tasks come later, from the project page.
+          </p>
+          {error && <p className="form-error">{error}</p>}
         </div>
-      </details>
-      {error && <p className="form-error">{error}</p>}
-      <div className="project-form-actions">
-        <button className="secondary-button" onClick={onCancel}>
+        <footer>
+          <button className="text-button" onClick={onCancel}>
           Cancel
-        </button>
-        <button className="primary-button" disabled={saving} onClick={() => void createProject()}>
-          <Plus size={16} />
-          {saving ? "Creating" : "Create project"}
-        </button>
-      </div>
+          </button>
+          <button
+            className="primary-button"
+            disabled={saving}
+            onClick={() => void createProject()}
+          >
+            {saving ? "Creating" : "Create project"}
+          </button>
+        </footer>
+      </section>
     </div>
   );
 }
 
-function ProjectCard({ project, onOpen }: { project: ProjectSummary; onOpen: () => void }) {
+function ProjectCard({
+  project,
+  onOpen,
+  onStartFocus
+}: {
+  project: ProjectSummary;
+  onOpen: () => void;
+  onStartFocus: ProjectsWorkspaceProps["onStartFocus"];
+}) {
   return (
-    <button className="project-card panel" onClick={onOpen}>
+    <article className="project-card panel">
       <div className="project-card-top">
         <span className={`project-status status-${project.status.toLowerCase()}`}>
           {projectStatusLabel(project.status)}
         </span>
-        {project.targetDate && <time>{formatShortDate(project.targetDate)}</time>}
+        {project.targetDate && (
+          <time>
+            {project.targetDurationValue && project.targetDurationUnit
+              ? `${formatProjectDuration(project.targetDurationValue, project.targetDurationUnit)} left · `
+              : ""}
+            {formatShortDate(project.targetDate)}
+          </time>
+        )}
       </div>
-      <div>
+      <button className="project-card-open" onClick={onOpen}>
         <h3>{project.name}</h3>
         {project.desiredOutcome && <p>{project.desiredOutcome}</p>}
-      </div>
+      </button>
       <div className="project-progress-copy">
         <span>
           {project.taskCount
-            ? `${project.completedTaskCount} of ${project.taskCount} tasks`
+            ? `${project.completedTaskCount} of ${project.taskCount} tasks complete`
             : "No tasks yet"}
         </span>
         {project.progressPercent !== null && <strong>{project.progressPercent}%</strong>}
@@ -395,18 +441,39 @@ function ProjectCard({ project, onOpen }: { project: ProjectSummary; onOpen: () 
       <div className="project-card-meta">
         <span>
           <Clock3 size={14} />
-          {formatInvestedMinutes(project.investedMinutes)} invested
+          {formatInvestedMinutes(project.investedMinutes)} invested ·{" "}
+          {project.weeklyMinutesBudget
+            ? `${formatInvestedMinutes(project.weeklyMinutesBudget)}/week budget`
+            : "No weekly budget"}
         </span>
         <span>
-          <Circle size={14} />
-          {project.backlogCount} in backlog
+          <Layers3 size={14} />
+          {project.phaseCount} {project.phaseCount === 1 ? "phase" : "phases"}
         </span>
       </div>
       <div className="project-next">
-        <span>Next</span>
-        <strong>{project.nextTaskTitle ?? "Add a first task"}</strong>
+        <div>
+          <span>Next step</span>
+          <strong>{project.nextTaskTitle ?? "Add a first task"}</strong>
+        </div>
+        {project.nextTaskId && (
+          <button
+            className="secondary-button"
+            onClick={() =>
+              onStartFocus({
+                taskId: project.nextTaskId ?? undefined,
+                projectId: project.id,
+                label: project.nextTaskTitle ?? project.name,
+                plannedMinutes: project.nextTaskEstimateMinutes ?? 30
+              })
+            }
+          >
+            <Play size={14} />
+            Focus {project.nextTaskEstimateMinutes ?? 30}m
+          </button>
+        )}
       </div>
-    </button>
+    </article>
   );
 }
 
@@ -420,6 +487,7 @@ function ProjectDetailWorkspace({
   onDeleteProject,
   onSync,
   onError,
+  onOpenBacklog,
   onStartFocus
 }: {
   detail: ProjectDetail | null;
@@ -431,23 +499,27 @@ function ProjectDetailWorkspace({
   onDeleteProject: () => Promise<void>;
   onSync: () => Promise<void>;
   onError: (error: string) => void;
+  onOpenBacklog: (projectId: string) => void;
   onStartFocus: (target: {
     taskId?: string;
     projectId?: string;
     label?: string;
+    plannedMinutes?: number;
   }) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [newPhase, setNewPhase] = useState("");
   const [newTask, setNewTask] = useState("");
   const [newTaskPhase, setNewTaskPhase] = useState("");
-  const [newTaskDate, setNewTaskDate] = useState("");
-  const [undoTaskId, setUndoTaskId] = useState<string | null>(null);
-  const [detailView, setDetailView] = useState<ProjectDetailView>("overview");
+  const [phaseComposerOpen, setPhaseComposerOpen] = useState(false);
+  const [collapsedPhases, setCollapsedPhases] = useState<Set<string>>(
+    () => new Set()
+  );
 
   useEffect(() => {
-    setDetailView("overview");
     setEditing(false);
+    setPhaseComposerOpen(false);
+    setCollapsedPhases(new Set());
   }, [detail?.id]);
 
   if (loading || !detail) {
@@ -464,10 +536,11 @@ function ProjectDetailWorkspace({
 
   const project = detail;
   const unfinishedTasks = detail.tasks.filter((task) => task.status !== "DONE");
-  const backlogTasks = unfinishedTasks.filter((task) => !task.date);
-  const plannedOrDoneTasks = detail.tasks.filter((task) => task.date || task.status === "DONE");
-  const directTasks = plannedOrDoneTasks.filter((task) => !task.phaseId);
+  const directTasks = detail.tasks.filter((task) => !task.phaseId);
   const nextTask = sortTasks(unfinishedTasks)[0] ?? null;
+  const nextTaskPhase = nextTask?.phaseId
+    ? detail.phases.find((phase) => phase.id === nextTask.phaseId) ?? null
+    : null;
   const allTasksDone = detail.taskCount > 0 && detail.completedTaskCount === detail.taskCount;
   const canAddWork = detail.status !== "COMPLETED" && detail.status !== "ARCHIVED";
 
@@ -490,7 +563,10 @@ function ProjectDetailWorkspace({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: newPhase })
     });
-    if (saved) setNewPhase("");
+    if (saved) {
+      setNewPhase("");
+      setPhaseComposerOpen(false);
+    }
   }
 
   async function addTask() {
@@ -502,58 +578,21 @@ function ProjectDetailWorkspace({
         title: newTask,
         projectId: project.id,
         phaseId: newTaskPhase || null,
-        date: newTaskDate || null,
+        date: null,
         estimateMinutes: 30
       })
     });
     if (saved) {
       setNewTask("");
-      setNewTaskDate("");
     }
   }
 
   async function updateTask(id: string, patch: Partial<ProjectTaskRecord> & { scheduleSource?: string }) {
-    const changedDate = "date" in patch;
-    const saved = await request(`/api/tasks/${id}`, {
+    await request(`/api/tasks/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(patch)
     });
-    if (saved && changedDate) setUndoTaskId(id);
-  }
-
-  async function undoSchedule(id: string) {
-    const saved = await request(`/api/tasks/${id}/schedule/undo`, { method: "POST" });
-    if (saved) setUndoTaskId(null);
-  }
-
-  async function deleteTask(id: string, title: string) {
-    if (!window.confirm(`Delete “${title}”?`)) return;
-    await request(`/api/tasks/${id}`, { method: "DELETE" });
-  }
-
-  async function deletePhase(phase: ProjectPhaseRecord) {
-    if (!window.confirm(`Delete “${phase.name}”? Its tasks will move to the Project root.`)) return;
-    await request(`/api/phases/${phase.id}`, { method: "DELETE" });
-  }
-
-  async function movePhase(index: number, direction: -1 | 1) {
-    const target = project.phases[index + direction];
-    const phase = project.phases[index];
-    if (!target || !phase) return;
-    await Promise.all([
-      fetch(`/api/phases/${phase.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sortOrder: target.sortOrder })
-      }),
-      fetch(`/api/phases/${target.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sortOrder: phase.sortOrder })
-      })
-    ]);
-    await onSync();
   }
 
   async function completeProject() {
@@ -568,7 +607,7 @@ function ProjectDetailWorkspace({
     <div className="project-detail-page">
       <button className="project-back" onClick={onBack}>
         <ArrowLeft size={16} />
-        Back to Projects
+        All projects
       </button>
 
       <section className="panel project-hero">
@@ -576,7 +615,7 @@ function ProjectDetailWorkspace({
           <span className={`project-status status-${detail.status.toLowerCase()}`}>
             {projectStatusLabel(detail.status)}
           </span>
-          <h2>{detail.name}</h2>
+          <h1>{detail.name}</h1>
           {detail.desiredOutcome && <p>{detail.desiredOutcome}</p>}
           <div className="project-optional-meta">
             {detail.targetDate && (
@@ -651,10 +690,10 @@ function ProjectDetailWorkspace({
 
         <div className="project-metric-row">
           <div className="project-metric">
-            <span>Current plan</span>
+            <span>Plan progress</span>
             <strong>
               {detail.taskCount
-                ? `${detail.completedTaskCount}/${detail.taskCount}`
+                ? `${detail.completedTaskCount} of ${detail.taskCount}`
                 : "No tasks"}
             </strong>
             <div className="meter">
@@ -664,13 +703,34 @@ function ProjectDetailWorkspace({
           <div className="project-metric">
             <span>Invested time</span>
             <strong>{formatInvestedMinutes(detail.investedMinutes)}</strong>
-            <small>From recorded activity</small>
+            <small>
+              {detail.weeklyMinutesBudget
+                ? `of ${formatInvestedMinutes(detail.weeklyMinutesBudget)} this week`
+                : "No weekly budget"}
+            </small>
           </div>
           <div className="project-metric">
+            <span>Target duration</span>
+            <strong>
+              {detail.targetDurationValue && detail.targetDurationUnit
+                ? formatProjectDuration(
+                    detail.targetDurationValue,
+                    detail.targetDurationUnit
+                  )
+                : "Open"}
+            </strong>
+            <small>
+              {detail.targetDate ? `Ends ${formatShortDate(detail.targetDate)}` : "No target date"}
+            </small>
+          </div>
+          <button
+            className="project-metric project-metric-button"
+            onClick={() => onOpenBacklog(project.id)}
+          >
             <span>Backlog</span>
             <strong>{detail.backlogCount}</strong>
-            <small>Unscheduled tasks</small>
-          </div>
+            <small>Unscheduled tasks · open by project</small>
+          </button>
         </div>
 
         {editing && (
@@ -680,7 +740,6 @@ function ProjectDetailWorkspace({
             onSave={async (patch) => {
               if (await onUpdateProject(patch)) setEditing(false);
             }}
-            onComplete={completeProject}
             onDelete={onDeleteProject}
           />
         )}
@@ -703,287 +762,212 @@ function ProjectDetailWorkspace({
         </section>
       )}
 
-      <div
-        className="view-switcher project-detail-switcher"
-        role="tablist"
-        aria-label="Project view"
-      >
-        {(["overview", "plan", "evidence"] as ProjectDetailView[]).map((view) => (
-          <button
-            key={view}
-            className={detailView === view ? "active" : ""}
-            aria-selected={detailView === view}
-            role="tab"
-            onClick={() => setDetailView(view)}
-          >
-            {`${view[0].toUpperCase()}${view.slice(1)}`}
-          </button>
-        ))}
-      </div>
-
-      {detailView === "overview" && (
-        <div className="project-overview-tab" role="tabpanel" aria-label="Project overview">
-          <section className="panel project-next-step">
-            <span className="eyebrow">Next step</span>
-            {nextTask ? (
-              <>
-                <h3>{nextTask.title}</h3>
-                <p>
-                  {nextTask.date
-                    ? `Planned for ${formatShortDate(nextTask.date)}`
-                    : "Waiting in backlog"}
-                </p>
-                <div className="project-next-actions">
-                  {!nextTask.date && canAddWork && (
-                    <button
-                      className="secondary-button"
-                      onClick={() =>
-                        void updateTask(nextTask.id, {
-                          date: today.slice(0, 10),
-                          scheduleSource: "project-next-step"
-                        })
-                      }
-                    >
-                      <CalendarDays size={15} />
-                      Plan for today
-                    </button>
-                  )}
-                  <button
-                    className="secondary-button"
-                    onClick={() =>
-                      onStartFocus({
-                        taskId: nextTask.id,
-                        projectId: project.id,
-                        label: nextTask.title
-                      })
-                    }
-                  >
-                    <Play size={15} />
-                    Start focus
-                  </button>
-                  <button
-                    className="text-button"
-                    onClick={() => setDetailView("plan")}
-                  >
-                    <Layers3 size={15} />
-                    View plan
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                <h3>
-                  {detail.taskCount
-                    ? "The current plan is complete."
-                    : "Give this Project a first step."}
-                </h3>
-                <p>Choose one action that can be finished in a sitting.</p>
-                <button
-                  className="secondary-button"
-                  onClick={() => setDetailView("plan")}
-                >
-                  <Plus size={15} />
-                  Add a step
-                </button>
-              </>
-            )}
-          </section>
-        </div>
-      )}
-
-      {detailView === "plan" && (
-        <div className="project-plan-tab" role="tabpanel" aria-label="Project plan">
-          <section className="panel project-add-task">
-            <span className="eyebrow">Add a step</span>
-            {canAddWork ? (
-              <>
-                <input
-                  value={newTask}
-                  onChange={(event) => setNewTask(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") void addTask();
-                  }}
-                  placeholder="A concrete, finishable task"
-                  aria-label="New Project task"
-                />
-                <div className="project-add-task-options">
-                  <select
-                    value={newTaskPhase}
-                    onChange={(event) => setNewTaskPhase(event.target.value)}
-                    aria-label="Task phase"
-                  >
-                    <option value="">Project root</option>
-                    {detail.phases.map((phase) => (
-                      <option key={phase.id} value={phase.id}>
-                        {phase.name}
-                      </option>
-                    ))}
-                  </select>
-                  <input
-                    type="date"
-                    value={newTaskDate}
-                    onChange={(event) => setNewTaskDate(event.target.value)}
-                    aria-label="Schedule task"
-                  />
-                  <button className="primary-button" onClick={() => void addTask()}>
-                    <Plus size={15} />
-                    Add
-                  </button>
-                </div>
-                <small>Leave the date empty to keep this task in the backlog.</small>
-              </>
-            ) : (
-              <p>Reopen this Project before adding unfinished work.</p>
-            )}
-          </section>
-
-          <section className="panel project-plan">
-            <div className="project-section-heading">
-              <div>
-                <Layers3 size={18} />
-                <div>
-                  <h3>Phases and tasks</h3>
-                  <span>
-                    {detail.completedTaskCount} of {detail.taskCount} tasks complete
-                  </span>
-                </div>
-              </div>
+      <section className="panel project-next-step">
+        {nextTask ? (
+          <>
+            <div className="project-next-step-copy">
+              <span className="eyebrow">Next step</span>
+              <h3>{nextTask.title}</h3>
+              <p>
+                {[
+                  nextTaskPhase?.name ?? "Project root",
+                  nextTask.date
+                    ? `scheduled ${formatProjectTaskDate(nextTask.date, today)}`
+                    : "backlog",
+                  `${nextTask.estimateMinutes}m estimate`
+                ].join(" · ")}
+              </p>
             </div>
-
-            {directTasks.length > 0 && (
-              <TaskGroup
-                title="Project tasks"
-                tasks={directTasks}
-                phases={detail.phases}
-                undoTaskId={undoTaskId}
-                onUpdate={updateTask}
-                onUndo={undoSchedule}
-                onDelete={deleteTask}
-                onStartFocus={onStartFocus}
-              />
-            )}
-
-            <div className="phase-list">
-              {detail.phases.map((phase, index) => {
-                const phaseTasks = detail.tasks.filter((task) => task.phaseId === phase.id);
-                const visiblePhaseTasks = phaseTasks.filter(
-                  (task) => task.date || task.status === "DONE"
-                );
-                const metrics = calculateProjectMetrics(phaseTasks);
-                return (
-                  <article className="phase-card" key={phase.id}>
-                    <div className="phase-header">
-                      <EditablePhaseName phase={phase} onSaved={onSync} onError={onError} />
-                      <span>
-                        {metrics.taskCount
-                          ? `${metrics.completedTaskCount}/${metrics.taskCount}`
-                          : "No tasks"}
-                      </span>
-                      <div className="phase-actions">
-                        <button
-                          className="icon-button"
-                          aria-label={`Move phase ${phase.name} up`}
-                          disabled={index === 0}
-                          onClick={() => void movePhase(index, -1)}
-                        >
-                          <ChevronUp size={14} />
-                        </button>
-                        <button
-                          className="icon-button"
-                          aria-label={`Move phase ${phase.name} down`}
-                          disabled={index === detail.phases.length - 1}
-                          onClick={() => void movePhase(index, 1)}
-                        >
-                          <ChevronDown size={14} />
-                        </button>
-                        <button
-                          className="icon-button danger"
-                          aria-label={`Delete phase ${phase.name}`}
-                          onClick={() => void deletePhase(phase)}
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    </div>
-                    <div className="phase-progress meter">
-                      <i style={{ width: `${metrics.progressPercent ?? 0}%` }} />
-                    </div>
-                    {visiblePhaseTasks.length ? (
-                      <TaskGroup
-                        tasks={visiblePhaseTasks}
-                        phases={detail.phases}
-                        undoTaskId={undoTaskId}
-                        onUpdate={updateTask}
-                        onUndo={undoSchedule}
-                        onDelete={deleteTask}
-                        onStartFocus={onStartFocus}
-                      />
-                    ) : (
-                      <p className="phase-empty">
-                        {phaseTasks.length
-                          ? `${phaseTasks.length} ${
-                              phaseTasks.length === 1 ? "task is" : "tasks are"
-                            } waiting in the backlog.`
-                          : "No tasks in this phase yet."}
-                      </p>
-                    )}
-                  </article>
-                );
-              })}
+            <div className="project-next-actions">
+              <button
+                className="primary-button"
+                onClick={() =>
+                  onStartFocus({
+                    taskId: nextTask.id,
+                    projectId: project.id,
+                    label: nextTask.title,
+                    plannedMinutes: nextTask.estimateMinutes
+                  })
+                }
+              >
+                <Play size={15} />
+                Focus {nextTask.estimateMinutes}m
+              </button>
+              <button
+                className="secondary-button"
+                onClick={() => void updateTask(nextTask.id, { status: "DONE" })}
+              >
+                Mark done
+              </button>
             </div>
-
+          </>
+        ) : (
+          <>
+            <div className="project-next-step-copy">
+              <span className="eyebrow">Next step</span>
+              <h3>
+                {detail.taskCount
+                  ? "The current plan is complete."
+                  : "Give this Project a first step."}
+              </h3>
+              <p>Choose one action that can be finished in a sitting.</p>
+            </div>
             {canAddWork && (
-              <div className="phase-create">
-                <input
-                  value={newPhase}
-                  onChange={(event) => setNewPhase(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") void addPhase();
-                  }}
-                  placeholder="Add an optional phase"
-                  aria-label="New phase name"
-                />
-                <button className="secondary-button" onClick={() => void addPhase()}>
-                  <Plus size={15} />
-                  Add phase
-                </button>
-              </div>
+              <button
+                className="secondary-button"
+                onClick={() => document.getElementById("project-new-task")?.focus()}
+              >
+                <Plus size={15} />
+                Add a step
+              </button>
             )}
-          </section>
+          </>
+        )}
+      </section>
 
-          <section className="panel project-backlog">
-            <div className="project-section-heading">
-              <div>
-                <Circle size={18} />
-                <div>
-                  <h3>Backlog</h3>
-                  <span>Defined, but not assigned to a day</span>
-                </div>
-              </div>
-              <strong>{backlogTasks.length}</strong>
-            </div>
-            {backlogTasks.length ? (
-              <TaskGroup
-                tasks={backlogTasks}
-                phases={detail.phases}
-                undoTaskId={undoTaskId}
-                onUpdate={updateTask}
-                onUndo={undoSchedule}
-                onDelete={deleteTask}
-                onStartFocus={onStartFocus}
+      <section className="project-plan-section" aria-labelledby="project-plan-heading">
+        <div className="project-plan-heading">
+          <h2 id="project-plan-heading">Plan</h2>
+          {canAddWork ? (
+            <div className="project-plan-add">
+              <input
+                id="project-new-task"
+                value={newTask}
+                onChange={(event) => setNewTask(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") void addTask();
+                }}
+                placeholder="Add a step"
+                aria-label="New Project task"
               />
-            ) : (
-              <p className="empty-copy">No unfinished tasks are waiting in the backlog.</p>
-            )}
-          </section>
+              <select
+                value={newTaskPhase}
+                onChange={(event) => setNewTaskPhase(event.target.value)}
+                aria-label="Task phase"
+              >
+                <option value="">No phase</option>
+                {detail.phases.map((phase) => (
+                  <option key={phase.id} value={phase.id}>
+                    {phase.name}
+                  </option>
+                ))}
+              </select>
+              <button className="primary-button" onClick={() => void addTask()}>
+                Add
+              </button>
+            </div>
+          ) : (
+            <p>Reopen this Project before adding unfinished work.</p>
+          )}
         </div>
-      )}
 
-      {detailView === "evidence" && (
-        <div role="tabpanel" aria-label="Project evidence">
-          <ProjectEvidence detail={detail} />
+        {directTasks.length > 0 && detail.phases.length > 0 && (
+          <ProjectPhaseSection
+            title="Project tasks"
+            tasks={directTasks}
+            today={today}
+            onUpdate={updateTask}
+            onStartFocus={onStartFocus}
+          />
+        )}
+
+        {directTasks.length > 0 && detail.phases.length === 0 && (
+          <section className="project-root-tasks">
+            <header>
+              <h2>Tasks</h2>
+              <span>
+                {directTasks.length} {directTasks.length === 1 ? "task" : "tasks"},
+                none grouped
+              </span>
+            </header>
+            <TaskGroup
+              tasks={directTasks}
+              today={today}
+              onUpdate={updateTask}
+              onStartFocus={onStartFocus}
+            />
+          </section>
+        )}
+
+        <div className="phase-list">
+          {detail.phases.map((phase) => {
+            const phaseTasks = detail.tasks.filter((task) => task.phaseId === phase.id);
+            const collapsed = collapsedPhases.has(phase.id);
+            return (
+              <ProjectPhaseSection
+                key={phase.id}
+                phase={phase}
+                title={phase.name}
+                tasks={phaseTasks}
+                today={today}
+                collapsed={collapsed}
+                onToggle={() =>
+                  setCollapsedPhases((current) => {
+                    const next = new Set(current);
+                    if (next.has(phase.id)) next.delete(phase.id);
+                    else next.add(phase.id);
+                    return next;
+                  })
+                }
+                onUpdate={updateTask}
+                onStartFocus={onStartFocus}
+                onPhaseSaved={onSync}
+                onError={onError}
+              />
+            );
+          })}
         </div>
-      )}
+
+        {!directTasks.length && !detail.phases.length && (
+          <p className="empty-copy project-plan-empty">
+            No steps yet. Add one concrete action above.
+          </p>
+        )}
+
+        {canAddWork && detail.phases.length === 0 && (
+          <section className="project-phases-empty">
+            <strong>Phases are optional</strong>
+            <p>
+              Tasks can live at the project root indefinitely. Add a phase only
+              when the order of the work starts to matter more than the list of it.
+            </p>
+            <button
+              className="secondary-button"
+              onClick={() => {
+                setPhaseComposerOpen(true);
+                window.setTimeout(
+                  () => document.getElementById("project-new-phase")?.focus(),
+                  0
+                );
+              }}
+            >
+              <Plus size={14} />
+              Add a phase
+            </button>
+          </section>
+        )}
+
+        {canAddWork && (detail.phases.length > 0 || phaseComposerOpen) && (
+          <div className="phase-create">
+            <input
+              id="project-new-phase"
+              value={newPhase}
+              onChange={(event) => setNewPhase(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") void addPhase();
+              }}
+              placeholder="Add an optional phase"
+              aria-label="New phase name"
+            />
+            <button className="secondary-button" onClick={() => void addPhase()}>
+              <Plus size={15} />
+              Add phase
+            </button>
+          </div>
+        )}
+      </section>
+
+      <ProjectEvidence detail={detail} />
     </div>
   );
 }
@@ -992,13 +976,11 @@ function ProjectEditForm({
   project,
   onCancel,
   onSave,
-  onComplete,
   onDelete
 }: {
   project: ProjectDetail;
   onCancel: () => void;
   onSave: (patch: ProjectPatch) => Promise<void>;
-  onComplete: () => Promise<void>;
   onDelete: () => Promise<void>;
 }) {
   const [name, setName] = useState(project.name);
@@ -1012,187 +994,422 @@ function ProjectEditForm({
   const [weeklyMinutesBudget, setWeeklyMinutesBudget] = useState(
     project.weeklyMinutesBudget?.toString() ?? ""
   );
+  const [status, setStatus] = useState<ProjectStatus>(
+    project.status === "ARCHIVED" ? "PAUSED" : project.status
+  );
+  const [removeOpen, setRemoveOpen] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      if (deleteConfirmOpen) setDeleteConfirmOpen(false);
+      else onCancel();
+    }
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [deleteConfirmOpen, onCancel]);
+
+  const dirty =
+    name !== project.name ||
+    desiredOutcome !== project.desiredOutcome ||
+    targetDate !== (project.targetDate?.slice(0, 10) ?? "") ||
+    targetDurationValue !== (project.targetDurationValue?.toString() ?? "") ||
+    targetDurationUnit !== (project.targetDurationUnit ?? "WEEKS") ||
+    weeklyMinutesBudget !== (project.weeklyMinutesBudget?.toString() ?? "") ||
+    status !== project.status;
+  const statusCopy =
+    status === "ACTIVE"
+      ? "Active projects appear in the main list and can accept new work."
+      : status === "PAUSED"
+        ? "Paused projects keep their plan and history, but step out of the active list."
+        : "Completed projects keep their evidence and stop accepting unfinished work until reopened.";
+
+  async function saveChanges() {
+    if (!dirty || !name.trim()) return;
+    setSaving(true);
+    await onSave({
+      name,
+      desiredOutcome,
+      targetDate: targetDate || null,
+      targetDurationValue: targetDurationValue
+        ? Number(targetDurationValue)
+        : null,
+      targetDurationUnit: targetDurationValue ? targetDurationUnit : null,
+      weeklyMinutesBudget: weeklyMinutesBudget ? Number(weeklyMinutesBudget) : null,
+      status,
+      confirm: status === "COMPLETED"
+    });
+    setSaving(false);
+  }
 
   return (
-    <div className="project-edit-form">
-      <div className="project-form-grid">
-        <label>
-          Name
-          <input value={name} onChange={(event) => setName(event.target.value)} />
-        </label>
-        <label>
-          Target date
-          <input
-            type="date"
-            value={targetDate}
-            onChange={(event) => setTargetDate(event.target.value)}
-          />
-        </label>
-        <label className="full">
-          Desired outcome
-          <textarea
-            value={desiredOutcome}
-            onChange={(event) => setDesiredOutcome(event.target.value)}
-          />
-        </label>
-        <div className="project-duration-field">
-          <span>Target duration</span>
+    <div
+      className="project-dialog-overlay project-edit-overlay"
+      role="presentation"
+      onMouseDown={onCancel}
+    >
+      <section
+        className="project-create-dialog project-edit-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Edit ${project.name}`}
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header>
           <div>
-            <input
-              aria-label="Target duration value"
-              type="number"
-              min="1"
-              step="1"
-              value={targetDurationValue}
-              onChange={(event) => setTargetDurationValue(event.target.value)}
-              placeholder="Amount"
-            />
-            <select
-              aria-label="Target duration unit"
-              value={targetDurationUnit}
-              onChange={(event) =>
-                setTargetDurationUnit(event.target.value as ProjectDurationUnit)
-              }
-            >
-              <option value="DAYS">Days</option>
-              <option value="WEEKS">Weeks</option>
-            </select>
+            <span className="eyebrow focus-eyebrow">Edit project</span>
+            <h2>{project.name}</h2>
           </div>
+          <span className={dirty ? "project-unsaved dirty" : "project-unsaved"}>
+            {dirty ? "Unsaved changes" : "No changes"}
+          </span>
+        </header>
+        <div className="project-dialog-body project-edit-form">
+          <div className="project-form-grid">
+            <label>
+              Name
+              <input
+                autoFocus
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+              />
+            </label>
+            <label>
+              Target date
+              <input
+                type="date"
+                value={targetDate}
+                onChange={(event) => setTargetDate(event.target.value)}
+              />
+            </label>
+            <label className="full">
+              Desired outcome
+              <textarea
+                value={desiredOutcome}
+                onChange={(event) => setDesiredOutcome(event.target.value)}
+              />
+            </label>
+            <div className="project-duration-field">
+              <span>Target duration</span>
+              <div>
+                <input
+                  aria-label="Target duration value"
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={targetDurationValue}
+                  onChange={(event) => setTargetDurationValue(event.target.value)}
+                  placeholder="Amount"
+                />
+                <select
+                  aria-label="Target duration unit"
+                  value={targetDurationUnit}
+                  onChange={(event) =>
+                    setTargetDurationUnit(event.target.value as ProjectDurationUnit)
+                  }
+                >
+                  <option value="DAYS">Days</option>
+                  <option value="WEEKS">Weeks</option>
+                </select>
+              </div>
+            </div>
+            <label>
+              Weekly effort budget
+              <input
+                type="number"
+                min="5"
+                step="5"
+                value={weeklyMinutesBudget}
+                onChange={(event) => setWeeklyMinutesBudget(event.target.value)}
+                placeholder="Minutes per week"
+              />
+            </label>
+          </div>
+
+          <fieldset className="project-state-control">
+            <legend>State</legend>
+            <div>
+              {(["ACTIVE", "PAUSED", "COMPLETED"] as ProjectStatus[]).map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={status === value ? "active" : ""}
+                  aria-pressed={status === value}
+                  onClick={() => setStatus(value)}
+                >
+                  {projectStatusLabel(value)}
+                </button>
+              ))}
+            </div>
+            <p>{statusCopy}</p>
+          </fieldset>
+
+          <section className="project-contents-summary">
+            <span className="eyebrow">What this project contains</span>
+            <div>
+              <strong>{project.taskCount} tasks</strong>
+              <strong>{project.activities.length} records</strong>
+              <strong>{project.notes.length} notes</strong>
+              <strong>{project.materials.length} materials</strong>
+              <strong>{project.phaseCount} phases</strong>
+            </div>
+          </section>
+
+          <section className="project-remove-disclosure">
+            <button
+              type="button"
+              className="project-remove-toggle"
+              aria-expanded={removeOpen}
+              onClick={() => setRemoveOpen((open) => !open)}
+            >
+              <span>Remove this project</span>
+              {removeOpen ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+            </button>
+            {removeOpen && (
+              <div className="project-remove-options">
+                <div>
+                  <span>
+                    <strong>Archive</strong>
+                    <small>Keeps everything and hides the project from the active list.</small>
+                  </span>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => void onSave({ status: "ARCHIVED" })}
+                  >
+                    <Archive size={14} />
+                    Archive project
+                  </button>
+                </div>
+                <div>
+                  <span>
+                    <strong>Delete</strong>
+                    <small>Deletes the container only. Tasks and evidence survive.</small>
+                  </span>
+                  <button
+                    type="button"
+                    className="text-button danger"
+                    onClick={() => setDeleteConfirmOpen(true)}
+                  >
+                    <Trash2 size={14} />
+                    Delete project
+                  </button>
+                </div>
+              </div>
+            )}
+          </section>
         </div>
-        <label>
-          Weekly effort budget
-          <input
-            type="number"
-            min="5"
-            step="5"
-            value={weeklyMinutesBudget}
-            onChange={(event) => setWeeklyMinutesBudget(event.target.value)}
-            placeholder="Minutes per week"
-          />
-        </label>
-      </div>
-      <div className="project-edit-actions">
-        <button className="text-button danger" onClick={() => void onDelete()}>
-          <Trash2 size={15} />
-          Delete project
-        </button>
-        <span />
-        {project.status !== "COMPLETED" && (
-          <button className="secondary-button" onClick={() => void onComplete()}>
-            <Check size={15} />
-            Complete
+        <footer>
+          <button className="text-button" onClick={onCancel}>
+            Cancel
           </button>
-        )}
-        <button className="secondary-button" onClick={onCancel}>
-          Cancel
-        </button>
-        <button
-          className="primary-button"
-          onClick={() =>
-            void onSave({
-              name,
-              desiredOutcome,
-              targetDate: targetDate || null,
-              targetDurationValue: targetDurationValue
-                ? Number(targetDurationValue)
-                : null,
-              targetDurationUnit: targetDurationValue ? targetDurationUnit : null,
-              weeklyMinutesBudget: weeklyMinutesBudget ? Number(weeklyMinutesBudget) : null
-            })
-          }
+          <button
+            className="primary-button"
+            disabled={!dirty || !name.trim() || saving}
+            onClick={() => void saveChanges()}
+          >
+            {saving ? "Saving…" : "Save changes"}
+          </button>
+        </footer>
+      </section>
+
+      {deleteConfirmOpen && (
+        <div
+          className="project-delete-confirm-overlay"
+          role="presentation"
+          onMouseDown={() => setDeleteConfirmOpen(false)}
         >
-          Save changes
-        </button>
-      </div>
+          <section
+            className="project-delete-confirm"
+            role="alertdialog"
+            aria-modal="true"
+            aria-label={`Delete ${project.name}`}
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <span className="eyebrow">Delete the project, keep the work</span>
+            <h2>Delete “{project.name}”?</h2>
+            <ul>
+              <li>Tasks become standalone.</li>
+              <li>Recorded time stays in Log.</li>
+              <li>Notes and materials become unlinked.</li>
+              <li>
+                {project.phaseCount}{" "}
+                {project.phaseCount === 1 ? "phase is" : "phases are"} destroyed.
+              </li>
+            </ul>
+            <div>
+              <button
+                className="primary-button project-delete-confirm-button"
+                onClick={() => void onDelete()}
+              >
+                Delete the container
+              </button>
+              <button
+                className="secondary-button"
+                onClick={() => setDeleteConfirmOpen(false)}
+              >
+                Keep the project
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
 
-function TaskGroup({
+function ProjectPhaseSection({
   title,
   tasks,
-  phases,
-  undoTaskId,
+  phase,
+  today,
+  collapsed = false,
+  onToggle,
   onUpdate,
-  onUndo,
-  onDelete,
-  onStartFocus
+  onStartFocus,
+  onPhaseSaved,
+  onError
 }: {
-  title?: string;
+  title: string;
   tasks: ProjectTaskRecord[];
-  phases: ProjectPhaseRecord[];
-  undoTaskId: string | null;
+  phase?: ProjectPhaseRecord;
+  today: string;
+  collapsed?: boolean;
+  onToggle?: () => void;
   onUpdate: (
     id: string,
     patch: Partial<ProjectTaskRecord> & { scheduleSource?: string }
   ) => Promise<void>;
-  onUndo: (id: string) => Promise<void>;
-  onDelete: (id: string, title: string) => Promise<void>;
   onStartFocus: (target: {
     taskId?: string;
     projectId?: string;
     label?: string;
+    plannedMinutes?: number;
+  }) => void;
+  onPhaseSaved?: () => Promise<void>;
+  onError?: (error: string) => void;
+}) {
+  const metrics = calculateProjectMetrics(tasks);
+  return (
+    <section className="project-phase-section">
+      <div className="phase-header">
+        {phase && onPhaseSaved && onError ? (
+          <EditablePhaseName phase={phase} onSaved={onPhaseSaved} onError={onError} />
+        ) : (
+          <strong>{title}</strong>
+        )}
+        <span>
+          {metrics.taskCount
+            ? `${metrics.completedTaskCount}/${metrics.taskCount}`
+            : "0/0"}
+        </span>
+        <i className="phase-rule" />
+        {phase && onToggle && (
+          <button
+            className="phase-collapse"
+            aria-label={`${collapsed ? "Expand" : "Collapse"} phase ${phase.name}`}
+            aria-expanded={!collapsed}
+            onClick={onToggle}
+          >
+            {collapsed ? <ChevronDown size={13} /> : <ChevronUp size={13} />}
+          </button>
+        )}
+      </div>
+      {!collapsed &&
+        (tasks.length ? (
+          <TaskGroup
+            tasks={tasks}
+            today={today}
+            onUpdate={onUpdate}
+            onStartFocus={onStartFocus}
+          />
+        ) : (
+          <p className="phase-empty">No tasks in this phase yet.</p>
+        ))}
+    </section>
+  );
+}
+
+function TaskGroup({
+  tasks,
+  today,
+  onUpdate,
+  onStartFocus
+}: {
+  tasks: ProjectTaskRecord[];
+  today: string;
+  onUpdate: (
+    id: string,
+    patch: Partial<ProjectTaskRecord> & { scheduleSource?: string }
+  ) => Promise<void>;
+  onStartFocus: (target: {
+    taskId?: string;
+    projectId?: string;
+    label?: string;
+    plannedMinutes?: number;
   }) => void;
 }) {
   return (
-    <div className="project-task-group">
-      {title && <h4>{title}</h4>}
-      <div className="project-task-list">
-        {sortTasks(tasks).map((task) => (
-          <ProjectTaskItem
-            key={task.id}
-            task={task}
-            phases={phases}
-            canUndo={undoTaskId === task.id}
-            onUpdate={onUpdate}
-            onUndo={onUndo}
-            onDelete={onDelete}
-            onStartFocus={onStartFocus}
-          />
-        ))}
-      </div>
+    <div className="project-task-list">
+      {sortTasks(tasks).map((task) => (
+        <ProjectTaskItem
+          key={task.id}
+          task={task}
+          today={today}
+          onUpdate={onUpdate}
+          onStartFocus={onStartFocus}
+        />
+      ))}
     </div>
   );
 }
 
 function ProjectTaskItem({
   task,
-  phases,
-  canUndo,
+  today,
   onUpdate,
-  onUndo,
-  onDelete,
   onStartFocus
 }: {
   task: ProjectTaskRecord;
-  phases: ProjectPhaseRecord[];
-  canUndo: boolean;
+  today: string;
   onUpdate: (
     id: string,
     patch: Partial<ProjectTaskRecord> & { scheduleSource?: string }
   ) => Promise<void>;
-  onUndo: (id: string) => Promise<void>;
-  onDelete: (id: string, title: string) => Promise<void>;
   onStartFocus: (target: {
     taskId?: string;
     projectId?: string;
     label?: string;
+    plannedMinutes?: number;
   }) => void;
 }) {
   const [title, setTitle] = useState(task.title);
+  const backlog = !task.date && task.status !== "DONE";
+  const done = task.status === "DONE";
 
   useEffect(() => setTitle(task.title), [task.title]);
 
   return (
-    <article className={task.status === "DONE" ? "project-task done" : "project-task"}>
+    <article
+      className={[
+        "project-task",
+        backlog ? "backlog" : "",
+        done ? "done" : ""
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    >
       <button
         className="check-button"
-        aria-label={task.status === "DONE" ? `Reopen ${task.title}` : `Complete ${task.title}`}
+        aria-label={done ? `Reopen ${task.title}` : `Complete ${task.title}`}
         onClick={() =>
-          void onUpdate(task.id, { status: task.status === "DONE" ? "TODO" : "DONE" })
+          void onUpdate(task.id, { status: done ? "TODO" : "DONE" })
         }
       >
-        {task.status === "DONE" ? <Check size={15} /> : <Circle size={15} />}
+        {done ? <Check size={15} /> : <Circle size={15} />}
       </button>
       <input
         className="project-task-title"
@@ -1203,62 +1420,55 @@ function ProjectTaskItem({
         }}
         aria-label={`Task title: ${task.title}`}
       />
-      <select
-        value={task.phaseId ?? ""}
-        onChange={(event) =>
-          void onUpdate(task.id, { phaseId: event.target.value || null })
-        }
-        aria-label={`Phase for ${task.title}`}
-      >
-        <option value="">Project root</option>
-        {phases.map((phase) => (
-          <option key={phase.id} value={phase.id}>
-            {phase.name}
-          </option>
-        ))}
-      </select>
-      <input
-        type="date"
-        value={task.date?.slice(0, 10) ?? ""}
-        onChange={(event) =>
-          void onUpdate(task.id, {
-            date: event.target.value || null,
-            scheduleSource: event.target.value ? "project-date-picker" : "project-backlog"
-          })
-        }
-        aria-label={`Scheduled date for ${task.title}`}
-      />
-      <div className="project-task-actions">
-        {task.status !== "DONE" && (
-          <button
-            className="icon-button"
-            aria-label={`Start focus for ${task.title}`}
-            onClick={() =>
-              onStartFocus({
-                taskId: task.id,
-                projectId: task.projectId ?? undefined,
-                label: task.title
-              })
-            }
-          >
-            <Play size={14} />
-          </button>
-        )}
-        {canUndo ? (
-          <button className="text-button" onClick={() => void onUndo(task.id)}>
-            <RotateCcw size={14} />
-            Undo
-          </button>
-        ) : (
-          <button
-            className="icon-button danger"
-            aria-label={`Delete task ${task.title}`}
-            onClick={() => void onDelete(task.id, task.title)}
-          >
-            <Trash2 size={14} />
-          </button>
-        )}
-      </div>
+      {done ? (
+        <span className="project-task-state done">Done</span>
+      ) : backlog ? (
+        <span className="project-task-state backlog">Backlog</span>
+      ) : (
+        <button
+          className="project-task-focus"
+          onClick={() =>
+            onStartFocus({
+              taskId: task.id,
+              projectId: task.projectId ?? undefined,
+              label: task.title,
+              plannedMinutes: task.estimateMinutes
+            })
+          }
+        >
+          <Play size={12} />
+          Focus {task.estimateMinutes}m
+        </button>
+      )}
+      {backlog ? (
+        <label className="project-schedule-button">
+          Schedule
+          <input
+            type="date"
+            aria-label={`Schedule ${task.title}`}
+            onChange={(event) => {
+              if (event.target.value) {
+                void onUpdate(task.id, {
+                  date: event.target.value,
+                  scheduleSource: "project-date-picker"
+                });
+              }
+            }}
+          />
+        </label>
+      ) : (
+        <span className="project-task-meta">
+          {task.date ? formatProjectTaskDate(task.date, today) : "completed"} ·{" "}
+          {task.estimateMinutes}m
+        </span>
+      )}
+      {task.deadline ? (
+        <span className="project-task-deadline">
+          due {formatShortDate(task.deadline)}
+        </span>
+      ) : (
+        <span aria-hidden="true" />
+      )}
     </article>
   );
 }
@@ -1304,7 +1514,12 @@ function EditablePhaseName({
 
 function ProjectEvidence({ detail }: { detail: ProjectDetail }) {
   return (
-    <div className="project-evidence-grid">
+    <details className="project-evidence-details">
+      <summary>
+        Evidence · {detail.activities.length} activities, {detail.notes.length} notes,{" "}
+        {detail.materials.length} references
+      </summary>
+      <div className="project-evidence-grid">
       <section className="panel">
         <div className="project-section-heading">
           <div>
@@ -1382,7 +1597,8 @@ function ProjectEvidence({ detail }: { detail: ProjectDetail }) {
           <p className="empty-copy">Link references from Journal to keep them with this Project.</p>
         )}
       </section>
-    </div>
+      </div>
+    </details>
   );
 }
 
@@ -1399,4 +1615,10 @@ function sortTasks<T extends ProjectTaskRecord>(tasks: T[]) {
 
 function formatShortDate(value: string) {
   return new Date(value).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+function formatProjectTaskDate(value: string, today: string) {
+  return value.slice(0, 10) === today.slice(0, 10)
+    ? "today"
+    : formatShortDate(value);
 }

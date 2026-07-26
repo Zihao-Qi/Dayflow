@@ -9,7 +9,8 @@ const focusSessionInclude = {
       id: true,
       title: true,
       projectId: true,
-      project: { select: { id: true, name: true } }
+      project: { select: { id: true, name: true } },
+      phase: { select: { id: true, name: true } }
     }
   },
   project: {
@@ -19,10 +20,19 @@ const focusSessionInclude = {
 
 export async function getFocusSnapshot() {
   const { start, end } = sameDayRange();
-  const [active, completed] = await Promise.all([
+  const [active, pendingCompletion, completed] = await Promise.all([
     prisma.focusSession.findFirst({
       where: { status: { in: ["RUNNING", "PAUSED"] } },
       orderBy: { startedAt: "desc" },
+      include: focusSessionInclude
+    }),
+    prisma.focusSession.findFirst({
+      where: {
+        kind: "FOCUS",
+        status: "COMPLETED",
+        needsRecord: true
+      },
+      orderBy: { completedAt: "desc" },
       include: focusSessionInclude
     }),
     prisma.focusSession.findMany({
@@ -37,6 +47,7 @@ export async function getFocusSnapshot() {
 
   return {
     active,
+    pendingCompletion,
     today: {
       completedSessions: completed.length,
       focusedMinutes: completed.reduce((sum, session) => sum + session.actualMinutes, 0)
@@ -127,7 +138,15 @@ export async function startFocusSession(input: {
   });
 }
 
-export async function transitionFocusSession(id: string, action: string) {
+export async function transitionFocusSession(
+  id: string,
+  action: string,
+  input: {
+    note?: unknown;
+    category?: unknown;
+    taskCompleted?: unknown;
+  } = {}
+) {
   const now = new Date();
   const session = await prisma.focusSession.findUnique({
     where: { id },
@@ -176,6 +195,61 @@ export async function transitionFocusSession(id: string, action: string) {
     return { completed: false, suggestedBreakMinutes: null };
   }
 
+  if (action === "record") {
+    if (
+      session.kind !== "FOCUS" ||
+      session.status !== "COMPLETED" ||
+      !session.needsRecord
+    ) {
+      throw new FocusSessionError("This focus block no longer needs a completion record.");
+    }
+    const note = String(input.note ?? "").trim();
+    const category = String(input.category ?? "").trim() || "Deep Work";
+    if (session.actualMinutes >= 1 && !note) {
+      throw new FocusSessionError("Add one line about what moved forward.");
+    }
+
+    await prisma.$transaction(async (transaction) => {
+      if (session.actualMinutes >= 1) {
+        await transaction.activityEntry.create({
+          data: {
+            startedAt: session.startedAt,
+            durationMinutes: session.actualMinutes,
+            category,
+            note,
+            taskId: session.taskId,
+            projectId: session.task?.projectId ? null : session.projectId
+          }
+        });
+      }
+      if (input.taskCompleted === true && session.taskId) {
+        await transaction.task.update({
+          where: { id: session.taskId },
+          data: {
+            status: "DONE",
+            completedAt: now
+          }
+        });
+      }
+      await transaction.focusSession.update({
+        where: { id },
+        data: {
+          needsRecord: false,
+          recordedAt: now,
+          completionNote: note || null,
+          completionCategory: category
+        }
+      });
+    });
+
+    return {
+      completed: true,
+      recorded: true,
+      suggestedBreakMinutes: suggestedBreakMinutes(session.plannedMinutes),
+      completedSession: null
+    };
+  }
+
   if (action === "complete") {
     if (!isActive(session.status)) {
       throw new FocusSessionError("This timer is no longer active.");
@@ -192,34 +266,23 @@ export async function transitionFocusSession(id: string, action: string) {
       Math.floor(elapsedSeconds / 60)
     );
 
-    await prisma.$transaction(async (transaction) => {
-      if (session.kind === "FOCUS" && actualMinutes >= 1) {
-        await transaction.activityEntry.create({
-          data: {
-            startedAt: session.startedAt,
-            durationMinutes: actualMinutes,
-            category: "Deep Work",
-            note: `Focus session · ${session.label}`,
-            taskId: session.taskId,
-            projectId: session.task?.projectId ? null : session.projectId
-          }
-        });
-      }
-      await transaction.focusSession.update({
-        where: { id },
-        data: {
-          status: "COMPLETED",
-          completedAt: now,
-          pausedAt: null,
-          actualMinutes
-        }
-      });
+    const completedSession = await prisma.focusSession.update({
+      where: { id },
+      data: {
+        status: "COMPLETED",
+        completedAt: now,
+        pausedAt: null,
+        actualMinutes,
+        needsRecord: session.kind === "FOCUS"
+      },
+      include: focusSessionInclude
     });
 
     return {
       completed: true,
       suggestedBreakMinutes:
-        session.kind === "FOCUS" ? suggestedBreakMinutes(session.plannedMinutes) : null
+        session.kind === "FOCUS" ? suggestedBreakMinutes(session.plannedMinutes) : null,
+      completedSession: session.kind === "FOCUS" ? completedSession : null
     };
   }
 

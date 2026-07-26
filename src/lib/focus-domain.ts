@@ -12,6 +12,10 @@ export type FocusSessionRecord = {
   accumulatedPauseSeconds: number;
   status: FocusSessionStatus;
   completedAt: string | null;
+  needsRecord: boolean;
+  recordedAt: string | null;
+  completionNote: string | null;
+  completionCategory: string | null;
   taskId: string | null;
   projectId: string | null;
   task: {
@@ -19,6 +23,7 @@ export type FocusSessionRecord = {
     title: string;
     projectId: string | null;
     project: { id: string; name: string } | null;
+    phase: { id: string; name: string } | null;
   } | null;
   project: { id: string; name: string } | null;
 };
@@ -30,6 +35,7 @@ export type FocusTodayStats = {
 
 export type FocusSnapshot = {
   active: FocusSessionRecord | null;
+  pendingCompletion: FocusSessionRecord | null;
   today: FocusTodayStats;
 };
 

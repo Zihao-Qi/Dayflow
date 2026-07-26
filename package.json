@@ -8,7 +8,7 @@
     "typecheck": "tsc --noEmit",
     "test:e2e:install": "playwright install chromium",
     "test:e2e:prepare": "node --import tsx scripts/prepare-e2e-db.ts",
-    "test:e2e:server": "next dev -p 3100",
+    "test:e2e:server": "next dev -H 127.0.0.1 -p 3100",
     "test:e2e": "npm run test:e2e:prepare && playwright test",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",

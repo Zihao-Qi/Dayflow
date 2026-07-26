@@ -43,6 +43,9 @@ export async function listProjectSummaries() {
   const projects = await prisma.project.findMany({
     orderBy: [{ status: "asc" }, { updatedAt: "desc" }],
     include: {
+      phases: {
+        select: { id: true }
+      },
       tasks: {
         orderBy: [{ date: "asc" }, { sortOrder: "asc" }, { createdAt: "asc" }],
         include: {
@@ -179,10 +182,13 @@ type SummaryInput = {
   status: ProjectStatus;
   createdAt: Date;
   updatedAt: Date;
+  phases: Array<{ id: string }>;
   tasks: Array<{
+    id: string;
     title: string;
     date: Date | null;
     status: TaskStatus;
+    estimateMinutes: number;
     completedAt: Date | null;
     activities: Array<{ id: string; durationMinutes: number; startedAt: Date }>;
   }>;
@@ -228,9 +234,12 @@ function summarizeProject(project: SummaryInput) {
     createdAt: project.createdAt,
     updatedAt: project.updatedAt,
     ...metrics,
+    phaseCount: project.phases.length,
     backlogCount: project.tasks.filter((task) => !task.date && task.status !== "DONE").length,
     investedMinutes,
+    nextTaskId: nextTask?.id ?? null,
     nextTaskTitle: nextTask?.title ?? null,
+    nextTaskEstimateMinutes: nextTask?.estimateMinutes ?? null,
     lastProgressAt
   };
 }

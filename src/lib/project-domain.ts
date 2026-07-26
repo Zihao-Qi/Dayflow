@@ -22,9 +22,12 @@ export type ProjectSummary = ProjectMetrics & {
   targetDurationUnit: ProjectDurationUnit | null;
   weeklyMinutesBudget: number | null;
   status: ProjectStatus;
+  phaseCount: number;
   backlogCount: number;
   investedMinutes: number;
+  nextTaskId: string | null;
   nextTaskTitle: string | null;
+  nextTaskEstimateMinutes: number | null;
   lastProgressAt: string | null;
   createdAt: string;
   updatedAt: string;

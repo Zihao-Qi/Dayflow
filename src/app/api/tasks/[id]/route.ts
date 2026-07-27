@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { parseLocalDate } from "@/lib/dates";
+import {
+  compactFocusQueue,
+  consumeFocusQueueTask
+} from "@/lib/focus-queue";
 import { ProjectRuleError, validateProjectPlacement } from "@/lib/projects";
 
 type Params = { params: Promise<{ id: string }> };
@@ -61,6 +65,9 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
   const task = await prisma.$transaction(async (transaction) => {
     const updated = await transaction.task.update({ where: { id }, data });
+    if (body.status === "DONE") {
+      await consumeFocusQueueTask(transaction, id);
+    }
     if (dateChanged) {
       await transaction.taskScheduleChange.create({
         data: {
@@ -78,7 +85,10 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
 export async function DELETE(_request: NextRequest, { params }: Params) {
   const { id } = await params;
-  await prisma.task.delete({ where: { id } });
+  await prisma.$transaction(async (transaction) => {
+    await transaction.task.delete({ where: { id } });
+    await compactFocusQueue(transaction);
+  });
   return NextResponse.json({ ok: true });
 }
 

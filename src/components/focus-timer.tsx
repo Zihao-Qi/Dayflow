@@ -1,14 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Bell,
   Check,
   ChevronDown,
+  ChevronUp,
+  GripVertical,
   Pause,
   Play,
   Shrink,
-  Timer
+  Timer,
+  Trash2
 } from "lucide-react";
 import { useFocusSession } from "@/components/focus-session-provider";
 import {
@@ -18,6 +21,7 @@ import {
   formatFocusClock,
   suggestedBreakMinutes
 } from "@/lib/focus-domain";
+import type { QueuePlacement } from "@/lib/focus-queue";
 import { ProjectSummary } from "@/lib/project-domain";
 
 type FocusTask = {
@@ -27,6 +31,7 @@ type FocusTask = {
   date: string | null;
   estimateMinutes?: number;
   sortOrder?: number;
+  focusQueuePosition?: number | null;
 };
 
 type CapturedActivity = {
@@ -51,12 +56,33 @@ type FocusRailProps = {
   today: string;
   draft: FocusDraft | null;
   activities: CapturedActivity[];
+  queuedTasks?: FocusTask[];
   mode: "full" | "strip";
   collapsible?: boolean;
   onCollapse?: () => void;
   onExpand?: () => void;
   onOpenPalette?: () => void;
+  onQueueTask?: (taskId: string, placement: QueuePlacement) => Promise<boolean>;
+  onRemoveQueuedTask?: (taskId: string) => Promise<boolean>;
+  onReorderQueue?: (ids: string[], announcement: string) => Promise<boolean>;
+  onQueueChanged?: () => Promise<void>;
+  onAnnounce?: (message: string) => void;
 };
+
+type FocusQueueEntry =
+  | {
+      id: "__focus_break__";
+      kind: "break";
+      title: "Break — stand up";
+      durationMinutes: number;
+    }
+  | {
+      id: string;
+      kind: "task";
+      title: string;
+      durationMinutes: number;
+      task: FocusTask;
+    };
 
 export function FocusRail({
   tasks,
@@ -64,11 +90,17 @@ export function FocusRail({
   today,
   draft,
   activities,
+  queuedTasks: queuedTaskInput = [],
   mode,
   collapsible = false,
   onCollapse,
   onExpand,
-  onOpenPalette
+  onOpenPalette,
+  onQueueTask,
+  onRemoveQueuedTask,
+  onReorderQueue,
+  onQueueChanged,
+  onAnnounce
 }: FocusRailProps) {
   const focus = useFocusSession();
   const {
@@ -86,6 +118,10 @@ export function FocusRail({
   const [projectId, setProjectId] = useState("");
   const [label, setLabel] = useState("");
   const [selectionInitialized, setSelectionInitialized] = useState(false);
+  const [breakQueuePosition, setBreakQueuePosition] = useState<
+    number | null | undefined
+  >(undefined);
+  const carryBreakPreference = useRef(false);
 
   useEffect(() => {
     if (!draft) return;
@@ -109,6 +145,18 @@ export function FocusRail({
   const orderedTasks = useMemo(
     () =>
       [...tasks].sort((a, b) => {
+        const aQueued = a.focusQueuePosition === null || a.focusQueuePosition === undefined
+          ? 1
+          : 0;
+        const bQueued = b.focusQueuePosition === null || b.focusQueuePosition === undefined
+          ? 1
+          : 0;
+        if (aQueued !== bQueued) return aQueued - bQueued;
+        if (!aQueued && !bQueued) {
+          const queueDifference =
+            (a.focusQueuePosition ?? 0) - (b.focusQueuePosition ?? 0);
+          if (queueDifference) return queueDifference;
+        }
         const aToday = a.date?.slice(0, 10) === todayKey ? 0 : 1;
         const bToday = b.date?.slice(0, 10) === todayKey ? 0 : 1;
         return aToday - bToday || (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
@@ -125,10 +173,70 @@ export function FocusRail({
     }
     setSelectionInitialized(true);
   }, [active, draft, orderedTasks, selectionInitialized]);
+  const previousLiveSessionId = useRef(
+    active?.id ?? pendingCompletion?.id ?? null
+  );
+  useEffect(() => {
+    const liveSessionId = active?.id ?? pendingCompletion?.id ?? null;
+    if (previousLiveSessionId.current && !liveSessionId) {
+      const nextTask = orderedTasks[0];
+      setTaskId(nextTask?.id ?? "");
+      setProjectId("");
+      setSelectionInitialized(true);
+    }
+    previousLiveSessionId.current = liveSessionId;
+  }, [active?.id, orderedTasks, pendingCompletion?.id]);
   const duration = preset === "custom" ? Number(customMinutes) : Number(preset);
-  const queuedTasks = orderedTasks
-    .filter((task) => task.id !== (active?.taskId ?? pendingCompletion?.taskId))
-    .slice(0, 2);
+  const queuedTasks = useMemo(
+    () =>
+      [...queuedTaskInput]
+        .filter(
+          (task) =>
+            task.id !== (active?.taskId ?? pendingCompletion?.taskId)
+        )
+        .sort(
+          (a, b) =>
+            (a.focusQueuePosition ?? Number.MAX_SAFE_INTEGER) -
+            (b.focusQueuePosition ?? Number.MAX_SAFE_INTEGER)
+        ),
+    [active?.taskId, pendingCompletion?.taskId, queuedTaskInput]
+  );
+  const queueSession =
+    active?.kind === "FOCUS" ? active : pendingCompletion;
+  const queueSessionId = queueSession?.id ?? null;
+  const previousQueueSessionId = useRef(queueSessionId);
+  useEffect(() => {
+    if (previousQueueSessionId.current === queueSessionId) return;
+    if (carryBreakPreference.current) {
+      carryBreakPreference.current = false;
+    } else {
+      setBreakQueuePosition(undefined);
+    }
+    previousQueueSessionId.current = queueSessionId;
+  }, [queueSessionId]);
+  const effectiveBreakPosition =
+    breakQueuePosition === undefined
+      ? queueSession
+        ? 0
+        : null
+      : breakQueuePosition;
+  const queueEntries = useMemo(
+    () =>
+      buildFocusQueueEntries(
+        queuedTasks,
+        effectiveBreakPosition,
+        suggestedBreakMinutes(queueSession?.plannedMinutes ?? 25)
+      ),
+    [effectiveBreakPosition, queueSession?.plannedMinutes, queuedTasks]
+  );
+
+  function prepareQueueAdvance(entry: FocusQueueEntry) {
+    if (entry.kind !== "task") return;
+    const remaining = queueEntries.slice(1);
+    const breakIndex = remaining.findIndex((item) => item.kind === "break");
+    setBreakQueuePosition(breakIndex >= 0 ? breakIndex : null);
+    carryBreakPreference.current = true;
+  }
 
   async function startFocus() {
     await focus.start({
@@ -249,7 +357,11 @@ export function FocusRail({
 
       <section className="focus-rail-body" aria-label="Focus timer">
         {pendingCompletion ? (
-          <CompletionFocusCard session={pendingCompletion} />
+          <CompletionFocusCard
+            session={pendingCompletion}
+            nextEntry={queueEntries[0] ?? null}
+            onQueueAdvanced={prepareQueueAdvance}
+          />
         ) : active?.kind === "BREAK" ? (
           <BreakFocusCard
             session={active}
@@ -257,38 +369,37 @@ export function FocusRail({
             busy={busy}
             nextTask={queuedTasks[0] ?? null}
             recordedBefore={activities[0] ?? null}
+            onQueueChanged={onQueueChanged}
           />
         ) : active?.status === "PAUSED" ? (
-          <PausedFocusCard session={active} now={now} busy={busy} />
+          <>
+            <PausedFocusCard session={active} now={now} busy={busy} />
+            <FocusQueueCard
+              session={active}
+              tasks={orderedTasks}
+              entries={queueEntries}
+              projects={projects}
+              onQueueTask={onQueueTask}
+              onRemoveQueuedTask={onRemoveQueuedTask}
+              onReorderQueue={onReorderQueue}
+              onBreakQueuePositionChange={setBreakQueuePosition}
+              onAnnounce={onAnnounce}
+            />
+          </>
         ) : active ? (
           <>
             <RunningFocusCard session={active} now={now} busy={busy} />
-            <section className="rail-card focus-queue-card">
-              <span className="eyebrow">Queue after this</span>
-              <div className="focus-queue">
-                <div>
-                  <time>5m</time>
-                  <span>
-                    <strong>Break</strong>
-                    <small>Stand up</small>
-                  </span>
-                </div>
-                {queuedTasks.map((task) => (
-                  <div key={task.id}>
-                    <time>{task.estimateMinutes || 25}m</time>
-                    <span>
-                      <strong>{task.title}</strong>
-                      <small>
-                        {task.projectId
-                          ? projects.find((project) => project.id === task.projectId)?.name
-                          : "Next planned task"}
-                      </small>
-                    </span>
-                  </div>
-                ))}
-              </div>
-              <small className="queue-derived-note">Derived from your day plan</small>
-            </section>
+            <FocusQueueCard
+              session={active}
+              tasks={orderedTasks}
+              entries={queueEntries}
+              projects={projects}
+              onQueueTask={onQueueTask}
+              onRemoveQueuedTask={onRemoveQueuedTask}
+              onReorderQueue={onReorderQueue}
+              onBreakQueuePositionChange={setBreakQueuePosition}
+              onAnnounce={onAnnounce}
+            />
           </>
         ) : (
           <section className="rail-card focus-idle-card">
@@ -450,20 +561,362 @@ export function FocusRail({
   );
 }
 
-function CompletionFocusCard({ session }: { session: FocusSessionRecord }) {
+function buildFocusQueueEntries(
+  tasks: FocusTask[],
+  breakPosition: number | null,
+  breakMinutes: number
+): FocusQueueEntry[] {
+  const entries: FocusQueueEntry[] = tasks.map((task) => ({
+    id: task.id,
+    kind: "task",
+    title: task.title,
+    durationMinutes: task.estimateMinutes || 25,
+    task
+  }));
+  if (breakPosition !== null) {
+    entries.splice(
+      Math.min(entries.length, Math.max(0, breakPosition)),
+      0,
+      {
+        id: "__focus_break__",
+        kind: "break",
+        title: "Break — stand up",
+        durationMinutes: breakMinutes
+      }
+    );
+  }
+  return entries;
+}
+
+function FocusQueueCard({
+  session,
+  tasks,
+  entries,
+  projects,
+  onQueueTask,
+  onRemoveQueuedTask,
+  onReorderQueue,
+  onBreakQueuePositionChange,
+  onAnnounce
+}: {
+  session: FocusSessionRecord;
+  tasks: FocusTask[];
+  entries: FocusQueueEntry[];
+  projects: ProjectSummary[];
+  onQueueTask?: (taskId: string, placement: QueuePlacement) => Promise<boolean>;
+  onRemoveQueuedTask?: (taskId: string) => Promise<boolean>;
+  onReorderQueue?: (ids: string[], announcement: string) => Promise<boolean>;
+  onBreakQueuePositionChange: (position: number | null) => void;
+  onAnnounce?: (message: string) => void;
+}) {
+  const [reorderMode, setReorderMode] = useState(false);
+  const [queueTaskId, setQueueTaskId] = useState("");
+  const reorderButtonRef = useRef<HTMLButtonElement | null>(null);
+  const totalMinutes = entries.reduce(
+    (sum, entry) => sum + entry.durationMinutes,
+    0
+  );
+  const availableTasks = tasks.filter(
+    (task) =>
+      task.id !== session.taskId &&
+      (task.focusQueuePosition === null ||
+        task.focusQueuePosition === undefined)
+  );
+
+  useEffect(() => {
+    if (entries.length >= 2 || !reorderMode) return;
+    setReorderMode(false);
+  }, [entries.length, reorderMode]);
+
+  useEffect(() => {
+    if (!reorderMode) return;
+    function exitOnEscape(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setReorderMode(false);
+      window.setTimeout(() => reorderButtonRef.current?.focus(), 0);
+    }
+    window.addEventListener("keydown", exitOnEscape);
+    return () => window.removeEventListener("keydown", exitOnEscape);
+  }, [reorderMode]);
+
+  function finishReordering() {
+    setReorderMode(false);
+    window.setTimeout(() => reorderButtonRef.current?.focus(), 0);
+  }
+
+  async function saveEntryOrder(
+    reordered: FocusQueueEntry[],
+    entry: FocusQueueEntry,
+    nextIndex: number
+  ) {
+    if (!onReorderQueue) return false;
+    const previousBreakIndex = entries.findIndex(
+      (item) => item.kind === "break"
+    );
+    const nextBreakIndex = reordered.findIndex(
+      (item) => item.kind === "break"
+    );
+    onBreakQueuePositionChange(nextBreakIndex >= 0 ? nextBreakIndex : null);
+    const moved = await onReorderQueue(
+      reordered
+        .filter((item): item is Extract<FocusQueueEntry, { kind: "task" }> =>
+          item.kind === "task"
+        )
+        .map((item) => item.task.id),
+      `${entry.title}, now ${nextIndex + 1} of ${entries.length}.`
+    );
+    if (!moved) {
+      onBreakQueuePositionChange(
+        previousBreakIndex >= 0 ? previousBreakIndex : null
+      );
+    }
+    return moved;
+  }
+
+  async function moveQueueEntry(
+    entry: FocusQueueEntry,
+    index: number,
+    direction: -1 | 1
+  ) {
+    const nextIndex = index + direction;
+    if (nextIndex < 0 || nextIndex >= entries.length || !onReorderQueue) return;
+    const reordered = [...entries];
+    reordered.splice(index, 1);
+    reordered.splice(nextIndex, 0, entry);
+    const moved = await saveEntryOrder(reordered, entry, nextIndex);
+    if (!moved) return;
+    window.requestAnimationFrame(() => {
+      const preferred =
+        nextIndex === 0
+          ? "down"
+          : nextIndex === entries.length - 1
+            ? "up"
+            : direction < 0
+              ? "up"
+              : "down";
+      document
+        .querySelector<HTMLButtonElement>(
+          `[data-queue-entry="${entry.id}"][data-queue-direction="${preferred}"]`
+        )
+        ?.focus();
+    });
+  }
+
+  function dropQueueEntry(sourceId: string, targetId: string) {
+    if (!sourceId || sourceId === targetId || !onReorderQueue) return;
+    const sourceIndex = entries.findIndex((entry) => entry.id === sourceId);
+    const targetIndex = entries.findIndex((entry) => entry.id === targetId);
+    if (sourceIndex < 0 || targetIndex < 0) return;
+    const reordered = [...entries];
+    const [entry] = reordered.splice(sourceIndex, 1);
+    reordered.splice(targetIndex, 0, entry);
+    void saveEntryOrder(reordered, entry, targetIndex);
+  }
+
+  function removeEntry(entry: FocusQueueEntry) {
+    if (entry.kind === "task") {
+      void onRemoveQueuedTask?.(entry.task.id);
+      return;
+    }
+    onBreakQueuePositionChange(null);
+    onAnnounce?.("Break — stand up, removed from the queue.");
+  }
+
+  async function addSelectedTask() {
+    if (!queueTaskId || !onQueueTask) return;
+    if (await onQueueTask(queueTaskId, "end")) setQueueTaskId("");
+  }
+
+  return (
+    <section className="rail-card focus-queue-card">
+      <header className="focus-queue-heading">
+        <span className="eyebrow">Queue after this</span>
+        <div>
+          <strong>{totalMinutes}m</strong>
+          {entries.length >= 2 && onReorderQueue && (
+            <button
+              ref={reorderButtonRef}
+              type="button"
+              className="text-button queue-reorder-toggle"
+              aria-pressed={reorderMode}
+              onClick={() => {
+                if (reorderMode) finishReordering();
+                else setReorderMode(true);
+              }}
+            >
+              {reorderMode ? "Done" : "Reorder"}
+            </button>
+          )}
+        </div>
+      </header>
+
+      {entries.length ? (
+        <>
+          <p className="focus-queue-intro">
+            Finishing this session starts {entries[0].title} unless you change it.
+          </p>
+          <div className="focus-queue">
+            {entries.map((entry, index) => (
+              <div
+                className={`focus-queue-entry ${reorderMode ? "reordering" : ""}`}
+                key={entry.id}
+                draggable
+                onDragStart={(event) =>
+                  event.dataTransfer.setData("text/plain", entry.id)
+                }
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  dropQueueEntry(
+                    event.dataTransfer.getData("text/plain"),
+                    entry.id
+                  );
+                }}
+              >
+                <GripVertical
+                  className="focus-queue-drag"
+                  size={13}
+                  aria-hidden="true"
+                />
+                <time>{entry.durationMinutes}m</time>
+                <span>
+                  <strong>
+                    {entry.kind === "break" ? "Break" : entry.title}
+                  </strong>
+                  <small>
+                    {entry.kind === "break"
+                      ? "Stand up"
+                      : entry.task.projectId
+                        ? projects.find(
+                            (project) =>
+                              project.id === entry.task.projectId
+                          )?.name ?? "Project"
+                        : "Standalone"}
+                  </small>
+                </span>
+                {reorderMode ? (
+                  <div className="focus-queue-reorder">
+                    <span>{index + 1} of {entries.length}</span>
+                    <button
+                      type="button"
+                      disabled={index === 0}
+                      aria-label={`Move ${entry.title} up`}
+                      data-queue-entry={entry.id}
+                      data-queue-direction="up"
+                      onClick={() => void moveQueueEntry(entry, index, -1)}
+                    >
+                      <ChevronUp size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      disabled={index === entries.length - 1}
+                      aria-label={`Move ${entry.title} down`}
+                      data-queue-entry={entry.id}
+                      data-queue-direction="down"
+                      onClick={() => void moveQueueEntry(entry, index, 1)}
+                    >
+                      <ChevronDown size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      className="focus-queue-remove"
+                      aria-label={`Remove ${entry.title} from queue`}
+                      onClick={() => removeEntry(entry)}
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                ) : (
+                  (entry.kind === "break" || onRemoveQueuedTask) && (
+                    <button
+                      type="button"
+                      className="focus-queue-remove"
+                      aria-label={`Remove ${entry.title} from queue`}
+                      onClick={() => removeEntry(entry)}
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  )
+                )}
+              </div>
+            ))}
+          </div>
+        </>
+      ) : (
+        <p className="focus-queue-empty">
+          Nothing queued. Finishing this session returns you to Today.
+        </p>
+      )}
+
+      {onQueueTask && (
+        <div className="focus-queue-add">
+          <label htmlFor={`focus-queue-add-${session.id}`}>Add to queue</label>
+          <div>
+            <select
+              id={`focus-queue-add-${session.id}`}
+              value={queueTaskId}
+              onChange={(event) => setQueueTaskId(event.target.value)}
+            >
+              <option value="">Choose a task</option>
+              {availableTasks.map((task) => (
+                <option key={task.id} value={task.id}>
+                  {task.title}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={!queueTaskId}
+              onClick={() => void addSelectedTask()}
+            >
+              Add
+            </button>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function CompletionFocusCard({
+  session,
+  nextEntry,
+  onQueueAdvanced
+}: {
+  session: FocusSessionRecord;
+  nextEntry: FocusQueueEntry | null;
+  onQueueAdvanced: (entry: FocusQueueEntry) => void;
+}) {
   const focus = useFocusSession();
   const [note, setNote] = useState("");
   const [category, setCategory] = useState("Deep Work");
   const [taskCompleted, setTaskCompleted] = useState(false);
-  const suggestedBreak = suggestedBreakMinutes(session.plannedMinutes);
 
-  async function save(takeBreak: boolean) {
-    await focus.recordCompletion({
+  async function save(continueQueue: boolean) {
+    const next =
+      continueQueue && nextEntry
+        ? nextEntry.kind === "break"
+          ? {
+              kind: "BREAK" as const,
+              plannedMinutes: nextEntry.durationMinutes,
+              label: "Break"
+            }
+          : {
+              kind: "FOCUS" as const,
+              plannedMinutes: nextEntry.durationMinutes,
+              taskId: nextEntry.task.id,
+              label: nextEntry.task.title
+            }
+        : null;
+    const saved = await focus.recordCompletion({
       note,
       category,
       taskCompleted,
-      takeBreak
+      next
     });
+    if (saved && continueQueue && nextEntry) onQueueAdvanced(nextEntry);
   }
 
   return (
@@ -521,19 +974,29 @@ function CompletionFocusCard({ session }: { session: FocusSessionRecord }) {
           </div>
         </section>
       )}
-      <button
-        className="secondary-button completion-save-break"
-        disabled={focus.busy}
-        onClick={() => void save(true)}
-      >
-        Continue to a {suggestedBreak}m break
-      </button>
+      {nextEntry && (
+        <button
+          className="secondary-button completion-save-break"
+          disabled={focus.busy}
+          onClick={() => void save(true)}
+        >
+          {nextEntry.kind === "break"
+            ? `Continue to a ${nextEntry.durationMinutes}m break`
+            : `Continue to ${nextEntry.title}`}
+        </button>
+      )}
       <button
         className="text-button completion-keep-working"
         disabled={focus.busy}
         onClick={() => void save(false)}
       >
-        {note.trim() ? "Save details and keep working" : "Finish without details"}
+        {nextEntry
+          ? note.trim()
+            ? "Save details and keep working"
+            : "Finish without details"
+          : note.trim()
+            ? "Save details and return to Today"
+            : "Finish and return to Today"}
       </button>
       <small className="completion-required-note">
         {session.actualMinutes}m is already included in Today and Review.
@@ -547,13 +1010,15 @@ function BreakFocusCard({
   now,
   busy,
   nextTask,
-  recordedBefore
+  recordedBefore,
+  onQueueChanged
 }: {
   session: FocusSessionRecord;
   now: number;
   busy: boolean;
   nextTask: FocusTask | null;
   recordedBefore: CapturedActivity | null;
+  onQueueChanged?: () => Promise<void>;
 }) {
   const focus = useFocusSession();
   const remaining = focusRemainingSeconds(session, now);
@@ -563,12 +1028,13 @@ function BreakFocusCard({
   async function startNext() {
     const completed = await focus.transition("complete");
     if (!completed || !nextTask) return;
-    await focus.start({
+    const started = await focus.start({
       kind: "FOCUS",
       plannedMinutes: nextTask.estimateMinutes || 25,
       taskId: nextTask.id,
       label: nextTask.title
     });
+    if (started) await onQueueChanged?.();
   }
 
   return (
@@ -599,7 +1065,7 @@ function BreakFocusCard({
         </button>
         <button
           className="primary-button"
-          disabled={busy}
+          disabled={busy || !nextTask}
           onClick={() => void startNext()}
         >
           Start next

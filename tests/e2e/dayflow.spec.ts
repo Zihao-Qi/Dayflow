@@ -282,6 +282,370 @@ test("persists a focus session in the rail and collapses it to a strip", async (
   ).toBeVisible();
 });
 
+test("persists the explicit focus queue across reload and keeps its own order", async ({
+  page
+}) => {
+  await openDashboard(page);
+  await addTask(page, "Current focus");
+  await addTask(page, "Review saved learning materials");
+  await addTask(page, "Prepare tomorrow");
+
+  await taskRow(page, "Current focus")
+    .getByRole("button", { name: "Focus 30m", exact: true })
+    .click();
+  const startFocus = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/focus-session") &&
+      response.request().method() === "POST"
+  );
+  await page.getByRole("button", { name: "Start 30m focus", exact: true }).click();
+  const startResponse = await startFocus;
+  expect(startResponse.ok()).toBe(true);
+  const { session } = (await startResponse.json()) as {
+    session: { id: string };
+  };
+
+  const reviewRow = taskRow(page, "Review saved learning materials");
+  const prepareRow = taskRow(page, "Prepare tomorrow");
+  const reviewQueue = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/focus-queue") &&
+      response.request().method() === "POST"
+  );
+  await reviewRow
+    .getByRole("button", { name: "Queue next", exact: true })
+    .click();
+  expect((await reviewQueue).ok()).toBe(true);
+  const prepareQueue = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/focus-queue") &&
+      response.request().method() === "POST"
+  );
+  await prepareRow.getByRole("button", { name: "Queue", exact: true }).click();
+  expect((await prepareQueue).ok()).toBe(true);
+
+  const rail = page.getByRole("complementary", { name: "Focus rail" });
+  await expect(rail.getByText("65m", { exact: true })).toBeVisible();
+  await expect(
+    rail.getByText(
+      "Finishing this session starts Break — stand up unless you change it.",
+      { exact: true }
+    )
+  ).toBeVisible();
+  await expect
+    .poll(() =>
+      rail.locator(".focus-queue-entry strong").allTextContents()
+    )
+    .toEqual([
+      "Break",
+      "Review saved learning materials",
+      "Prepare tomorrow"
+    ]);
+
+  const queueButtonColor = await prepareRow
+    .getByRole("button", { name: "Queued", exact: true })
+    .evaluate((element) => getComputedStyle(element).backgroundColor);
+  expect(queueButtonColor).not.toBe("rgb(231, 237, 222)");
+
+  await rail.getByRole("button", { name: "Reorder", exact: true }).click();
+  await expect(
+    rail.getByRole("button", {
+      name: "Move Break — stand up up",
+      exact: true
+    })
+  ).toBeDisabled();
+  await expect(
+    rail.getByRole("button", {
+      name: "Move Break — stand up down",
+      exact: true
+    })
+  ).toBeEnabled();
+  await expect(
+    rail.getByRole("button", {
+      name: "Remove Break — stand up from queue",
+      exact: true
+    })
+  ).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  const mobileStrip = page.getByRole("complementary", {
+    name: "Active focus session"
+  });
+  await expect(mobileStrip).toBeVisible();
+  await mobileStrip.locator(".focus-strip-ring").click();
+  const mobileRail = page.getByRole("complementary", { name: "Focus rail" });
+  await mobileRail.getByRole("button", { name: "Reorder", exact: true }).click();
+  for (const target of [
+    mobileRail.getByRole("button", { name: "Done", exact: true }),
+    mobileRail.getByRole("button", {
+      name: "Move Break — stand up down",
+      exact: true
+    }),
+    mobileRail.getByRole("button", {
+      name: "Remove Break — stand up from queue",
+      exact: true
+    }),
+    mobileRail.getByLabel("Add to queue"),
+    mobileRail.getByRole("button", { name: "Add", exact: true })
+  ]) {
+    const box = await target.boundingBox();
+    expect(box?.width ?? 0).toBeGreaterThanOrEqual(44);
+    expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+  }
+  await page.setViewportSize({ width: 1280, height: 900 });
+  if (
+    await rail
+      .getByRole("button", { name: "Reorder", exact: true })
+      .isVisible()
+      .catch(() => false)
+  ) {
+    await rail.getByRole("button", { name: "Reorder", exact: true }).click();
+  }
+  const reorderQueue = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/focus-queue") &&
+      response.request().method() === "PATCH"
+  );
+  await rail
+    .getByRole("button", { name: "Move Prepare tomorrow up", exact: true })
+    .click();
+  expect((await reorderQueue).ok()).toBe(true);
+  await expect(page.locator(".sr-only[role='status']")).toHaveText(
+    "Prepare tomorrow, now 2 of 3."
+  );
+
+  await page.reload();
+  const reloadedRail = page.getByRole("complementary", { name: "Focus rail" });
+  await expect
+    .poll(() =>
+      reloadedRail.locator(".focus-queue-entry strong").allTextContents()
+    )
+    .toEqual([
+      "Break",
+      "Prepare tomorrow",
+      "Review saved learning materials"
+    ]);
+
+  const bootstrap = (await (await page.request.get("/api/bootstrap")).json()) as {
+    tasks: Array<{
+      id: string;
+      title: string;
+      status: string;
+      focusQueuePosition: number | null;
+    }>;
+  };
+  const openIds = bootstrap.tasks
+    .filter((task) => task.status !== "DONE")
+    .map((task) => task.id)
+    .reverse();
+  expect(
+    (
+      await page.request.post("/api/tasks/reorder", {
+        data: { ids: openIds }
+      })
+    ).ok()
+  ).toBe(true);
+  await page.reload();
+  await expect
+    .poll(() =>
+      page
+        .getByRole("complementary", { name: "Focus rail" })
+        .locator(".focus-queue-entry strong")
+        .allTextContents()
+    )
+    .toEqual([
+      "Break",
+      "Prepare tomorrow",
+      "Review saved learning materials"
+    ]);
+
+  const activeRail = page.getByRole("complementary", { name: "Focus rail" });
+  await activeRail.getByRole("button", { name: "Reorder", exact: true }).click();
+  await expect(
+    activeRail.getByRole("button", {
+      name: "Remove Prepare tomorrow from queue",
+      exact: true
+    })
+  ).toBeVisible();
+  await activeRail.getByRole("button", { name: "Done", exact: true }).click();
+  const removeQueue = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/focus-queue") &&
+      response.request().method() === "DELETE"
+  );
+  await activeRail
+    .getByRole("button", {
+      name: "Remove Prepare tomorrow from queue",
+      exact: true
+    })
+    .click();
+  expect((await removeQueue).ok()).toBe(true);
+  await expect(page.locator(".sr-only[role='status']")).toHaveText(
+    "Prepare tomorrow, removed from the queue."
+  );
+  await activeRail
+    .getByRole("button", {
+      name: "Remove Break — stand up from queue",
+      exact: true
+    })
+    .click();
+  await expect(page.locator(".sr-only[role='status']")).toHaveText(
+    "Break — stand up, removed from the queue."
+  );
+
+  const completeQueuedTask = page.waitForResponse(
+    (response) =>
+      response.url().includes("/api/tasks/") &&
+      response.request().method() === "PATCH"
+  );
+  await taskRow(page, "Review saved learning materials")
+    .getByRole("button", {
+      name: "Complete Review saved learning materials",
+      exact: true
+    })
+    .click();
+  expect((await completeQueuedTask).ok()).toBe(true);
+  await expect(
+    activeRail.getByText(
+      "Nothing queued. Finishing this session returns you to Today.",
+      { exact: true }
+    )
+  ).toBeVisible();
+  const completedBootstrap = (await (
+    await page.request.get("/api/bootstrap")
+  ).json()) as {
+    tasks: Array<{
+      id: string;
+      title: string;
+      focusQueuePosition: number | null;
+    }>;
+  };
+  const completedReview = completedBootstrap.tasks.find(
+    (task) => task.title === "Review saved learning materials"
+  );
+  expect(completedReview?.focusQueuePosition).toBeNull();
+  expect(
+    (
+      await page.request.patch(`/api/tasks/${completedReview?.id}`, {
+        data: { status: "TODO" }
+      })
+    ).ok()
+  ).toBe(true);
+  await page.reload();
+  await expect(
+    taskRow(page, "Review saved learning materials").getByRole("button", {
+      name: "Queued",
+      exact: true
+    })
+  ).toHaveCount(0);
+
+  const prepareQueueAgain = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/focus-queue") &&
+      response.request().method() === "POST"
+  );
+  await taskRow(page, "Prepare tomorrow")
+    .getByRole("button", { name: /Queue/ })
+    .click();
+  expect((await prepareQueueAgain).ok()).toBe(true);
+
+  expect(
+    (
+      await page.request.patch(`/api/focus-session/${session.id}`, {
+        data: { action: "cancel" }
+      })
+    ).ok()
+  ).toBe(true);
+  await page.reload();
+  await expect(page.getByLabel("Focus task").locator("option:checked")).toHaveText(
+    "Prepare tomorrow"
+  );
+  await taskRow(page, "Prepare tomorrow")
+    .getByRole("button", { name: "Focus 30m", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Start 30m focus", exact: true }).click();
+  await expect(
+    page
+      .getByRole("complementary", { name: "Focus rail" })
+      .getByText(
+        "Finishing this session starts Break — stand up unless you change it.",
+        { exact: true }
+      )
+  ).toBeVisible();
+});
+
+test("rejects invalid and stale focus queue writes", async ({ page }) => {
+  await openDashboard(page);
+  await addTask(page, "First queued task");
+  await addTask(page, "Second queued task");
+
+  const bootstrap = (await (await page.request.get("/api/bootstrap")).json()) as {
+    tasks: Array<{ id: string; title: string }>;
+  };
+  const first = bootstrap.tasks.find((task) => task.title === "First queued task");
+  const second = bootstrap.tasks.find((task) => task.title === "Second queued task");
+  expect(first).toBeTruthy();
+  expect(second).toBeTruthy();
+
+  const invalid = await page.request.post("/api/focus-queue", {
+    data: { taskId: first?.id, placement: "sideways" }
+  });
+  expect(invalid.status()).toBe(400);
+
+  expect(
+    (
+      await page.request.post("/api/focus-queue", {
+        data: { taskId: first?.id, placement: "end" }
+      })
+    ).ok()
+  ).toBe(true);
+  expect(
+    (
+      await page.request.post("/api/focus-queue", {
+        data: { taskId: second?.id, placement: "end" }
+      })
+    ).ok()
+  ).toBe(true);
+
+  const original = [first!.id, second!.id];
+  expect(
+    (
+      await page.request.patch("/api/focus-queue", {
+        data: { expectedIds: original, ids: [...original].reverse() }
+      })
+    ).ok()
+  ).toBe(true);
+  const stale = await page.request.patch("/api/focus-queue", {
+    data: { expectedIds: original, ids: original }
+  });
+  expect(stale.status()).toBe(400);
+});
+
+test("offers queue actions during a taskless live focus session", async ({
+  page
+}) => {
+  await openDashboard(page);
+  await addTask(page, "Queue from free focus");
+
+  const response = await page.request.post("/api/focus-session", {
+    data: {
+      kind: "FOCUS",
+      plannedMinutes: 25,
+      label: "Free focus",
+      taskId: null,
+      projectId: null
+    }
+  });
+  expect(response.ok()).toBe(true);
+  await page.reload();
+
+  await expect(
+    taskRow(page, "Queue from free focus").getByRole("button", {
+      name: "Queue next",
+      exact: true
+    })
+  ).toBeVisible();
+});
+
 test("counts completed focus immediately while completion details remain optional", async ({
   page
 }) => {
@@ -362,7 +726,13 @@ test("uses one Backlog with Quadrant as the default and persistent task elements
   await expect(
     page.getByRole("radiogroup", { name: "Arrange backlog by" })
   ).toBeVisible();
-  await expect(page.getByText("Tables — act here: schedule, focus, relabel.")).toBeVisible();
+  await expect(
+    page.getByText(
+      "Arrange the same 1 task by pressure, project or deadline — nothing is ever filtered out.",
+      { exact: true }
+    )
+  ).toBeVisible();
+  await expect(page.getByText(/Tables — act here/)).toHaveCount(0);
   await expect(page.getByText("Do now", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("Schedule", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("Quick wins", { exact: true }).first()).toBeVisible();
@@ -370,7 +740,11 @@ test("uses one Backlog with Quadrant as the default and persistent task elements
   await expect(page.getByRole("button", { name: /Place on matrix, Standalone/ })).toBeVisible();
 
   await page.getByRole("radio", { name: "Figure", exact: true }).click();
-  await expect(page.getByText("Figure — read here; hover a dot for its title.")).toBeVisible();
+  await expect(
+    page.getByText("Figure — position is the grouping. Hover a dot for its title.", {
+      exact: true
+    })
+  ).toBeVisible();
   await page.getByRole("button", { name: /Place on matrix, Standalone/ }).click();
   await expect(
     page.locator(".matrix-selection-caption").getByText("Place on matrix", { exact: true })

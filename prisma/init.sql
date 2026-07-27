@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS "Task" (
   "estimateMinutes" INTEGER NOT NULL DEFAULT 30,
   "actualMinutes" INTEGER NOT NULL DEFAULT 0,
   "sortOrder" INTEGER NOT NULL DEFAULT 0,
+  "focusQueuePosition" INTEGER,
   "completedAt" DATETIME,
   "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "updatedAt" DATETIME NOT NULL,
@@ -49,6 +50,7 @@ CREATE TABLE IF NOT EXISTS "Task" (
 );
 
 CREATE INDEX IF NOT EXISTS "Task_date_idx" ON "Task" ("date");
+CREATE INDEX IF NOT EXISTS "Task_focusQueuePosition_idx" ON "Task" ("focusQueuePosition");
 CREATE INDEX IF NOT EXISTS "Task_projectId_idx" ON "Task" ("projectId");
 CREATE INDEX IF NOT EXISTS "Task_phaseId_idx" ON "Task" ("phaseId");
 

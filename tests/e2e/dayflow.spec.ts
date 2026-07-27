@@ -83,6 +83,33 @@ test("persists task editing, completion, and accessible ordering", async ({ page
   await titleInput.press("Enter");
   const editedRow = taskRow(page, "Edited first task");
   await expect(editedRow.getByText("Saved", { exact: true })).toBeVisible();
+  await expect(page.locator(".sr-only[role='status']")).toHaveText("");
+
+  await editedRow
+    .getByRole("button", { name: "Show task details: Edited first task" })
+    .click();
+  const deadline = editedRow.getByLabel("Deadline", { exact: true });
+  await deadline.fill("2026-07-30");
+  await expect(
+    deadline
+      .locator("xpath=ancestor::label")
+      .getByText("Saved", { exact: true })
+  ).toBeVisible();
+  const estimate = editedRow.getByLabel("Estimate in minutes");
+  await estimate.fill("45");
+  await expect(
+    estimate
+      .locator("xpath=ancestor::label")
+      .getByText("Saved", { exact: true })
+  ).toBeVisible();
+  await editedRow.getByLabel("Task status").selectOption("IN_PROGRESS");
+  await expect(
+    editedRow
+      .getByLabel("Task status")
+      .locator("xpath=ancestor::label")
+      .getByText("Saved", { exact: true })
+  ).toBeVisible();
+
   await editedRow
     .getByRole("button", { name: "Complete Edited first task" })
     .click();
@@ -110,7 +137,7 @@ test("persists task editing, completion, and accessible ordering", async ({ page
     .click();
   expect((await reorder).ok()).toBe(true);
   await expect(
-    page.getByText('Moved "Edited first task" to position 2 of 2.', {
+    page.getByText('Moved "Edited first task" to position 2 of 2. Now last.', {
       exact: true
     })
   ).toBeAttached();
@@ -131,6 +158,45 @@ test("persists task editing, completion, and accessible ordering", async ({ page
       )
     )
     .toEqual(["Second task", "Edited first task"]);
+});
+
+test("keeps retries silent until failure and speaks only the recovery", async ({
+  page
+}) => {
+  await openDashboard(page);
+  await addTask(page, "Retry this title");
+
+  let failedAttempts = 0;
+  await page.route("**/api/tasks/*", async (route) => {
+    if (route.request().method() !== "PATCH") {
+      await route.continue();
+      return;
+    }
+    failedAttempts += 1;
+    await route.fulfill({ status: 500, json: { error: "Test failure" } });
+  });
+
+  const row = taskRow(page, "Retry this title");
+  await row.getByLabel("Task title: Retry this title").fill("Preserve this title");
+  await expect.poll(() => failedAttempts).toBeGreaterThanOrEqual(1);
+  await expect(page.locator(".sr-only[role='status']")).toHaveText("");
+
+  const failedRow = taskRow(page, "Preserve this title");
+  await expect(failedRow.locator(".save-state-chip.error")).toContainText("Not saved", {
+    timeout: 8_000
+  });
+  expect(failedAttempts).toBe(3);
+  await expect(page.locator(".sr-only[role='status']")).toHaveText(
+    "Changes were not saved."
+  );
+
+  await page.unroute("**/api/tasks/*");
+  await failedRow.getByRole("button", { name: "Retry" }).click();
+  await expect(failedRow.getByText("Saved", { exact: true })).toBeVisible();
+  await expect(page.locator(".sr-only[role='status']")).toHaveText("Saved.");
+  await expect(failedRow.getByLabel("Task title: Preserve this title")).toHaveValue(
+    "Preserve this title"
+  );
 });
 
 test("persists a focus session in the rail and collapses it to a strip", async ({
@@ -162,6 +228,18 @@ test("persists a focus session in the rail and collapses it to a strip", async (
     fullRail.getByRole("heading", { name: "Write the focus rail test" })
   ).toBeVisible();
   await expect(fullRail.getByText(/Verify the persistent rail/)).toBeVisible();
+  const pause = fullRail.getByRole("button", { name: "Pause", exact: true });
+  await expect(pause).toHaveClass(/focus-button/);
+  expect(
+    await pause.evaluate((element) => getComputedStyle(element).backgroundColor)
+  ).toBe("rgb(231, 237, 222)");
+  const logByHand = fullRail.getByRole("button", {
+    name: "Log something by hand",
+    exact: true
+  });
+  expect(
+    await logByHand.evaluate((element) => getComputedStyle(element).color)
+  ).toBe("rgb(168, 120, 92)");
 
   await page.getByRole("button", { name: "Log", exact: true }).click();
   const strip = page.getByRole("complementary", { name: "Active focus session" });
@@ -176,22 +254,78 @@ test("persists a focus session in the rail and collapses it to a strip", async (
     reloadedRail.getByText(/Nothing is being recorded\./)
   ).toBeVisible();
   await expect(reloadedRail.getByText(/of this block is safe/)).toBeVisible();
+  expect(
+    await reloadedRail
+      .locator(".paused-focus-card .secondary-button")
+      .evaluate((element) => getComputedStyle(element).backgroundColor)
+  ).toBe("rgb(255, 254, 251)");
 
   setFocusSessionElapsedMinutes(session.id, 2);
   await reloadedRail.getByRole("button", { name: "Resume", exact: true }).click();
   await reloadedRail.getByRole("button", { name: "Finish", exact: true }).click();
 
-  await expect(reloadedRail.getByRole("heading", { name: "2m done" })).toBeVisible();
+  await expect(reloadedRail.getByRole("heading", { name: "2m counted" })).toBeVisible();
   await reloadedRail
-    .getByPlaceholder("One line is enough — it becomes today’s activity record.")
+    .getByPlaceholder("Add a note if it will help you remember this block.")
     .fill("Verified the persistent completion record");
   await reloadedRail.getByRole("button", { name: "Still going" }).click();
-  await reloadedRail.getByRole("button", { name: "Save and take a 2m break" }).click();
+  await reloadedRail.getByRole("button", { name: "Continue to a 2m break" }).click();
   await expect(reloadedRail.getByText("Nothing is being recorded.")).toBeVisible();
   await expect(reloadedRail.getByRole("heading", { name: "Break" })).toBeVisible();
+  expect(
+    await reloadedRail
+      .locator(".break-focus-card .secondary-button")
+      .evaluate((element) => getComputedStyle(element).backgroundColor)
+  ).toBe("rgb(255, 254, 251)");
   await expect(
     reloadedRail.locator(".rail-focus-clock span").getByText("2m", { exact: true })
   ).toBeVisible();
+});
+
+test("counts completed focus immediately while completion details remain optional", async ({
+  page
+}) => {
+  await openDashboard(page);
+  await addTask(page, "Count focus before details");
+
+  await taskRow(page, "Count focus before details")
+    .getByRole("button", { name: "Focus 30m", exact: true })
+    .click();
+  await page.getByLabel("Custom focus minutes").fill("5");
+  const startFocus = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/focus-session") &&
+      response.request().method() === "POST"
+  );
+  await page.getByRole("button", { name: "Start 5m focus" }).click();
+  const { session } = (await (await startFocus).json()) as {
+    session: { id: string };
+  };
+  setFocusSessionElapsedMinutes(session.id, 3);
+
+  const rail = page.getByRole("complementary", { name: "Focus rail" });
+  await rail.getByRole("button", { name: "Finish", exact: true }).click();
+  await expect(rail.getByRole("heading", { name: "3m counted" })).toBeVisible();
+  await expect(
+    rail.getByRole("button", { name: "Finish without details" })
+  ).toBeEnabled();
+
+  await page.getByRole("button", { name: "Review", exact: true }).click();
+  await expect(page.getByText("3m focused this week", { exact: true })).toBeVisible();
+  await expect(page.getByText("3m is already counted.", { exact: true })).toBeVisible();
+
+  const strip = page.getByRole("complementary", { name: "Completed focus session" });
+  await expect(
+    strip.getByRole("button", { name: "Add focus details", exact: true })
+  ).toBeVisible();
+  await strip.getByRole("button", { name: "Add focus details", exact: true }).click();
+  const completionRail = page.getByRole("complementary", { name: "Focus rail" });
+  await completionRail
+    .getByRole("button", { name: "Finish without details" })
+    .click();
+  const captured = completionRail.locator(".captured-list");
+  await expect(captured.getByText("Count focus before details", { exact: true })).toBeVisible();
+  await expect(captured.getByText("3m · Deep Work", { exact: true })).toBeVisible();
 });
 
 test("records activity through the palette and shows it in the rail", async ({ page }) => {
@@ -216,13 +350,15 @@ test("records activity through the palette and shows it in the rail", async ({ p
   await expect(rail.getByText("20m · Deep Work", { exact: true })).toBeVisible();
 });
 
-test("uses one Backlog with four arrangements and persistent task elements", async ({
+test("uses one Backlog with Quadrant as the default and persistent task elements", async ({
   page
 }) => {
   await openDashboard(page);
   await addBacklogTask(page, "Place on matrix");
 
   await page.getByRole("button", { name: /Backlog/ }).click();
+  await expect(page.getByRole("radio", { name: "Quadrant", exact: true })).toBeChecked();
+  await expect(page.getByRole("radio", { name: "Priority", exact: true })).toHaveCount(0);
   await expect(
     page.getByRole("radiogroup", { name: "Arrange backlog by" })
   ).toBeVisible();
@@ -242,6 +378,294 @@ test("uses one Backlog with four arrangements and persistent task elements", asy
   await expect(
     page.locator(".matrix-selection-caption").getByRole("button", { name: "Today" })
   ).toBeVisible();
+});
+
+test("caps and aligns the wide Backlog slab without recoloring focus states", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 2560, height: 1100 });
+  await openDashboard(page);
+  await addBacklogTask(page, "Wide layout check");
+  await page.getByRole("button", { name: /Backlog/ }).click();
+
+  const geometry = await page.evaluate(() => {
+    function rect(selector: string) {
+      const element = document.querySelector(selector);
+      if (!element) throw new Error(`Missing ${selector}`);
+      const bounds = element.getBoundingClientRect();
+      return {
+        left: bounds.left,
+        right: bounds.right,
+        width: bounds.width
+      };
+    }
+
+    return {
+      shell: rect(".focus-shell"),
+      page: rect(".backlog-page"),
+      header: rect(".backlog-page .page-header"),
+      matrix: rect(".matrix-5a"),
+      stage: rect(".matrix-stage"),
+      heading: rect(".matrix-table-heading"),
+      columns: rect(".matrix-column-heads")
+    };
+  });
+
+  expect(geometry.shell.width).toBeCloseTo(1560, 0);
+  expect(geometry.shell.left).toBeCloseTo((2560 - 1560) / 2, 0);
+  expect(geometry.page.left).toBe(geometry.header.left);
+  expect(geometry.header.width).toBeLessThanOrEqual(900);
+  expect(geometry.matrix.width).toBeCloseTo(geometry.header.width, 0);
+  expect(geometry.stage.width).toBeCloseTo(geometry.header.width, 0);
+  expect(geometry.heading.right).toBeCloseTo(geometry.stage.right, 0);
+  expect(geometry.columns.right).toBeCloseTo(geometry.stage.right, 0);
+
+  const arrangementNote = page.locator(".backlog-arrangement-note");
+  const arrangementColors = await arrangementNote.evaluate((element) => {
+    const style = getComputedStyle(element);
+    const probe = document.createElement("div");
+    probe.style.cssText =
+      "background: var(--surface-2); border-left: 2px solid var(--line); color: var(--muted);";
+    document.body.append(probe);
+    const expected = getComputedStyle(probe);
+    const colors = {
+      expectedBackground: expected.backgroundColor,
+      expectedBorder: expected.borderLeftColor,
+      expectedColor: expected.color
+    };
+    probe.remove();
+    return {
+      background: style.backgroundColor,
+      border: style.borderLeftColor,
+      color: style.color,
+      ...colors
+    };
+  });
+  expect(arrangementColors.background).toBe(arrangementColors.expectedBackground);
+  expect(arrangementColors.border).toBe(arrangementColors.expectedBorder);
+  expect(arrangementColors.color).toBe(arrangementColors.expectedColor);
+
+  const arrangeControl = page.locator(".arrange-control");
+  const controlStyle = await arrangeControl.evaluate((element) => {
+    const trough = element.querySelector<HTMLElement>(".segmented-control");
+    const active = element.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]');
+    if (!trough || !active) throw new Error("Arrange control is incomplete");
+    const troughStyle = getComputedStyle(trough);
+    const activeStyle = getComputedStyle(active);
+    return {
+      controlWidth: element.getBoundingClientRect().width,
+      troughPadding: troughStyle.padding,
+      troughBorder: troughStyle.border,
+      troughRadius: troughStyle.borderRadius,
+      troughBackground: troughStyle.backgroundColor,
+      activeHeight: active.getBoundingClientRect().height,
+      activeFontSize: activeStyle.fontSize,
+      activeRadius: activeStyle.borderRadius,
+      activeBackground: activeStyle.backgroundColor,
+      activeWeight: activeStyle.fontWeight,
+      activeShadow: activeStyle.boxShadow
+    };
+  });
+
+  expect(controlStyle.controlWidth).toBeLessThan(390);
+  expect(controlStyle.troughPadding).toBe("3px");
+  expect(controlStyle.troughBorder).toBe("1px solid rgb(229, 223, 211)");
+  expect(controlStyle.troughRadius).toBe("8px");
+  expect(controlStyle.troughBackground).toBe("rgb(247, 244, 237)");
+  expect(controlStyle.activeHeight).toBeCloseTo(26, 0);
+  expect(controlStyle.activeFontSize).toBe("11.5px");
+  expect(controlStyle.activeRadius).toBe("6px");
+  expect(controlStyle.activeBackground).toBe("rgb(255, 253, 248)");
+  expect(controlStyle.activeWeight).toBe("700");
+  expect(controlStyle.activeShadow).toBe("rgba(54, 48, 39, 0.12) 0px 1px 2px 0px");
+});
+
+test("keeps Backlog sizing fluid, stateful, and still while resizing", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1280, height: 500 });
+  await openDashboard(page);
+  await addBacklogTask(page, "Fluid resize check");
+  await page.getByRole("button", { name: /Backlog/ }).click();
+
+  const widths = await page.evaluate(() => {
+    const header = document
+      .querySelector(".backlog-page .page-header")
+      ?.getBoundingClientRect();
+    const matrix = document.querySelector(".matrix-5a")?.getBoundingClientRect();
+    const stage = document.querySelector(".matrix-stage")?.getBoundingClientRect();
+    if (!header || !matrix || !stage) throw new Error("Backlog geometry is missing");
+    return {
+      header: header.width,
+      matrix: matrix.width,
+      stage: stage.width
+    };
+  });
+  expect(widths.header).toBeLessThanOrEqual(900);
+  expect(widths.matrix).toBeCloseTo(widths.header, 0);
+  expect(widths.stage).toBeCloseTo(widths.header, 0);
+
+  await page.evaluate(() => window.dispatchEvent(new Event("resize")));
+  await expect(page.locator("html")).toHaveClass(/resizing/);
+  expect(
+    await page.locator(".matrix-persistent-task").first().evaluate(
+      (element) => getComputedStyle(element).transitionDuration
+    )
+  ).toBe("0s");
+  await expect(page.locator("html")).not.toHaveClass(/resizing/, {
+    timeout: 1_000
+  });
+
+  await page.getByRole("radio", { name: "Figure", exact: true }).click();
+  await expect(page.getByRole("radio", { name: "Figure", exact: true })).toBeChecked();
+  const persistentTask = await page.locator(".matrix-persistent-task").first().elementHandle();
+  expect(persistentTask).not.toBeNull();
+  const scrollTop = await page.evaluate(() => {
+    window.scrollTo(0, Math.min(220, document.documentElement.scrollHeight - innerHeight));
+    return window.scrollY;
+  });
+  expect(scrollTop).toBeGreaterThan(0);
+
+  await page.setViewportSize({ width: 1179, height: 500 });
+  await expect(page.locator("html")).toHaveAttribute("data-layout-mode", "compact");
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-figure-arrangement",
+    "true"
+  );
+  await expect(page.getByRole("radio", { name: "Figure", exact: true })).toBeChecked();
+  expect(
+    await persistentTask?.evaluate(
+      (element) => element === document.querySelector(".matrix-persistent-task")
+    )
+  ).toBe(true);
+  const compactScrollTop = await page.evaluate(() =>
+    Math.min(window.scrollY, document.documentElement.scrollHeight - innerHeight)
+  );
+  expect(compactScrollTop).toBeCloseTo(
+    Math.min(
+      scrollTop,
+      await page.evaluate(() => document.documentElement.scrollHeight - innerHeight)
+    ),
+    0
+  );
+
+  await page.setViewportSize({ width: 1180, height: 500 });
+  await expect(page.locator("html")).toHaveAttribute("data-layout-mode", "desktop");
+  await expect(page.getByRole("radio", { name: "Figure", exact: true })).toBeChecked();
+  await expect(page.locator("html")).not.toHaveClass(/resizing/, {
+    timeout: 1_000
+  });
+
+  await page.getByRole("radio", { name: "Project", exact: true }).click();
+  expect(
+    await page.locator(".matrix-persistent-task").first().evaluate(
+      (element) => getComputedStyle(element).transitionDuration
+    )
+  ).not.toBe("0s");
+});
+
+test("keeps Figure through 700px and commits the fallback below it", async (
+  { page },
+  testInfo
+) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openDashboard(page);
+  await addBacklogTask(page, `Figure boundary check ${testInfo.repeatEachIndex}`);
+  await page.getByRole("button", { name: /Backlog/ }).click();
+
+  const figure = () => page.getByRole("radio", { name: "Figure", exact: true });
+  const quadrant = () => page.getByRole("radio", { name: "Quadrant", exact: true });
+
+  await figure().click();
+  await expect(figure()).toBeChecked();
+
+  for (const width of [1180, 900, 760, 700]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect(figure()).toBeVisible();
+    await expect(figure()).toBeChecked();
+  }
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-figure-arrangement",
+    "true"
+  );
+
+  await page.setViewportSize({ width: 690, height: 900 });
+  await expect(figure()).toHaveCount(0);
+  await expect(quadrant()).toBeChecked();
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-figure-arrangement",
+    "false"
+  );
+  const compactControlGeometry = await page
+    .locator(".arrange-control")
+    .evaluate((control) => {
+      const trough = control.querySelector<HTMLElement>(".segmented-control");
+      const header = control.closest<HTMLElement>(".page-header");
+      if (!trough || !header) throw new Error("Arrange control geometry is missing");
+      return {
+        controlWidth: control.getBoundingClientRect().width,
+        troughWidth: trough.getBoundingClientRect().width,
+        buttonHeights: [...trough.querySelectorAll("button")].map(
+          (button) => button.getBoundingClientRect().height
+        ),
+        headerDirection: getComputedStyle(header).flexDirection
+      };
+    });
+  expect(compactControlGeometry.troughWidth).toBeCloseTo(
+    compactControlGeometry.controlWidth,
+    0
+  );
+  expect(compactControlGeometry.buttonHeights).toEqual([44, 44, 44]);
+  expect(compactControlGeometry.headerDirection).toBe("column");
+
+  for (const width of [760, 900, 1180, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect(figure()).toBeVisible();
+    await expect(quadrant()).toBeChecked();
+  }
+
+  await page.setViewportSize({ width: 390, height: 900 });
+  await expect(figure()).toHaveCount(0);
+  await expect(quadrant()).toBeChecked();
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-figure-arrangement",
+    "false"
+  );
+});
+
+test("keeps a live focus full off Today at 1400px and strips it below", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1399, height: 900 });
+  await openDashboard(page);
+  await addTask(page, "Wide focus rail check");
+  await taskRow(page, "Wide focus rail check")
+    .getByRole("button", { name: "Focus 30m", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Start 30m focus" }).click();
+
+  await expect(page.getByRole("complementary", { name: "Focus rail" })).toBeVisible();
+  await page.getByRole("button", { name: "Log", exact: true }).click();
+  await expect(
+    page.getByRole("complementary", { name: "Active focus session" })
+  ).toBeVisible();
+
+  await page.setViewportSize({ width: 1400, height: 900 });
+  const wideRail = page.getByRole("complementary", { name: "Focus rail" });
+  await expect(wideRail).toBeVisible();
+  await expect(wideRail.getByRole("button", { name: "Collapse" })).toHaveCount(0);
+  await expect(
+    page.getByRole("complementary", { name: "Active focus session" })
+  ).toHaveCount(0);
+
+  await page.setViewportSize({ width: 1399, height: 900 });
+  const strip = page.getByRole("complementary", { name: "Active focus session" });
+  await expect(strip).toBeVisible();
+  await strip.getByRole("button", { name: "Expand focus rail" }).click();
+  const expandedRail = page.getByRole("complementary", { name: "Focus rail" });
+  await expect(expandedRail).toBeVisible();
+  await expandedRail.getByRole("button", { name: "Collapse" }).click();
+  await expect(strip).toBeVisible();
 });
 
 test("explains an empty backlog and hides Arrange", async ({ page }) => {
@@ -282,7 +706,14 @@ test("creates a project, keeps its plan on one page, and unifies its backlog", a
   await expect(editProject.getByRole("button", { name: "Save changes" })).toBeDisabled();
   await editProject.getByLabel("Name", { exact: true }).fill("Complete systems course");
   await expect(editProject.getByText("Unsaved changes", { exact: true })).toBeVisible();
-  await editProject.getByRole("button", { name: "Save changes" }).click();
+  const renamedProjectDialog = page.getByRole("dialog", {
+    name: "Edit Complete systems course"
+  });
+  await expect(
+    renamedProjectDialog.getByText("Saved", { exact: true })
+  ).toBeVisible();
+  await expect(renamedProjectDialog).toBeVisible();
+  await renamedProjectDialog.getByRole("button", { name: "Cancel" }).click();
   await expect(editProject).toHaveCount(0);
   await expect(
     page.getByRole("heading", {
@@ -296,21 +727,36 @@ test("creates a project, keeps its plan on one page, and unifies its backlog", a
   await page.getByPlaceholder("Add an optional phase").fill("Foundations");
   await page.getByRole("button", { name: "Add phase" }).click();
   await expect(page.getByLabel("Phase name: Foundations")).toBeVisible();
+  const phaseName = page.getByLabel("Phase name: Foundations");
+  await phaseName.fill("Foundational work");
+  await phaseName.press("Meta+Enter");
+  const renamedPhaseName = page.getByLabel("Phase name: Foundational work");
+  await expect(
+    page
+      .locator(".phase-header")
+      .filter({ has: renamedPhaseName })
+      .getByText("Saved", { exact: true })
+  ).toBeVisible();
 
   const addTaskPanel = page.locator(".project-plan-add");
   await addTaskPanel.getByLabel("New Project task").fill("Finish module one exercises");
-  await addTaskPanel.getByLabel("Task phase").selectOption({ label: "Foundations" });
+  await addTaskPanel.getByLabel("Task phase").selectOption({ label: "Foundational work" });
   await addTaskPanel.getByRole("button", { name: "Add", exact: true }).click();
   await expect(
     page
+      .locator(".project-next-actions")
+      .getByRole("button", { name: "Focus 30m", exact: true })
+  ).toHaveClass(/focus-button/);
+  await expect(
+    page
       .locator(".project-phase-section")
-      .filter({ has: page.getByLabel("Phase name: Foundations") })
+      .filter({ has: page.getByLabel("Phase name: Foundational work") })
       .getByLabel("Task title: Finish module one exercises")
   ).toBeVisible();
   await expect(
     page
       .locator(".project-phase-section")
-      .filter({ has: page.getByLabel("Phase name: Foundations") })
+      .filter({ has: page.getByLabel("Phase name: Foundational work") })
       .getByText("Backlog", { exact: true })
   ).toBeVisible();
 
@@ -331,6 +777,12 @@ test("supports the redesigned Journal and Review destinations", async ({ page })
 
   await page.getByRole("button", { name: "Journal", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Journal", exact: true })).toBeVisible();
+  await expect(page.getByText("Ready to save", { exact: true })).toHaveCount(0);
+  const dailyPage = page.getByPlaceholder("Write a few lines about the day.");
+  await dailyPage.fill("The save state belongs beside the writing.");
+  await expect(
+    page.locator(".journal-card-heading").getByText("Saved", { exact: true })
+  ).toBeVisible();
   await page.getByRole("button", { name: "Notes · 0", exact: true }).click();
   await page
     .getByPlaceholder("Capture a thought, decision, or reminder.")
@@ -360,6 +812,14 @@ test("supports the redesigned Journal and Review destinations", async ({ page })
   await expect(page.getByRole("heading", { name: "Review", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Where the focus went" })).toBeVisible();
   await expect(page.getByText("Planned vs focused", { exact: true })).toBeVisible();
+  const reflection = page.getByPlaceholder(
+    "What worked, and what deserves protection next week?"
+  );
+  await reflection.fill("Protect the quiet feedback loop.");
+  await reflection.press("Meta+Enter");
+  await expect(
+    page.locator(".reflection-heading").getByText("Saved", { exact: true })
+  ).toBeVisible();
 });
 
 test("uses five mobile tabs, keeps touch targets large, and puts secondary places under More", async ({
@@ -391,6 +851,25 @@ test("uses five mobile tabs, keeps touch targets large, and puts secondary place
     )
   ).toBe(true);
 
+  await addTask(page, "Phone details");
+  const phoneTask = taskRow(page, "Phone details");
+  await phoneTask
+    .getByRole("button", { name: "Show task details: Phone details" })
+    .click();
+  const phoneFieldWidths = await phoneTask
+    .locator(".task-controls")
+    .evaluate((controls) =>
+      [...controls.querySelectorAll("label")].map(
+        (label) => label.getBoundingClientRect().width
+      )
+    );
+  expect(Math.min(...phoneFieldWidths)).toBeGreaterThanOrEqual(120);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= document.documentElement.clientWidth
+    )
+  ).toBe(true);
+
   await addBacklogTask(page, "Phone matrix item");
   await page.getByRole("button", { name: "More", exact: true }).click();
   const more = page.getByRole("menu", { name: "More destinations" });
@@ -398,7 +877,13 @@ test("uses five mobile tabs, keeps touch targets large, and puts secondary place
   await expect(more.getByRole("menuitem", { name: "Journal" })).toBeVisible();
   await more.getByRole("menuitem", { name: /Backlog/ }).click();
   await expect(page.getByRole("radio", { name: "Quadrant", exact: true })).toBeChecked();
+  await expect(page.getByRole("radio", { name: "Priority", exact: true })).toHaveCount(0);
   await expect(page.getByRole("radio", { name: "Figure", exact: true })).toHaveCount(0);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= document.documentElement.clientWidth
+    )
+  ).toBe(true);
 
   await page.getByRole("button", { name: "More", exact: true }).click();
   const reopenedMore = page.getByRole("menu", { name: "More destinations" });
@@ -416,7 +901,7 @@ test("keeps phone, tablet, and desktop navigation modes exclusive at their bound
   const sidebar = page.locator(".sidebar");
   const workspace = page.locator(".workspace");
 
-  for (const width of [390, 620]) {
+  for (const width of [390, 619]) {
     await page.setViewportSize({ width, height: 900 });
     await expect(page.locator(".nav-list .nav-item:visible")).toHaveCount(5);
     const navigationBox = await navigation.boundingBox();
@@ -424,7 +909,7 @@ test("keeps phone, tablet, and desktop navigation modes exclusive at their bound
     expect(Math.round(navigationBox?.width ?? 0)).toBe(width);
   }
 
-  for (const width of [621, 700, 780, 781, 900, 1179]) {
+  for (const width of [620, 700, 780, 781, 900, 1179]) {
     await page.setViewportSize({ width, height: 900 });
     await expect(page.locator(".nav-list .nav-item:visible")).toHaveCount(6);
     const navigationBox = await navigation.boundingBox();
@@ -449,6 +934,7 @@ test("keeps phone, tablet, and desktop navigation modes exclusive at their bound
   }
 
   await page.setViewportSize({ width: 1180, height: 900 });
+  await expect(page.locator("html")).toHaveAttribute("data-layout-mode", "desktop");
   const desktopSidebarBox = await sidebar.boundingBox();
   const desktopWorkspaceBox = await workspace.boundingBox();
   expect(Math.round(desktopSidebarBox?.width ?? 0)).toBe(196);
@@ -476,5 +962,6 @@ test("uses the 68px tablet rails and keeps captured activity in Today", async ({
 
   await addBacklogTask(page, "Tablet matrix item");
   await page.getByRole("button", { name: /Backlog/ }).click();
+  await expect(page.getByRole("radio", { name: "Quadrant", exact: true })).toBeChecked();
   await expect(page.getByRole("radio", { name: "Figure", exact: true })).toBeVisible();
 });

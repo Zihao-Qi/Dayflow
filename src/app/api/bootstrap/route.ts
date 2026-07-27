@@ -69,7 +69,9 @@ export async function GET() {
         select: {
           status: true,
           actualMinutes: true,
-          startedAt: true
+          startedAt: true,
+          completedAt: true,
+          needsRecord: true
         }
       }),
       listProjectSummaries()
@@ -80,14 +82,14 @@ export async function GET() {
     (await prisma.diaryEntry.create({
       data: { date: start, content: "", reflection: "", mood: 3, energy: 3 }
     }));
-  const stats = buildStats(weekTasks, diaries, weekActivities, weekStart);
-  const reviewSummary = {
-    ...buildReviewSummary(weekFocusSessions),
-    focusedMinutes: weekActivities.reduce(
-      (sum, activity) => sum + activity.durationMinutes,
-      0
-    )
-  };
+  const stats = buildStats(
+    weekTasks,
+    diaries,
+    weekActivities,
+    weekFocusSessions,
+    weekStart
+  );
+  const reviewSummary = buildReviewSummary(weekFocusSessions);
 
   return NextResponse.json({
     today: start.toISOString(),
@@ -137,6 +139,12 @@ function buildStats(
   tasks: StatTask[],
   diaries: StatDiary[],
   activities: StatActivity[],
+  focusSessions: Array<{
+    status: string;
+    actualMinutes: number;
+    startedAt: Date;
+    completedAt: Date | null;
+  }>,
   weekStart: Date
 ) {
   const byDay = new Map<string, StatTask[]>();
@@ -152,6 +160,15 @@ function buildStats(
     const done = dayTasks.filter((task) => task.status === "DONE").length;
     const diary = diaries.find((entry) => localDateKey(entry.date) === day);
     const dayActivities = activities.filter((entry) => localDateKey(entry.startedAt) === day);
+    const dayFocusSessions = focusSessions.filter(
+      (session) =>
+        session.status === "COMPLETED" &&
+        localDateKey(session.completedAt ?? session.startedAt) === day
+    );
+    const focusedMinutes = dayFocusSessions.reduce(
+      (sum, session) => sum + session.actualMinutes,
+      0
+    );
     const recordedMinutes = dayActivities.reduce(
       (sum, entry) => sum + entry.durationMinutes,
       0
@@ -163,7 +180,13 @@ function buildStats(
       total: dayTasks.length,
       completionRate: dayTasks.length ? Math.round((done / dayTasks.length) * 100) : 0,
       plannedHours: roundHours(dayTasks.reduce((sum, task) => sum + task.estimateMinutes, 0)),
-      actualHours: roundHours(dayActivities.length ? recordedMinutes : legacyActualMinutes),
+      actualHours: roundHours(
+        dayFocusSessions.length
+          ? focusedMinutes
+          : dayActivities.length
+            ? recordedMinutes
+            : legacyActualMinutes
+      ),
       mood: diary?.mood ?? null,
       energy: diary?.energy ?? null
     };
@@ -175,9 +198,11 @@ function buildReviewSummary(
     status: string;
     actualMinutes: number;
     startedAt: Date;
+    needsRecord: boolean;
   }>
 ) {
   const completed = sessions.filter((session) => session.status === "COMPLETED");
+  const pendingRecord = completed.filter((session) => session.needsRecord);
   const longest =
     [...completed].sort((a, b) => b.actualMinutes - a.actualMinutes)[0] ?? null;
   return {
@@ -189,6 +214,11 @@ function buildReviewSummary(
     cancelledSessions: sessions.filter(
       (session) => session.status === "CANCELED"
     ).length,
+    pendingRecordSessions: pendingRecord.length,
+    pendingRecordMinutes: pendingRecord.reduce(
+      (sum, session) => sum + session.actualMinutes,
+      0
+    ),
     longestMinutes: longest?.actualMinutes ?? 0,
     longestStartedAt: longest?.startedAt ?? null
   };

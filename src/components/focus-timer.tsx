@@ -174,7 +174,7 @@ export function FocusRail({
           <strong>{live.task?.title ?? live.label}</strong>
           <span>
             {completionPending
-              ? `${live.actualMinutes}m done · add the record`
+              ? `${live.actualMinutes}m counted · add optional details`
               : isBreak
                 ? `Break · ${formatFocusClock(remaining)} left`
                 : isPaused
@@ -212,8 +212,8 @@ export function FocusRail({
         {completionPending && (
           <button
             className="focus-strip-action finish"
-            title="Add completion record"
-            aria-label="Add completion record"
+            title="Add focus details"
+            aria-label="Add focus details"
             onClick={onExpand}
           >
             <Check size={15} />
@@ -454,7 +454,7 @@ function CompletionFocusCard({ session }: { session: FocusSessionRecord }) {
   const focus = useFocusSession();
   const [note, setNote] = useState("");
   const [category, setCategory] = useState("Deep Work");
-  const [taskCompleted, setTaskCompleted] = useState(Boolean(session.taskId));
+  const [taskCompleted, setTaskCompleted] = useState(false);
   const suggestedBreak = suggestedBreakMinutes(session.plannedMinutes);
 
   async function save(takeBreak: boolean) {
@@ -473,17 +473,17 @@ function CompletionFocusCard({ session }: { session: FocusSessionRecord }) {
           <Check size={21} />
         </div>
         <div>
-          <h3>{session.actualMinutes}m done</h3>
+          <h3>{session.actualMinutes}m counted</h3>
           <p>{session.task?.title ?? session.label}</p>
         </div>
       </div>
       <label className="completion-note">
-        What moved forward?
+        What moved forward? <span>Optional</span>
         <textarea
           aria-label="Completion note"
           value={note}
           onChange={(event) => setNote(event.target.value)}
-          placeholder="One line is enough — it becomes today’s activity record."
+          placeholder="Add a note if it will help you remember this block."
         />
       </label>
       <fieldset className="completion-categories">
@@ -523,22 +523,20 @@ function CompletionFocusCard({ session }: { session: FocusSessionRecord }) {
       )}
       <button
         className="secondary-button completion-save-break"
-        disabled={focus.busy || (session.actualMinutes >= 1 && !note.trim())}
+        disabled={focus.busy}
         onClick={() => void save(true)}
       >
-        Save and take a {suggestedBreak}m break
+        Continue to a {suggestedBreak}m break
       </button>
       <button
         className="text-button completion-keep-working"
-        disabled={focus.busy || (session.actualMinutes >= 1 && !note.trim())}
+        disabled={focus.busy}
         onClick={() => void save(false)}
       >
-        Save and keep working
+        {note.trim() ? "Save details and keep working" : "Finish without details"}
       </button>
       <small className="completion-required-note">
-        {note.trim()
-          ? `${session.actualMinutes}m is already safe`
-          : `One line is required — ${session.actualMinutes}m is already safe`}
+        {session.actualMinutes}m is already included in Today and Review.
       </small>
     </section>
   );
@@ -767,7 +765,7 @@ function RunningFocusCard({
       <p className="completion-alert">Recording. One alert at {finishAt}.</p>
       <div className="rail-focus-controls">
         <button
-          className="secondary-button"
+          className="secondary-button focus-button"
           disabled={busy}
           onClick={() =>
             void transition(session.status === "PAUSED" ? "resume" : "pause")

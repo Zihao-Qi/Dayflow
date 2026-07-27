@@ -34,6 +34,7 @@ import {
   ProjectTaskRecord,
   projectStatusLabel
 } from "@/lib/project-domain";
+import { SaveStateChip, useSaveState } from "@/components/save-state";
 
 type ProjectsWorkspaceProps = {
   projects: ProjectSummary[];
@@ -116,7 +117,7 @@ export function ProjectsWorkspace({
     await Promise.all([reloadDetail(), onDataChanged()]);
   }
 
-  async function updateProject(patch: ProjectPatch) {
+  async function updateProject(patch: ProjectPatch, reportError = true) {
     if (!selectedProjectId) return false;
     setError("");
     const response = await fetch(`/api/projects/${selectedProjectId}`, {
@@ -126,7 +127,9 @@ export function ProjectsWorkspace({
     });
     const result = await response.json().catch(() => null);
     if (!response.ok) {
-      setError(result?.error ?? "Project could not be updated.");
+      if (reportError) {
+        setError(result?.error ?? "Project could not be updated.");
+      }
       return false;
     }
     setDetail(result);
@@ -458,7 +461,7 @@ function ProjectCard({
         </div>
         {project.nextTaskId && (
           <button
-            className="secondary-button"
+            className="secondary-button focus-button"
             onClick={() =>
               onStartFocus({
                 taskId: project.nextTaskId ?? undefined,
@@ -495,7 +498,10 @@ function ProjectDetailWorkspace({
   error: string;
   today: string;
   onBack: () => void;
-  onUpdateProject: (patch: ProjectPatch) => Promise<boolean>;
+  onUpdateProject: (
+    patch: ProjectPatch,
+    reportError?: boolean
+  ) => Promise<boolean>;
   onDeleteProject: () => Promise<void>;
   onSync: () => Promise<void>;
   onError: (error: string) => void;
@@ -740,6 +746,11 @@ function ProjectDetailWorkspace({
             onSave={async (patch) => {
               if (await onUpdateProject(patch)) setEditing(false);
             }}
+            onSaveName={(name) => onUpdateProject({ name }, false)}
+            onNameSaveError={() =>
+              onError("Couldn’t save the project name. Your text is still here — retry.")
+            }
+            onNameSaveRecovered={() => onError("")}
             onDelete={onDeleteProject}
           />
         )}
@@ -780,7 +791,7 @@ function ProjectDetailWorkspace({
             </div>
             <div className="project-next-actions">
               <button
-                className="primary-button"
+                className="secondary-button focus-button"
                 onClick={() =>
                   onStartFocus({
                     taskId: nextTask.id,
@@ -976,14 +987,19 @@ function ProjectEditForm({
   project,
   onCancel,
   onSave,
+  onSaveName,
+  onNameSaveError,
+  onNameSaveRecovered,
   onDelete
 }: {
   project: ProjectDetail;
   onCancel: () => void;
   onSave: (patch: ProjectPatch) => Promise<void>;
+  onSaveName: (name: string) => Promise<boolean>;
+  onNameSaveError: () => void;
+  onNameSaveRecovered: () => void;
   onDelete: () => Promise<void>;
 }) {
-  const [name, setName] = useState(project.name);
   const [desiredOutcome, setDesiredOutcome] = useState(project.desiredOutcome);
   const [targetDate, setTargetDate] = useState(project.targetDate?.slice(0, 10) ?? "");
   const [targetDurationValue, setTargetDurationValue] = useState(
@@ -1000,6 +1016,15 @@ function ProjectEditForm({
   const [removeOpen, setRemoveOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  const nameSave = useSaveState({
+    value: project.name,
+    save: onSaveName,
+    normalize: (value: string) => value.trim(),
+    isValid: (value: string) => Boolean(value),
+    onFinalError: onNameSaveError,
+    onRecovered: onNameSaveRecovered
+  });
+  const name = nameSave.draft;
 
   useEffect(() => {
     function closeOnEscape(event: KeyboardEvent) {
@@ -1070,11 +1095,18 @@ function ProjectEditForm({
         <div className="project-dialog-body project-edit-form">
           <div className="project-form-grid">
             <label>
-              Name
+              <span className="project-field-label">
+                Name
+                <SaveStateChip
+                  state={nameSave.state}
+                  onRetry={() => void nameSave.flush(true)}
+                />
+              </span>
               <input
                 autoFocus
                 value={name}
-                onChange={(event) => setName(event.target.value)}
+                onChange={(event) => nameSave.setDraft(event.target.value)}
+                {...nameSave.inputProps}
               />
             </label>
             <label>
@@ -1482,33 +1514,39 @@ function EditablePhaseName({
   onSaved: () => Promise<void>;
   onError: (error: string) => void;
 }) {
-  const [name, setName] = useState(phase.name);
-
-  useEffect(() => setName(phase.name), [phase.name]);
-
-  async function save() {
-    if (!name.trim() || name.trim() === phase.name) return;
-    const response = await fetch(`/api/phases/${phase.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: name.trim() })
-    });
-    if (!response.ok) {
-      const result = await response.json().catch(() => null);
-      onError(result?.error ?? "Phase could not be renamed.");
-      return;
-    }
-    await onSaved();
-  }
+  const nameSave = useSaveState({
+    value: phase.name,
+    save: async (name: string) => {
+      const response = await fetch(`/api/phases/${phase.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name })
+      });
+      if (!response.ok) return false;
+      await onSaved();
+      return true;
+    },
+    normalize: (value: string) => value.trim(),
+    isValid: (value: string) => Boolean(value),
+    onFinalError: () =>
+      onError("Couldn’t save the phase name. Your text is still here — retry."),
+    onRecovered: () => onError("")
+  });
 
   return (
-    <input
-      className="phase-name-input"
-      value={name}
-      onChange={(event) => setName(event.target.value)}
-      onBlur={() => void save()}
-      aria-label={`Phase name: ${phase.name}`}
-    />
+    <>
+      <input
+        className="phase-name-input"
+        value={nameSave.draft}
+        onChange={(event) => nameSave.setDraft(event.target.value)}
+        aria-label={`Phase name: ${phase.name}`}
+        {...nameSave.inputProps}
+      />
+      <SaveStateChip
+        state={nameSave.state}
+        onRetry={() => void nameSave.flush(true)}
+      />
+    </>
   );
 }
 

@@ -40,6 +40,12 @@ import {
 import { ProjectsWorkspace } from "@/components/projects-workspace";
 import { FocusDraft, FocusRail } from "@/components/focus-timer";
 import { useFocusSession } from "@/components/focus-session-provider";
+import { SaveStateChip, useSaveState } from "@/components/save-state";
+import {
+  LayoutMode,
+  markDocumentResizing,
+  useLayoutMode
+} from "@/components/use-layout-mode";
 import {
   focusElapsedSeconds,
   focusRemainingSeconds,
@@ -147,6 +153,8 @@ type ReviewSummary = {
   focusedMinutes: number;
   completedSessions: number;
   cancelledSessions: number;
+  pendingRecordSessions: number;
+  pendingRecordMinutes: number;
   longestMinutes: number;
   longestStartedAt: string | null;
 };
@@ -176,10 +184,28 @@ const nav = [
   { id: "review", label: "Review", icon: Sparkles }
 ] as const;
 
+function describeTaskMove(title: string, position: number, total: number) {
+  const edge =
+    position === 0 ? " Now first." : position === total - 1 ? " Now last." : "";
+  return `Moved "${title}" to position ${position + 1} of ${total}.${edge}`;
+}
+
+function diariesEqual(left: Diary, right: Diary) {
+  return (
+    left.id === right.id &&
+    left.date === right.date &&
+    left.content === right.content &&
+    left.reflection === right.reflection &&
+    left.mood === right.mood &&
+    left.energy === right.energy
+  );
+}
+
 export function Dashboard() {
   const focus = useFocusSession();
-  const compactLayout = useMediaQuery("(max-width: 1179px)");
-  const phoneLayout = useMediaQuery("(max-width: 620px)");
+  const { mode: layoutMode, figureArrangement, wideFocusRail } = useLayoutMode();
+  const compactLayout = layoutMode !== "desktop";
+  const phoneLayout = layoutMode === "phone";
   const [data, setData] = useState<Bootstrap | null>(null);
   const [screen, setScreen] = useState<Screen>("today");
   const [railExpanded, setRailExpanded] = useState(false);
@@ -206,12 +232,13 @@ export function Dashboard() {
   const [activityTaskId, setActivityTaskId] = useState("");
   const [activityNote, setActivityNote] = useState("");
   const [activityError, setActivityError] = useState("");
-  const [savingDiary, setSavingDiary] = useState(false);
   const [dismissedUnfinished, setDismissedUnfinished] = useState<string[]>([]);
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [firstRunSeen, setFirstRunSeen] = useState<boolean | null>(null);
   const [appAnnouncement, setAppAnnouncement] = useState("");
   const [appError, setAppError] = useState("");
+  const taskSaveWasInError = useRef(false);
+  const diarySaveWasInError = useRef(false);
 
   useEffect(() => {
     setActivityTime(formatTimeInput(new Date()));
@@ -224,8 +251,12 @@ export function Dashboard() {
   }, [focus.activityRevision]);
 
   useEffect(() => {
-    if (phoneLayout && focus.pendingCompletion) setRailExpanded(true);
-  }, [focus.pendingCompletion, phoneLayout]);
+    if (!figureArrangement) {
+      setBacklogArrange((current) =>
+        current === "figure" ? "quadrant" : current
+      );
+    }
+  }, [figureArrangement]);
 
   useEffect(() => {
     function onShortcut(event: KeyboardEvent) {
@@ -357,7 +388,7 @@ export function Dashboard() {
     }
   }
 
-  async function updateTask(
+  async function saveTaskAttempt(
     id: string,
     patch: Partial<Task> & { scheduleSource?: string }
   ) {
@@ -372,28 +403,50 @@ export function Dashboard() {
           }
         : current
     );
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      try {
-        const response = await fetch(`/api/tasks/${id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(patch)
-        });
-        if (!response.ok) throw new Error("Task could not be saved.");
-        setAppError("");
-        setAppAnnouncement("Changes saved.");
-        await refresh();
-        return true;
-      } catch {
-        if (attempt < 2) {
-          await new Promise((resolve) =>
-            window.setTimeout(resolve, attempt === 0 ? 1000 : 4000)
-          );
-        }
-      }
+    try {
+      const response = await fetch(`/api/tasks/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch)
+      });
+      if (!response.ok) return false;
+      await refresh();
+      return true;
+    } catch {
+      return false;
     }
+  }
+
+  function reportTaskSaveFailure() {
+    taskSaveWasInError.current = true;
     setAppError("Couldn’t save that change. Your text is still here — retry.");
     setAppAnnouncement("Changes were not saved.");
+  }
+
+  function reportTaskSaveRecovery() {
+    if (!taskSaveWasInError.current) return;
+    taskSaveWasInError.current = false;
+    setAppError("");
+    setAppAnnouncement("Saved.");
+  }
+
+  async function updateTask(
+    id: string,
+    patch: Partial<Task> & { scheduleSource?: string }
+  ) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (await saveTaskAttempt(id, patch)) {
+        setAppError("");
+        reportTaskSaveRecovery();
+        return true;
+      }
+      if (attempt < 2) {
+        await new Promise((resolve) =>
+          window.setTimeout(resolve, attempt === 0 ? 1000 : 4000)
+        );
+      }
+    }
+    reportTaskSaveFailure();
     return false;
   }
 
@@ -402,12 +455,16 @@ export function Dashboard() {
     await refresh();
   }
 
-  async function reorderTask(draggedId: string, targetId: string) {
+  async function reorderTask(
+    draggedId: string,
+    targetId: string,
+    announce = true
+  ) {
     if (draggedId === targetId) return true;
-    const oldIndex = todayTasks.findIndex((task) => task.id === draggedId);
-    const newIndex = todayTasks.findIndex((task) => task.id === targetId);
+    const oldIndex = openTodayTasks.findIndex((task) => task.id === draggedId);
+    const newIndex = openTodayTasks.findIndex((task) => task.id === targetId);
     if (oldIndex < 0 || newIndex < 0) return false;
-    const reordered = [...todayTasks];
+    const reordered = [...openTodayTasks];
     const [item] = reordered.splice(oldIndex, 1);
     reordered.splice(newIndex, 0, item);
     setData((current) =>
@@ -429,9 +486,11 @@ export function Dashboard() {
       });
       if (!response.ok) throw new Error("Order could not be saved.");
       setAppError("");
-      setAppAnnouncement(
-        `Moved "${item.title}" to position ${newIndex + 1} of ${reordered.length}.`
-      );
+      if (announce) {
+        setAppAnnouncement(
+          describeTaskMove(item.title, newIndex, reordered.length)
+        );
+      }
       await refresh();
       return true;
     } catch {
@@ -477,25 +536,32 @@ export function Dashboard() {
     await refresh();
   }
 
-  async function saveDiary() {
-    if (!data) return;
-    setSavingDiary(true);
+  async function saveDiary(diary: Diary) {
     try {
       const response = await fetch("/api/diary", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data.diary)
+        body: JSON.stringify(diary)
       });
-      if (!response.ok) throw new Error("Journal could not be saved.");
-      setAppAnnouncement("Journal saved.");
-      setAppError("");
+      if (!response.ok) return false;
       await refresh();
+      return true;
     } catch {
-      setAppAnnouncement("Journal was not saved.");
-      setAppError("Couldn’t save the journal. Your writing is still here — retry.");
-    } finally {
-      setSavingDiary(false);
+      return false;
     }
+  }
+
+  function reportDiarySaveFailure() {
+    diarySaveWasInError.current = true;
+    setAppAnnouncement("Journal was not saved.");
+    setAppError("Couldn’t save the journal. Your writing is still here — retry.");
+  }
+
+  function reportDiarySaveRecovery() {
+    if (!diarySaveWasInError.current) return;
+    diarySaveWasInError.current = false;
+    setAppAnnouncement("Saved.");
+    setAppError("");
   }
 
   function setDiaryValue<K extends keyof Diary>(key: K, value: Diary[K]) {
@@ -552,11 +618,14 @@ export function Dashboard() {
   const isToday = screen === "today";
   const liveFocus = focus.active ?? focus.pendingCompletion;
   const showFullRail =
-    (!compactLayout && (isToday || railExpanded)) ||
-    (phoneLayout && railExpanded && Boolean(liveFocus));
+    (phoneLayout && railExpanded && Boolean(liveFocus)) ||
+    (!compactLayout &&
+      (isToday ||
+        (wideFocusRail && Boolean(liveFocus)) ||
+        (railExpanded && Boolean(liveFocus || focusDraft))));
   const showStrip =
     Boolean(liveFocus) &&
-    !railExpanded &&
+    !showFullRail &&
     (compactLayout || !isToday);
   const focusedMinutes = focus.snapshot?.today.focusedMinutes ?? 0;
   const completedSessions = focus.snapshot?.today.completedSessions ?? 0;
@@ -615,7 +684,7 @@ export function Dashboard() {
         </nav>
         {!liveFocus && !isToday && (
           <button
-            className="sidebar-focus-button"
+            className="sidebar-focus-button focus-button"
             onClick={() => {
               setFocusDraft({ revision: Date.now(), plannedMinutes: 25 });
               setRailExpanded(true);
@@ -645,12 +714,14 @@ export function Dashboard() {
           onClick={() => setPaletteOpen(true)}
         >
           <Plus size={19} />
+          <span>Capture</span>
         </button>
         {screen === "today" && firstRun && (
           <FirstRunPage today={data.today} onBegin={beginFirstRun} />
         )}
         {screen === "today" && !firstRun && (
           <TodayPage
+            layoutMode={layoutMode}
             today={data.today}
             tasks={todayTasks}
             backlogTasks={backlogTasks}
@@ -667,6 +738,9 @@ export function Dashboard() {
             newTask={newTask}
             onNewTaskChange={setNewTask}
             onUpdateTask={updateTask}
+            onSaveTaskField={saveTaskAttempt}
+            onTaskSaveError={reportTaskSaveFailure}
+            onTaskSaveRecovered={reportTaskSaveRecovery}
             onDeleteTask={deleteTask}
             onReorderTask={reorderTask}
             onAnnounce={setAppAnnouncement}
@@ -717,6 +791,7 @@ export function Dashboard() {
 
         {screen === "backlog" && (
           <BacklogPage
+            figureArrangement={figureArrangement}
             tasks={backlogTasks}
             projects={projectById}
             today={data.today}
@@ -741,9 +816,10 @@ export function Dashboard() {
             notes={data.notes}
             materials={data.materials}
             projects={projectById}
-            saving={savingDiary}
             onDiaryChange={setDiaryValue}
             onSaveDiary={saveDiary}
+            onSaveError={reportDiarySaveFailure}
+            onSaveRecovered={reportDiarySaveRecovery}
             newNote={newNote}
             noteTags={noteTags}
             onNewNoteChange={setNewNote}
@@ -768,6 +844,8 @@ export function Dashboard() {
             summary={data.reviewSummary}
             onDiaryChange={setDiaryValue}
             onSaveDiary={saveDiary}
+            onSaveError={reportDiarySaveFailure}
+            onSaveRecovered={reportDiarySaveRecovery}
             onOpenProject={openProject}
           />
         )}
@@ -802,7 +880,7 @@ export function Dashboard() {
           draft={focusDraft}
           activities={data.activities}
           mode="full"
-          collapsible={!isToday || phoneLayout}
+          collapsible={phoneLayout || (!isToday && !wideFocusRail)}
           onCollapse={() => setRailExpanded(false)}
           onOpenPalette={() => setPaletteOpen(true)}
         />
@@ -888,6 +966,7 @@ export function Dashboard() {
 }
 
 function TodayPage({
+  layoutMode,
   today,
   tasks,
   backlogTasks,
@@ -904,6 +983,9 @@ function TodayPage({
   newTask,
   onNewTaskChange,
   onUpdateTask,
+  onSaveTaskField,
+  onTaskSaveError,
+  onTaskSaveRecovered,
   onDeleteTask,
   onReorderTask,
   onAnnounce,
@@ -913,6 +995,7 @@ function TodayPage({
   onLeaveUnfinished,
   activities
 }: {
+  layoutMode: LayoutMode;
   today: string;
   tasks: Task[];
   backlogTasks: Task[];
@@ -932,8 +1015,18 @@ function TodayPage({
     id: string,
     patch: Partial<Task> & { scheduleSource?: string }
   ) => Promise<boolean>;
+  onSaveTaskField: (
+    id: string,
+    patch: Partial<Task> & { scheduleSource?: string }
+  ) => Promise<boolean>;
+  onTaskSaveError: () => void;
+  onTaskSaveRecovered: () => void;
   onDeleteTask: (id: string) => Promise<void>;
-  onReorderTask: (source: string, target: string) => Promise<boolean>;
+  onReorderTask: (
+    source: string,
+    target: string,
+    announce?: boolean
+  ) => Promise<boolean>;
   onAnnounce: (message: string) => void;
   onStartFocus: (target: FocusTarget) => void;
   onOpenProject: (id: string) => void;
@@ -941,10 +1034,12 @@ function TodayPage({
   onLeaveUnfinished: (id: string) => void;
   activities: ActivityEntry[];
 }) {
+  const phoneLayout = layoutMode === "phone";
   const open = tasks.filter((task) => task.status !== "DONE");
   const done = tasks.filter((task) => task.status === "DONE");
   const firstCarry = unfinishedTasks[0];
   const [reorderMode, setReorderMode] = useState(false);
+  const [laterOpen, setLaterOpen] = useState(false);
   const reorderButtonRef = useRef<HTMLButtonElement | null>(null);
   const instructionDoneRef = useRef<HTMLButtonElement | null>(null);
 
@@ -969,10 +1064,10 @@ function TodayPage({
   async function moveTask(task: Task, index: number, direction: -1 | 1) {
     const target = open[index + direction];
     if (!target) return;
-    const moved = await onReorderTask(task.id, target.id);
+    const moved = await onReorderTask(task.id, target.id, false);
     if (!moved) return;
     const nextIndex = index + direction;
-    onAnnounce(`Moved "${task.title}" to position ${nextIndex + 1} of ${open.length}.`);
+    onAnnounce(describeTaskMove(task.title, nextIndex, open.length));
     window.requestAnimationFrame(() => {
       const preferredDirection =
         nextIndex === 0 ? "down" : nextIndex === open.length - 1 ? "up" : direction < 0 ? "up" : "down";
@@ -1006,7 +1101,7 @@ function TodayPage({
           </p>
           <div>
             <button
-              className="secondary-button"
+              className="secondary-button focus-button"
               onClick={() =>
                 void onUpdateTask(firstCarry.id, {
                   date: today.slice(0, 10),
@@ -1157,6 +1252,9 @@ function TodayPage({
               total={open.length}
               onMove={(direction) => void moveTask(task, index, direction)}
               onUpdate={onUpdateTask}
+              onSaveField={onSaveTaskField}
+              onSaveError={onTaskSaveError}
+              onSaveRecovered={onTaskSaveRecovered}
               onDelete={onDeleteTask}
               onReorder={onReorderTask}
               onOpenProject={onOpenProject}
@@ -1184,6 +1282,9 @@ function TodayPage({
                 projects={projects}
                 reorderMode={false}
                 onUpdate={onUpdateTask}
+                onSaveField={onSaveTaskField}
+                onSaveError={onTaskSaveError}
+                onSaveRecovered={onTaskSaveRecovered}
                 onDelete={onDeleteTask}
                 onReorder={onReorderTask}
                 onOpenProject={onOpenProject}
@@ -1194,8 +1295,19 @@ function TodayPage({
         </details>
       )}
 
-      <section className="later-section">
-        <span className="eyebrow">Later · not today</span>
+      <details
+        className="later-section responsive-later-section"
+        open={phoneLayout ? laterOpen : true}
+        onToggle={(event) => {
+          if (phoneLayout) setLaterOpen(event.currentTarget.open);
+        }}
+      >
+        <summary>
+          <span className="eyebrow">
+            {phoneLayout ? `Later · ${backlogTasks.length}` : "Later · not today"}
+          </span>
+          {phoneLayout && <small>Bring something into today</small>}
+        </summary>
         <div>
           {backlogTasks.slice(0, 5).map((task) => (
             <button
@@ -1211,10 +1323,10 @@ function TodayPage({
             </button>
           ))}
           <button className="all-backlog-pill" onClick={onOpenBacklog}>
-            All backlog · {backlogTasks.length}
+            {phoneLayout ? "Open backlog" : "All backlog"} · {backlogTasks.length}
           </button>
         </div>
-      </section>
+      </details>
 
       <section className="rail-card captured-card tablet-captured-card">
         <div className="captured-heading">
@@ -1254,6 +1366,9 @@ function TaskRow({
   total = 0,
   onMove,
   onUpdate,
+  onSaveField,
+  onSaveError,
+  onSaveRecovered,
   onDelete,
   onReorder,
   onOpenProject,
@@ -1271,6 +1386,12 @@ function TaskRow({
     id: string,
     patch: Partial<Task> & { scheduleSource?: string }
   ) => Promise<boolean>;
+  onSaveField: (
+    id: string,
+    patch: Partial<Task> & { scheduleSource?: string }
+  ) => Promise<boolean>;
+  onSaveError: () => void;
+  onSaveRecovered: () => void;
   onDelete: (id: string) => Promise<void>;
   onReorder: (source: string, target: string) => Promise<boolean>;
   onOpenProject: (id: string) => void;
@@ -1279,31 +1400,48 @@ function TaskRow({
   const done = task.status === "DONE";
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [draggable, setDraggable] = useState(false);
-  const [title, setTitle] = useState(task.title);
-  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">(
-    "idle"
-  );
-  const titleSaveTimer = useRef<number | null>(null);
-
-  useEffect(() => setTitle(task.title), [task.title]);
-
-  useEffect(() => {
-    if (!title.trim() || title.trim() === task.title) return;
-    if (titleSaveTimer.current !== null) window.clearTimeout(titleSaveTimer.current);
-    titleSaveTimer.current = window.setTimeout(() => {
-      void saveTitle(title);
-    }, 600);
-    return () => {
-      if (titleSaveTimer.current !== null) window.clearTimeout(titleSaveTimer.current);
-    };
-  }, [title, task.title]);
-
-  async function saveTitle(value = title, force = false) {
-    if (!value.trim() || (!force && value.trim() === task.title)) return;
-    setSaveState("saving");
-    const saved = await onUpdate(task.id, { title: value.trim() });
-    setSaveState(saved ? "saved" : "error");
-  }
+  const saveCallbacks = {
+    onFinalError: onSaveError,
+    onRecovered: onSaveRecovered
+  };
+  const titleSave = useSaveState({
+    value: task.title,
+    save: (value: string) => onSaveField(task.id, { title: value }),
+    normalize: (value: string) => value.trim(),
+    isValid: (value: string) => Boolean(value),
+    ...saveCallbacks
+  });
+  const deadlineSave = useSaveState({
+    value: task.deadline?.slice(0, 10) ?? "",
+    save: (value: string) =>
+      onSaveField(task.id, { deadline: value || null }),
+    ...saveCallbacks
+  });
+  const estimateSave = useSaveState({
+    value: String(task.estimateMinutes),
+    save: (value: string) =>
+      onSaveField(task.id, { estimateMinutes: Number(value) }),
+    normalize: (value: string) => value.trim(),
+    isValid: (value: string) => {
+      const minutes = Number(value);
+      return Number.isFinite(minutes) && minutes >= 1 && minutes <= 1440;
+    },
+    ...saveCallbacks
+  });
+  const projectSave = useSaveState({
+    value: task.projectId ?? "",
+    save: (value: string) =>
+      onSaveField(task.id, {
+        projectId: value || null,
+        phaseId: null
+      }),
+    ...saveCallbacks
+  });
+  const statusSave = useSaveState<TaskStatus>({
+    value: task.status,
+    save: (value) => onSaveField(task.id, { status: value }),
+    ...saveCallbacks
+  });
 
   return (
     <article
@@ -1340,30 +1478,25 @@ function TaskRow({
           <input
             className="task-title-input"
             aria-label={`Task title: ${task.title}`}
-            value={title}
-            onChange={(event) => {
-              setTitle(event.target.value);
-              setSaveState("idle");
-            }}
-            onBlur={() => void saveTitle()}
+            value={titleSave.draft}
+            onChange={(event) => titleSave.setDraft(event.target.value)}
+            onBlur={titleSave.inputProps.onBlur}
             onKeyDown={(event) => {
-              if (event.key === "Enter") event.currentTarget.blur();
+              titleSave.inputProps.onKeyDown(event);
+              if (
+                event.key === "Enter" &&
+                !event.metaKey &&
+                !event.ctrlKey
+              ) {
+                event.currentTarget.blur();
+              }
             }}
           />
-          {saveState !== "idle" && (
-            <small className={`task-save-state ${saveState}`}>
-              {saveState === "saving"
-                ? "Saving"
-                : saveState === "saved"
-                  ? "Saved"
-                  : "Not saved"}
-              {saveState === "error" && (
-                <button type="button" onClick={() => void saveTitle(title, true)}>
-                  Retry
-                </button>
-              )}
-            </small>
-          )}
+          <SaveStateChip
+            state={titleSave.state}
+            onRetry={() => void titleSave.flush(true)}
+            className="task-save-state"
+          />
         </div>
         <p>
           {task.estimateMinutes}m
@@ -1399,7 +1532,7 @@ function TaskRow({
       )}
       {!done && !reorderMode && (
         <button
-          className={suggested ? "focus-row-button suggested" : "focus-row-button"}
+          className={suggested ? "focus-row-button suggested focus-button" : "focus-row-button"}
           onClick={() =>
             onStartFocus({
               taskId: task.id,
@@ -1443,44 +1576,55 @@ function TaskRow({
               />
             </label>
             <label>
-              Deadline
+              <span className="task-field-label">
+                Deadline
+                <SaveStateChip
+                  state={deadlineSave.state}
+                  onRetry={() => void deadlineSave.flush(true)}
+                />
+              </span>
               <input
                 type="date"
                 aria-label="Deadline"
-                value={task.deadline?.slice(0, 10) ?? ""}
-                onChange={(event) =>
-                  void onUpdate(task.id, { deadline: event.target.value || null })
-                }
+                value={deadlineSave.draft}
+                onChange={(event) => deadlineSave.setDraft(event.target.value)}
+                {...deadlineSave.inputProps}
               />
             </label>
             <label>
-              Estimate
+              <span className="task-field-label">
+                Estimate
+                <SaveStateChip
+                  state={estimateSave.state}
+                  onRetry={() => void estimateSave.flush(true)}
+                />
+              </span>
               <span className="task-estimate-input">
                 <input
                   type="number"
                   aria-label="Estimate in minutes"
                   min="1"
                   max="1440"
-                  value={task.estimateMinutes}
-                  onChange={(event) =>
-                    void onUpdate(task.id, {
-                      estimateMinutes: Number(event.target.value)
-                    })
-                  }
+                  value={estimateSave.draft}
+                  onChange={(event) => estimateSave.setDraft(event.target.value)}
+                  {...estimateSave.inputProps}
                 />
                 <small>min</small>
               </span>
             </label>
             <label>
-              Project
+              <span className="task-field-label">
+                Project
+                <SaveStateChip
+                  state={projectSave.state}
+                  onRetry={() => void projectSave.flush(true)}
+                />
+              </span>
               <select
-                value={task.projectId ?? ""}
-                onChange={(event) =>
-                  void onUpdate(task.id, {
-                    projectId: event.target.value || null,
-                    phaseId: null
-                  })
-                }
+                aria-label="Project name"
+                value={projectSave.draft}
+                onChange={(event) => projectSave.setDraft(event.target.value)}
+                {...projectSave.inputProps}
               >
                 <option value="">No project</option>
                 {projects.map((item) => (
@@ -1491,15 +1635,20 @@ function TaskRow({
               </select>
             </label>
             <label>
-              Status
+              <span className="task-field-label">
+                Status
+                <SaveStateChip
+                  state={statusSave.state}
+                  onRetry={() => void statusSave.flush(true)}
+                />
+              </span>
               <select
                 aria-label="Task status"
-                value={task.status}
+                value={statusSave.draft}
                 onChange={(event) =>
-                  void onUpdate(task.id, {
-                    status: event.target.value as TaskStatus
-                  })
+                  statusSave.setDraft(event.target.value as TaskStatus)
                 }
+                {...statusSave.inputProps}
               >
                 <option value="TODO">To do</option>
                 <option value="IN_PROGRESS">In progress</option>
@@ -1583,7 +1732,9 @@ function FirstRunPage({
         <button>
           <NotebookPen size={17} />
           <span>
-            <strong>Capture anything with ⌘K</strong>
+            <strong>
+              Capture anything<span className="desktop-shortcut"> with ⌘K</span>
+            </strong>
             <small>Tasks, notes, links and time you already spent.</small>
           </span>
         </button>
@@ -1832,7 +1983,9 @@ function DayStream({
           <time />
           <div>
             <i />
-            <button onClick={onOpenPalette}>Add to the day · ⌘K</button>
+            <button onClick={onOpenPalette}>
+              Add to the day<span className="desktop-shortcut"> · ⌘K</span>
+            </button>
           </div>
         </article>
       </div>
@@ -1951,6 +2104,9 @@ function DayMatrix({
   const [phase, setPhase] = useState<"closed" | "open">("open");
   const [hovered, setHovered] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  const [stageWidth, setStageWidth] = useState(0);
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const previousStageWidth = useRef<number | null>(null);
   const transitionTimer = useRef<number | null>(null);
   const visibleTasks = tasks.filter((task) => task.status !== "DONE").slice(0, 60);
   const groups = matrixGroups(
@@ -1960,7 +2116,7 @@ function DayMatrix({
     arrangement,
     preferredProjectId
   );
-  const tableGeometry = matrixTableGeometry(groups);
+  const tableGeometry = matrixTableGeometry(groups, stageWidth);
   const stageHeight = tableGeometry.height;
 
   useEffect(
@@ -1969,6 +2125,25 @@ function DayMatrix({
     },
     []
   );
+
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const observer = new ResizeObserver(([entry]) => {
+      const width = entry.contentRect.width;
+      if (previousStageWidth.current === null) {
+        previousStageWidth.current = width;
+        setStageWidth(width);
+        return;
+      }
+      if (Math.abs(previousStageWidth.current - width) < 0.5) return;
+      previousStageWidth.current = width;
+      markDocumentResizing();
+      setStageWidth(width);
+    });
+    observer.observe(stage);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     const next = arrangement === "figure" ? "figure" : "tables";
@@ -2000,6 +2175,7 @@ function DayMatrix({
         </p>
       </div>
       <div
+        ref={stageRef}
         className={`matrix-stage matrix-layout-${layout} matrix-phase-${phase}`}
         style={{ height: layout === "tables" ? `${stageHeight}px` : "386px" }}
       >
@@ -2019,7 +2195,10 @@ function DayMatrix({
           {calloutTask && (
             <div
               className="matrix-hover-callout"
-              style={{ top: `${matrixFigurePoint(calloutTask, today).y - 18}px` }}
+              style={{
+                top: `${matrixFigurePoint(calloutTask, today, stageWidth).y - 18}px`,
+                left: `${Math.min(520, stageWidth || 520) + 24}px`
+              }}
             >
               <strong>{calloutTask.title}</strong>
               <span>
@@ -2069,7 +2248,7 @@ function DayMatrix({
           );
         })}
         {visibleTasks.map((task, index) => {
-          const figure = matrixFigurePoint(task, today);
+          const figure = matrixFigurePoint(task, today, stageWidth);
           const table = tableGeometry.tasks.get(task.id) ?? { x: 14, y: 15 };
           const color = matrixProjectColor(task.projectId);
           const position = layout === "tables" ? table : figure;
@@ -2168,6 +2347,7 @@ function DayMatrix({
 }
 
 function BacklogPage({
+  figureArrangement,
   tasks,
   projects,
   today,
@@ -2181,6 +2361,7 @@ function BacklogPage({
   onUpdateTask,
   onOpenPalette
 }: {
+  figureArrangement: boolean;
   tasks: Task[];
   projects: Map<string, ProjectSummary>;
   today: string;
@@ -2197,30 +2378,27 @@ function BacklogPage({
   ) => Promise<unknown>;
   onOpenPalette: () => void;
 }) {
-  const phoneLayout = useMediaQuery("(max-width: 699px)");
-  const arrangements: Array<[BacklogArrange, string]> = phoneLayout
+  const effectiveArrangement =
+    !figureArrangement && arrangement === "figure" ? "quadrant" : arrangement;
+  const arrangements: Array<[BacklogArrange, string]> = figureArrangement
     ? [
         ["quadrant", "Quadrant"],
+        ["figure", "Figure"],
         ["project", "Project"],
         ["due", "Due"]
       ]
     : [
-        ["figure", "Figure"],
         ["quadrant", "Quadrant"],
         ["project", "Project"],
         ["due", "Due"]
       ];
 
-  useEffect(() => {
-    if (phoneLayout && arrangement === "figure") onArrangementChange("quadrant");
-  }, [arrangement, phoneLayout, onArrangementChange]);
-
   const explainer =
-    arrangement === "figure"
+    effectiveArrangement === "figure"
       ? "Read the shape of the whole backlog by urgency and importance. Select a dot to act on it."
-      : arrangement === "quadrant"
+      : effectiveArrangement === "quadrant"
         ? "Ranked by what deserves attention first. Deadlines lead within each quadrant, then importance."
-        : arrangement === "project"
+        : effectiveArrangement === "project"
           ? "Grouped by project without filtering anything out. The same tasks keep their identity as they move."
           : "Grouped by when a decision is due: Today, Next three days, Later this week, then No deadline.";
 
@@ -2232,7 +2410,7 @@ function BacklogPage({
         actions={
           tasks.length ? (
             <ArrangementControl
-              value={arrangement}
+              value={effectiveArrangement}
               options={arrangements}
               onChange={onArrangementChange}
             />
@@ -2248,7 +2426,7 @@ function BacklogPage({
           </p>
           <button className="secondary-button" onClick={onOpenPalette}>
             <Plus size={14} />
-            Capture something · ⌘K
+            Capture something<span className="desktop-shortcut"> · ⌘K</span>
           </button>
           <small>
             Arrange is hidden while the backlog is empty — there is nothing to regroup.
@@ -2285,7 +2463,7 @@ function BacklogPage({
             tasks={tasks}
             today={today}
             projects={projects}
-            arrangement={arrangement}
+            arrangement={effectiveArrangement}
             preferredProjectId={scopeProjectId}
             activeTaskId={activeTaskId}
             onStartFocus={onStartFocus}
@@ -2305,9 +2483,10 @@ function JournalPage({
   notes,
   materials,
   projects,
-  saving,
   onDiaryChange,
   onSaveDiary,
+  onSaveError,
+  onSaveRecovered,
   newNote,
   noteTags,
   onNewNoteChange,
@@ -2328,9 +2507,10 @@ function JournalPage({
   notes: Note[];
   materials: Material[];
   projects: Map<string, ProjectSummary>;
-  saving: boolean;
   onDiaryChange: <K extends keyof Diary>(key: K, value: Diary[K]) => void;
-  onSaveDiary: () => Promise<void>;
+  onSaveDiary: (diary: Diary) => Promise<boolean>;
+  onSaveError: () => void;
+  onSaveRecovered: () => void;
   newNote: string;
   noteTags: string;
   onNewNoteChange: (value: string) => void;
@@ -2344,6 +2524,19 @@ function JournalPage({
   onMaterialNotesChange: (value: string) => void;
   onAddMaterial: () => Promise<void>;
 }) {
+  const diarySave = useSaveState<Diary>({
+    value: diary,
+    save: onSaveDiary,
+    isEqual: diariesEqual,
+    onFinalError: onSaveError,
+    onRecovered: onSaveRecovered
+  });
+
+  function updateDiary<K extends keyof Diary>(key: K, value: Diary[K]) {
+    diarySave.setDraft({ ...diarySave.draft, [key]: value });
+    onDiaryChange(key, value);
+  }
+
   return (
     <div className="journal-page page-stack">
       <PageHeader
@@ -2366,37 +2559,46 @@ function JournalPage({
           <section className="panel daily-page-card">
             <div className="journal-card-heading">
               <h2>Daily page</h2>
-              <small>{saving ? "Saving…" : "Ready to save"}</small>
+              <SaveStateChip
+                state={diarySave.state}
+                onRetry={() => void diarySave.flush(true)}
+              />
             </div>
             <textarea
-              value={diary.content}
-              onChange={(event) => onDiaryChange("content", event.target.value)}
+              value={diarySave.draft.content}
+              onChange={(event) => updateDiary("content", event.target.value)}
               placeholder="Write a few lines about the day."
+              {...diarySave.inputProps}
             />
             <div className="journal-footer">
               <label>
-                Mood · {diary.mood}/5
+                Mood · {diarySave.draft.mood}/5
                 <input
                   type="range"
                   aria-label="Mood"
                   min="1"
                   max="5"
-                  value={diary.mood}
-                  onChange={(event) => onDiaryChange("mood", Number(event.target.value))}
+                  value={diarySave.draft.mood}
+                  onChange={(event) => updateDiary("mood", Number(event.target.value))}
+                  {...diarySave.inputProps}
                 />
               </label>
               <label>
-                Energy · {diary.energy}/5
+                Energy · {diarySave.draft.energy}/5
                 <input
                   type="range"
                   aria-label="Energy"
                   min="1"
                   max="5"
-                  value={diary.energy}
-                  onChange={(event) => onDiaryChange("energy", Number(event.target.value))}
+                  value={diarySave.draft.energy}
+                  onChange={(event) => updateDiary("energy", Number(event.target.value))}
+                  {...diarySave.inputProps}
                 />
               </label>
-              <button className="primary-button" onClick={() => void onSaveDiary()}>
+              <button
+                className="primary-button"
+                onClick={() => void diarySave.flush(true)}
+              >
                 <Save size={14} />
                 Save
               </button>
@@ -2406,7 +2608,7 @@ function JournalPage({
             <span className="eyebrow">Captured today</span>
             <NoteCards notes={notes.slice(0, 2)} projects={projects} />
             <button className="rail-link" onClick={() => onViewChange("notes")}>
-              New note · ⌘K
+              New note<span className="desktop-shortcut"> · ⌘K</span>
             </button>
             <span className="eyebrow references-label">References</span>
             <ReferenceCards materials={materials.slice(0, 3)} projects={projects} />
@@ -2480,6 +2682,8 @@ function ReviewPage({
   summary,
   onDiaryChange,
   onSaveDiary,
+  onSaveError,
+  onSaveRecovered,
   onOpenProject
 }: {
   today: string;
@@ -2488,9 +2692,18 @@ function ReviewPage({
   diary: Diary;
   summary: ReviewSummary;
   onDiaryChange: <K extends keyof Diary>(key: K, value: Diary[K]) => void;
-  onSaveDiary: () => Promise<void>;
+  onSaveDiary: (diary: Diary) => Promise<boolean>;
+  onSaveError: () => void;
+  onSaveRecovered: () => void;
   onOpenProject: (id: string) => void;
 }) {
+  const reflectionSave = useSaveState<Diary>({
+    value: diary,
+    save: onSaveDiary,
+    isEqual: diariesEqual,
+    onFinalError: onSaveError,
+    onRecovered: onSaveRecovered
+  });
   const chartData = stats.map((stat) => ({
     ...stat,
     label: new Date(`${stat.day}T00:00:00`).toLocaleDateString("en-US", {
@@ -2505,6 +2718,16 @@ function ReviewPage({
   const moved = projects.filter((project) => project.lastProgressAt).slice(0, 4);
   const recordedDays = chartData.filter((stat) => stat.actualHours > 0);
   const isFirstWeek = recordedDays.length === 1 && summary.focusedMinutes > 0;
+  const sessionNote = [
+    summary.pendingRecordSessions
+      ? `${summary.pendingRecordSessions} awaiting optional details`
+      : null,
+    summary.cancelledSessions
+      ? `${summary.cancelledSessions} cancelled`
+      : null
+  ]
+    .filter(Boolean)
+    .join(" · ") || "All sessions recorded";
   return (
     <div className="review-page page-stack">
       <PageHeader
@@ -2516,6 +2739,16 @@ function ReviewPage({
           </span>
         }
       />
+      {summary.pendingRecordSessions > 0 && (
+        <p className="review-pending-note" role="status">
+          <Check size={14} />
+          <span>
+            <strong>{formatMinutes(summary.pendingRecordMinutes)} is already counted.</strong>{" "}
+            {summary.pendingRecordSessions === 1 ? "This session" : "These sessions"} can
+            receive optional notes and categories later.
+          </span>
+        </p>
+      )}
       {isFirstWeek ? (
         <>
           <div className="review-metrics review-first-week-metrics">
@@ -2569,7 +2802,7 @@ function ReviewPage({
             <ReviewMetric
               label="Sessions"
               value={String(summary.completedSessions)}
-              note={`${summary.cancelledSessions} cancelled`}
+              note={sessionNote}
             />
             <ReviewMetric
               label="Tasks done"
@@ -2632,13 +2865,30 @@ function ReviewPage({
           {!moved.length && <p>No project movement recorded yet this week.</p>}
         </section>
         <section className="panel reflection-card">
-          <h2>Reflection</h2>
+          <div className="reflection-heading">
+            <h2>Reflection</h2>
+            <SaveStateChip
+              state={reflectionSave.state}
+              onRetry={() => void reflectionSave.flush(true)}
+            />
+          </div>
           <textarea
-            value={diary.reflection}
-            onChange={(event) => onDiaryChange("reflection", event.target.value)}
+            value={reflectionSave.draft.reflection}
+            onChange={(event) => {
+              const value = event.target.value;
+              reflectionSave.setDraft({
+                ...reflectionSave.draft,
+                reflection: value
+              });
+              onDiaryChange("reflection", value);
+            }}
             placeholder="What worked, and what deserves protection next week?"
+            {...reflectionSave.inputProps}
           />
-          <button className="primary-button" onClick={() => void onSaveDiary()}>
+          <button
+            className="primary-button"
+            onClick={() => void reflectionSave.flush(true)}
+          >
             <Save size={14} />
             Save reflection
           </button>
@@ -3236,15 +3486,16 @@ function sortBacklogGroup(tasks: Task[]) {
   });
 }
 
-function matrixTableGeometry(groups: MatrixGroup[]) {
+function matrixTableGeometry(groups: MatrixGroup[], stageWidth = 0) {
   const groupGeometry = new Map<string, { top: number }>();
   const taskGeometry = new Map<string, { x: number; y: number }>();
+  const rowOrigin = stageWidth > 0 ? Math.min(14, stageWidth / 2) : 14;
   let top = 0;
   for (const group of groups) {
     groupGeometry.set(group.id, { top });
     group.tasks.forEach((task, index) => {
       taskGeometry.set(task.id, {
-        x: 14,
+        x: rowOrigin,
         y: top + 63 + index * 30 + 15
       });
     });
@@ -3257,9 +3508,13 @@ function matrixTableGeometry(groups: MatrixGroup[]) {
   };
 }
 
-function matrixFigurePoint(task: Task, today: string) {
+function matrixFigurePoint(task: Task, today: string, stageWidth = 520) {
   const days = daysUntilTaskDeadline(task, today);
-  const x = 20 + (1 - Math.min(7, Math.max(0, days)) / 7) * 480;
+  const plotWidth = Math.min(520, stageWidth || 520);
+  const x =
+    20 +
+    (1 - Math.min(7, Math.max(0, days)) / 7) *
+      Math.max(0, plotWidth - 40);
   const importance = Math.min(5, Math.max(1, task.importanceScore));
   const y = 20 + ((5 - importance) / 4) * 300;
   return { x, y };
@@ -3313,18 +3568,6 @@ function effectiveUrgentScore(task: Task, today: string) {
 function startOfDay(value: Date) {
   value.setHours(0, 0, 0, 0);
   return value.getTime();
-}
-
-function useMediaQuery(query: string) {
-  const [matches, setMatches] = useState(false);
-  useEffect(() => {
-    const media = window.matchMedia(query);
-    const update = () => setMatches(media.matches);
-    update();
-    media.addEventListener("change", update);
-    return () => media.removeEventListener("change", update);
-  }, [query]);
-  return matches;
 }
 
 function formatLongDate(value: string) {

@@ -105,7 +105,7 @@ export function FocusSessionProvider({ children }: { children: React.ReactNode }
     const body =
       session.kind === "BREAK"
         ? "Ready for the next focused block?"
-        : `${session.label} has been recorded.`;
+        : `${session.label} is complete. Add details whenever you are ready.`;
     new Notification(title, { body });
   }, []);
 
@@ -127,8 +127,10 @@ export function FocusSessionProvider({ children }: { children: React.ReactNode }
         if (action === "complete") {
           notifyCompletion(current);
           setSuggestedBreak(result.suggestedBreakMinutes);
+          setActivityRevision((revision) => revision + 1);
         } else if (action === "cancel") {
           setSuggestedBreak(null);
+          setActivityRevision((revision) => revision + 1);
         }
         return true;
       } catch (caught) {

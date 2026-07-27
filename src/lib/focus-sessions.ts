@@ -205,9 +205,8 @@ export async function transitionFocusSession(
     }
     const note = String(input.note ?? "").trim();
     const category = String(input.category ?? "").trim() || "Deep Work";
-    if (session.actualMinutes >= 1 && !note) {
-      throw new FocusSessionError("Add one line about what moved forward.");
-    }
+    const activityNote =
+      note || session.task?.title || session.label || "Focus session";
 
     await prisma.$transaction(async (transaction) => {
       if (session.actualMinutes >= 1) {
@@ -216,7 +215,7 @@ export async function transitionFocusSession(
             startedAt: session.startedAt,
             durationMinutes: session.actualMinutes,
             category,
-            note,
+            note: activityNote,
             taskId: session.taskId,
             projectId: session.task?.projectId ? null : session.projectId
           }

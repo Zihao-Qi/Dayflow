@@ -1,6 +1,6 @@
 # Dayflow Project Status and Plan
 
-Last updated: July 24, 2026
+Last updated: July 26, 2026
 
 ## Project Goal
 
@@ -26,10 +26,10 @@ backlogs, progress tracking, and confirmation-based unfinished-task handling is:
 
 - `docs/specs/PROJECTS_V1.md`
 
-The interface was simplified in July 2026 around four clear destinations:
-Today, Plan, Journal, and Review. Frequent actions remain immediately
-available, contextual details expand when needed, and infrequent data or
-density controls live in Tools.
+The shipped interface now uses six clear destinations: Today, Log, Projects,
+Backlog, Journal, and Review. Frequent actions remain immediately available,
+Project detail stays on one page, and Backlog arrangements remain behind the
+Arrange control.
 
 The current collaboration plan is for Gemini to take more of the front-end iteration work, especially layout refinement, visual polish, responsiveness, and interaction design. This status file should remain the higher-level project record and planning document.
 
@@ -66,8 +66,8 @@ Funemployment Day has a narrower and immediately understandable promise around r
 ### Focus Timer
 
 - Adds a persistent Focus Timer to Today without introducing another primary destination.
-- Keeps active timer management mounted across Today, Plan, Journal, and Review,
-  with a compact banner outside Today.
+- Keeps active timer management mounted across Today, Log, Projects, Backlog,
+  Journal, and Review, with a compact strip outside Today.
 - Lets Today and Project task actions prefill the Timer directly.
 - Supports 25-minute and 50-minute focus presets plus any custom duration from 1 to 240 minutes.
 - Allows a session to link to a Task, a Project, or neither; Project context is inherited from a linked Task.
@@ -92,11 +92,10 @@ Funemployment Day has a narrower and immediately understandable promise around r
 
 ### Projects and Multi-Layer Planning
 
-- Adds finishable Projects inside Plan without adding another primary navigation destination.
-- Separates Plan into Day plan and Projects, with List, Timeline, and Matrix
-  grouped under Day plan.
-- Splits each Project workspace into Overview, Plan, and Evidence so next
-  actions, task structure, and recorded progress remain easy to scan.
+- Gives finishable Projects their own primary destination.
+- Keeps each Project detail on one page: outcome and metrics, next step, plan,
+  phases, tasks, Backlog access, and collapsible evidence remain in one
+  continuous workspace.
 - Supports optional Phases while allowing tasks to live directly at the Project root.
 - Lets Project and standalone tasks remain unscheduled in a backlog.
 - Uses completed-task count for current-plan progress and recorded Activity time for invested effort.
@@ -152,13 +151,15 @@ Funemployment Day has a narrower and immediately understandable promise around r
   - Urgent and less important: red
   - Neither urgent nor important: gray
 
-### Planning View
+### Backlog
 
-- Starts with two planning levels: Day plan and Projects.
-- Offers List, Timeline, and Matrix as secondary Day plan views instead of
-  displaying every planning tool at once.
-- Shows unfinished tasks clearly in the default list view.
-- Keeps the urgency and importance matrix available as an optional power tool.
+- Keeps unscheduled work in one Backlog destination.
+- Places its four arrangements behind Arrange: Priority, Quadrant, Project,
+  and Due.
+- Adds Figure on larger screens as the read-oriented presentation of the same
+  urgency/importance matrix; Quadrant remains the action-oriented table view.
+- Keeps Today scheduling, day picking, focus, and Project scoping attached to
+  the same persistent task records.
 
 ### Notes and Diary
 
@@ -186,11 +187,12 @@ Funemployment Day has a narrower and immediately understandable promise around r
 
 ### Front-End Polish and Responsiveness
 
-- Uses four primary destinations: Today, Plan, Journal, and Review.
+- Uses Today, Log, Projects, Backlog, Journal, and Review as the primary IA.
 - Removes duplicated notes, materials, diary, matrix, and chart surfaces from Today.
 - Adds a global Capture menu that routes directly to the relevant canonical form.
 - Moves compact density and agent export into a Tools menu for progressive disclosure.
-- Hides the desktop brand panel on mobile while keeping the four-item bottom navigation visible.
+- Uses five mobile tabs—Today, Log, Projects, Review, and More—with Backlog and
+  Journal available under More.
 - Task control layout now uses wrapping flex behavior to avoid overlap between deadline, status, estimate, urgency, and importance controls.
 - Task title inputs truncate long text cleanly instead of colliding with row actions.
 - Daily pulse metrics use a more resilient responsive grid.
@@ -271,14 +273,13 @@ Verified user-facing behavior includes:
 - Tasks are visible.
 - Task completion works.
 - Urgency and importance dot controls render without high/low text labels.
-- Matrix is available from the optional Plan view.
+- Figure and Quadrant arrangements are available from Backlog’s Arrange control.
 - Matrix quadrant colors match the urgency and importance color meanings.
 - Task rows can be reordered by dragging the grip handle.
 - Advanced task fields expand only when requested.
-- Compact density and agent export are available from Tools.
 - Journal provides canonical Diary, Notes, and Materials views.
 - Focus Sessions can be started, paused, restored after reload, and canceled from Today.
-- The mobile shell uses four bottom navigation items without horizontal overflow.
+- The mobile shell uses five bottom navigation items without horizontal overflow.
 
 Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
 

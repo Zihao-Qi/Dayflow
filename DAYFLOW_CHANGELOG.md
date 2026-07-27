@@ -2,25 +2,38 @@
 
 This document records the updates, bug fixes, and design enhancements implemented for the **Dayflow** dashboard during our session.
 
-## Latest: Plan and Project Navigation Hierarchy
+## Latest: Focus Rail Design Review
 
-- **Two Planning Levels**: Plan now starts with Day plan and Projects instead
-  of presenting long-term Projects as a peer of Timeline and Matrix.
-- **Day Plan Views**: List, Timeline, and Matrix remain available as secondary
-  views within Day plan.
-- **Scannable Project Workspaces**: Project detail is split into Overview,
-  Plan, and Evidence views.
-- **Actionable Overview**: Overview keeps the Project metrics and next step
-  prominent, with direct access to planning and focus actions.
-- **Focused Plan View**: Task creation, Phases, scheduled work, and the Project
-  backlog live together.
-- **Dedicated Evidence View**: Recorded activity, linked Notes, and linked
-  Materials no longer make every Project page unnecessarily long.
+- **One Meaning for Sage Actions**: Ordinary secondary buttons are neutral.
+  Sage action styling is structural and limited to the named start/pause Focus
+  actions; paused and break controls remain neutral inside clay states.
+- **Clay Text Actions**: Secondary rail links now use clay rather than reading
+  as active Focus signals.
+- **Correct Reorder Feedback**: Arrow and drag reordering use the visible open
+  list, announce once, and explain when a moved row is now first or last.
+- **Quiet Successful Saves**: Routine saving and saved states stay out of the
+  app live region; only a failure and the first recovery after it are spoken.
+- **Reusable Save State**: Task fields, Project and Phase names, Journal entry,
+  and Review reflection now share debounce, blur/⌘Enter flush, silent retries,
+  retryable errors, and the same saved fade.
+- **Deterministic CSS**: Removed the duplicate base definitions for secondary
+  buttons, text buttons, Project status, and the break Focus card.
+
+## Latest: Shipped Information Architecture
+
+- **Six Destinations**: The shipped IA is Today, Log, Projects, Backlog,
+  Journal, and Review.
+- **One-Page Projects**: Project metrics, next step, plan, phases, tasks,
+  Backlog access, and collapsible evidence stay in one detail page rather than
+  separate Overview, Plan, and Evidence tabs.
+- **Backlog Behind Arrange**: Priority, Quadrant, Project, and Due are the four
+  arrangements; larger screens also offer Figure as the read-oriented
+  presentation of the urgency/importance matrix.
 
 ## Latest: Usability Stabilization
 
-- **App-Wide Timer**: Timer lifecycle now stays mounted across all four primary
-  destinations, with a compact active-session banner outside Today.
+- **App-Wide Timer**: Timer lifecycle stays mounted across Today, Log, Projects,
+  Backlog, Journal, and Review, with a compact active-session strip outside Today.
 - **Contextual Focus**: Today tasks, Project tasks, and Project next steps can
   prefill the Focus Timer directly.
 - **Safer Cancellation**: Canceling after one elapsed focus minute confirms
@@ -48,11 +61,12 @@ This document records the updates, bug fixes, and design enhancements implemente
 
 ## Latest: Projects and Long-Term Progress
 
-- **Projects in Plan**: Added a Projects view without expanding the four-item primary navigation.
+- **Projects Destination**: Added Projects as a primary destination.
 - **Optional Phases**: Projects can group work into reorderable phases while still supporting direct Project tasks.
 - **Project Backlogs**: Tasks can remain unscheduled and later be assigned to a day from the Project or general backlog.
 - **Two Honest Progress Signals**: Project cards and workspaces show current-plan task progress separately from recorded invested time.
-- **Project Workspace**: Added a full Plan workspace for next steps, phases, tasks, backlog, recent activity, notes, and materials.
+- **Project Workspace**: Keeps next steps, phases, tasks, Backlog access, recent
+  activity, notes, and materials together on one page.
 - **Quiet Daily Context**: Today tasks show a compact Project chip, and existing tasks can be attached to a Project from expanded details.
 - **Evidence Attribution**: Activities, notes, and materials can link directly to Projects; task-linked activity is inherited without double counting.
 - **Safe Lifecycle**: Added pause, explicit completion, archive, reopen, and deletion that detaches rather than destroys associated content.
@@ -62,14 +76,17 @@ This document records the updates, bug fixes, and design enhancements implemente
 
 ## Latest: Simplification and Progressive Disclosure
 
-- **Four Clear Destinations**: Consolidated the product around Today, Plan, Journal, and Review so each capability has one canonical home.
+- **Canonical Destinations**: Today, Log, Projects, Backlog, Journal, and Review
+  each have one clear job.
 - **Focused Today View**: Reduced Today to active tasks, a compact daily pulse, and activity capture. Planning tools, diary, charts, notes, and references no longer compete in the same canvas.
 - **Expandable Task Details**: Kept the default task row focused on completion, title, status, and estimate while moving urgency, importance, deadline, status editing, estimate editing, and deletion into an expandable detail area.
-- **Optional Planning Tools**: Turned List, Timeline, and Matrix into selectable Plan views, keeping the matrix available without making it part of every daily workflow.
+- **Optional Backlog Arrangements**: Keeps Priority, the urgency/importance
+  Figure/Quadrant pair, Project, and Due behind Arrange.
 - **Unified Journal**: Moved diary, notes, and materials into Journal with a small internal view switcher and one canonical creation form for each content type.
 - **Power Tools Menu**: Moved compact density and agent export out of primary navigation and into Tools.
 - **Global Capture**: Added a Capture menu that routes directly to task, activity, note, or reference entry.
-- **Mobile Hierarchy**: Removed the large desktop identity panel from the mobile content flow and reduced bottom navigation to four destinations.
+- **Mobile Hierarchy**: Uses five mobile tabs, with Backlog and Journal grouped
+  under More.
 - **Two-Axis Priority Color**: Simplified urgency to a gray-to-red scale and importance to a gray-to-blue scale. The planning matrix uses the same meanings, with their high-high overlap producing a derived purple “Do now” quadrant.
 
 ## 1. Layout & Responsiveness Fixes

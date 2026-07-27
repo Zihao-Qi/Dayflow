@@ -55,6 +55,7 @@ import {
   formatInvestedMinutes,
   ProjectSummary
 } from "@/lib/project-domain";
+import type { QueuePlacement } from "@/lib/focus-queue";
 
 type TaskStatus = "TODO" | "IN_PROGRESS" | "DONE";
 type Priority = "LOW" | "MEDIUM" | "HIGH";
@@ -83,6 +84,7 @@ type Task = {
   estimateMinutes: number;
   actualMinutes: number;
   sortOrder: number;
+  focusQueuePosition: number | null;
   completedAt: string | null;
   projectId: string | null;
   phaseId: string | null;
@@ -299,6 +301,20 @@ export function Dashboard() {
         .sort((a, b) => a.sortOrder - b.sortOrder),
     [data]
   );
+  const queuedTasks = useMemo(
+    () =>
+      (data?.tasks ?? [])
+        .filter(
+          (task) =>
+            task.status !== "DONE" && task.focusQueuePosition !== null
+        )
+        .sort(
+          (a, b) =>
+            (a.focusQueuePosition ?? Number.MAX_SAFE_INTEGER) -
+            (b.focusQueuePosition ?? Number.MAX_SAFE_INTEGER)
+        ),
+    [data]
+  );
   const projectById = useMemo(
     () => new Map((data?.projects ?? []).map((project) => [project.id, project])),
     [data]
@@ -496,6 +512,101 @@ export function Dashboard() {
     } catch {
       setAppError("Couldn’t save the new order. Retry the move.");
       setAppAnnouncement("The new task order was not saved.");
+      await refresh();
+      return false;
+    }
+  }
+
+  async function queueTask(task: Task, placement: QueuePlacement) {
+    try {
+      const response = await fetch("/api/focus-queue", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ taskId: task.id, placement })
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? "The queue could not be saved.");
+      setAppError("");
+      setAppAnnouncement(
+        placement === "next"
+          ? `${task.title}, queued next.`
+          : `${task.title}, added to the queue.`
+      );
+      await refresh();
+      return true;
+    } catch {
+      setAppError("Couldn’t save the focus queue. Try that action again.");
+      setAppAnnouncement("The focus queue was not saved.");
+      return false;
+    }
+  }
+
+  async function removeQueuedTask(task: Task) {
+    try {
+      const response = await fetch("/api/focus-queue", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ taskId: task.id })
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? "The queue could not be saved.");
+      setAppError("");
+      setAppAnnouncement(`${task.title}, removed from the queue.`);
+      await refresh();
+      return true;
+    } catch {
+      setAppError("Couldn’t remove that task from the focus queue.");
+      setAppAnnouncement("The focus queue was not saved.");
+      return false;
+    }
+  }
+
+  async function reorderQueue(ids: string[], announcement: string) {
+    const previous = queuedTasks;
+    setData((current) =>
+      current
+        ? {
+            ...current,
+            tasks: current.tasks.map((task) => {
+              const index = ids.indexOf(task.id);
+              return index < 0
+                ? task
+                : { ...task, focusQueuePosition: index };
+            })
+          }
+        : current
+    );
+    try {
+      const response = await fetch("/api/focus-queue", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ids,
+          expectedIds: previous.map((task) => task.id)
+        })
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? "The queue could not be saved.");
+      setAppError("");
+      setAppAnnouncement(announcement);
+      await refresh();
+      return true;
+    } catch {
+      setData((current) =>
+        current
+          ? {
+              ...current,
+              tasks: current.tasks.map((task) => {
+                const prior = previous.find((item) => item.id === task.id);
+                return prior
+                  ? { ...task, focusQueuePosition: prior.focusQueuePosition }
+                  : task;
+              })
+            }
+          : current
+      );
+      setAppError("Couldn’t save the new queue order. Retry the move.");
+      setAppAnnouncement("The new queue order was not saved.");
       await refresh();
       return false;
     }
@@ -745,6 +856,7 @@ export function Dashboard() {
             onReorderTask={reorderTask}
             onAnnounce={setAppAnnouncement}
             onStartFocus={openFocus}
+            onQueueTask={queueTask}
             onOpenProject={openProject}
             onOpenBacklog={() => navigate("backlog")}
             onLeaveUnfinished={(id) =>
@@ -770,6 +882,7 @@ export function Dashboard() {
             focusBusy={focus.busy}
             onViewChange={(view) => navigate(`day-${view}`)}
             onStartFocus={openFocus}
+            onQueueTask={queueTask}
             onFocusTransition={focus.transition}
             onOpenPalette={() => setPaletteOpen(true)}
           />
@@ -879,10 +992,22 @@ export function Dashboard() {
           today={data.today}
           draft={focusDraft}
           activities={data.activities}
+          queuedTasks={queuedTasks}
           mode="full"
           collapsible={phoneLayout || (!isToday && !wideFocusRail)}
           onCollapse={() => setRailExpanded(false)}
           onOpenPalette={() => setPaletteOpen(true)}
+          onQueueTask={(taskId, placement) => {
+            const task = data.tasks.find((item) => item.id === taskId);
+            return task ? queueTask(task, placement) : Promise.resolve(false);
+          }}
+          onRemoveQueuedTask={(taskId) => {
+            const task = data.tasks.find((item) => item.id === taskId);
+            return task ? removeQueuedTask(task) : Promise.resolve(false);
+          }}
+          onReorderQueue={reorderQueue}
+          onQueueChanged={refresh}
+          onAnnounce={setAppAnnouncement}
         />
       )}
       {showStrip && (
@@ -892,6 +1017,7 @@ export function Dashboard() {
           today={data.today}
           draft={focusDraft}
           activities={data.activities}
+          queuedTasks={queuedTasks}
           mode="strip"
           onExpand={
             phoneLayout || !compactLayout ? () => setRailExpanded(true) : undefined
@@ -990,6 +1116,7 @@ function TodayPage({
   onReorderTask,
   onAnnounce,
   onStartFocus,
+  onQueueTask,
   onOpenProject,
   onOpenBacklog,
   onLeaveUnfinished,
@@ -1029,6 +1156,7 @@ function TodayPage({
   ) => Promise<boolean>;
   onAnnounce: (message: string) => void;
   onStartFocus: (target: FocusTarget) => void;
+  onQueueTask: (task: Task, placement: QueuePlacement) => Promise<boolean>;
   onOpenProject: (id: string) => void;
   onOpenBacklog: () => void;
   onLeaveUnfinished: (id: string) => void;
@@ -1244,7 +1372,11 @@ function TodayPage({
             <TaskRow
               key={task.id}
               task={task}
-              suggested={index === 0}
+              suggested={
+                activeFocus
+                  ? task.id === open.find((item) => item.id !== activeFocus.taskId)?.id
+                  : index === 0
+              }
               project={task.projectId ? projectById.get(task.projectId) : undefined}
               projects={projects}
               reorderMode={reorderMode}
@@ -1259,6 +1391,9 @@ function TodayPage({
               onReorder={onReorderTask}
               onOpenProject={onOpenProject}
               onStartFocus={onStartFocus}
+              liveSession={Boolean(activeFocus)}
+              activeTaskId={activeFocus?.taskId ?? null}
+              onQueueTask={onQueueTask}
             />
           ))}
           {!open.length && (
@@ -1289,6 +1424,9 @@ function TodayPage({
                 onReorder={onReorderTask}
                 onOpenProject={onOpenProject}
                 onStartFocus={onStartFocus}
+                liveSession={Boolean(activeFocus)}
+                activeTaskId={activeFocus?.taskId ?? null}
+                onQueueTask={onQueueTask}
               />
             ))}
           </div>
@@ -1372,7 +1510,10 @@ function TaskRow({
   onDelete,
   onReorder,
   onOpenProject,
-  onStartFocus
+  onStartFocus,
+  liveSession,
+  activeTaskId,
+  onQueueTask
 }: {
   task: Task;
   suggested?: boolean;
@@ -1396,6 +1537,9 @@ function TaskRow({
   onReorder: (source: string, target: string) => Promise<boolean>;
   onOpenProject: (id: string) => void;
   onStartFocus: (target: FocusTarget) => void;
+  liveSession: boolean;
+  activeTaskId: string | null;
+  onQueueTask: (task: Task, placement: QueuePlacement) => Promise<boolean>;
 }) {
   const done = task.status === "DONE";
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -1530,7 +1674,22 @@ function TaskRow({
           </button>
         </div>
       )}
-      {!done && !reorderMode && (
+      {!done && !reorderMode && liveSession && activeTaskId !== task.id && (
+        <button
+          className="focus-row-button queue-row-button"
+          disabled={task.focusQueuePosition !== null}
+          onClick={() =>
+            void onQueueTask(task, suggested ? "next" : "end")
+          }
+        >
+          {task.focusQueuePosition !== null
+            ? "Queued"
+            : suggested
+              ? "Queue next"
+              : "Queue"}
+        </button>
+      )}
+      {!done && !reorderMode && !liveSession && (
         <button
           className={suggested ? "focus-row-button suggested focus-button" : "focus-row-button"}
           onClick={() =>
@@ -1762,6 +1921,7 @@ function DayPage({
   focusBusy,
   onViewChange,
   onStartFocus,
+  onQueueTask,
   onFocusTransition,
   onOpenPalette
 }: {
@@ -1779,6 +1939,7 @@ function DayPage({
   focusBusy: boolean;
   onViewChange: (view: DayView) => void;
   onStartFocus: (target: FocusTarget) => void;
+  onQueueTask: (task: Task, placement: QueuePlacement) => Promise<boolean>;
   onFocusTransition: ReturnType<typeof useFocusSession>["transition"];
   onOpenPalette: () => void;
 }) {
@@ -1816,6 +1977,7 @@ function DayPage({
           focusNow={focusNow}
           focusBusy={focusBusy}
           onStartFocus={onStartFocus}
+          onQueueTask={onQueueTask}
           onFocusTransition={onFocusTransition}
           onOpenPalette={onOpenPalette}
         />
@@ -1841,6 +2003,7 @@ function DayStream({
   focusNow,
   focusBusy,
   onStartFocus,
+  onQueueTask,
   onFocusTransition,
   onOpenPalette
 }: {
@@ -1851,18 +2014,20 @@ function DayStream({
   focusNow: number;
   focusBusy: boolean;
   onStartFocus: (target: FocusTarget) => void;
+  onQueueTask: (task: Task, placement: QueuePlacement) => Promise<boolean>;
   onFocusTransition: ReturnType<typeof useFocusSession>["transition"];
   onOpenPalette: () => void;
 }) {
   let cursor = new Date();
   const idleNext = !activeFocus ? tasks[0] ?? null : null;
-  const plannedTasks = activeFocus ? tasks : tasks.slice(1);
+  const plannedTasks = activeFocus
+    ? tasks.filter((task) => task.id !== activeFocus.taskId)
+    : tasks.slice(1);
   return (
     <section className="day-view">
       <p className="view-explainer">
-        One spine for what happened and what is still planned. Sessions, notes and
-        completions are the record; the dashed section below the marker is the part
-        you can still change.
+        Above the marker is what happened. Below it is what is still planned — that
+        part you can still change.
       </p>
       <div className="day-stream">
         {[...activities].reverse().map((activity) => (
@@ -1962,17 +2127,37 @@ function DayStream({
                     </small>
                   </span>
                   <button
-                    className={index === 0 ? "secondary-button" : "plain-button"}
+                    className={
+                      activeFocus
+                        ? "plain-button queue-next-button"
+                        : index === 0
+                          ? "secondary-button"
+                          : "plain-button"
+                    }
+                    disabled={Boolean(activeFocus && task.focusQueuePosition !== null)}
                     onClick={() =>
-                      onStartFocus({
-                        taskId: task.id,
-                        projectId: task.projectId ?? undefined,
-                        label: task.title,
-                        plannedMinutes: task.estimateMinutes
-                      })
+                      activeFocus
+                        ? void onQueueTask(task, index === 0 ? "next" : "end")
+                        : onStartFocus({
+                            taskId: task.id,
+                            projectId: task.projectId ?? undefined,
+                            label: task.title,
+                            plannedMinutes: task.estimateMinutes
+                          })
                     }
                   >
-                    {index === 0 ? "Focus next" : "Focus"}
+                    {activeFocus && task.focusQueuePosition === null && (
+                      <Plus size={12} />
+                    )}
+                    {activeFocus
+                      ? task.focusQueuePosition !== null
+                        ? "Queued"
+                        : index === 0
+                          ? "Queue next"
+                          : "Queue"
+                      : index === 0
+                        ? "Focus next"
+                        : "Focus"}
                   </button>
                 </section>
               </div>
@@ -2167,13 +2352,6 @@ function DayMatrix({
 
   return (
     <section className="day-view matrix-5a">
-      <div className="matrix-mode-heading">
-        <p>
-          {mode === "tables"
-            ? "Tables — act here: schedule, focus, relabel."
-            : "Figure — read here; hover a dot for its title."}
-        </p>
-      </div>
       <div
         ref={stageRef}
         className={`matrix-stage matrix-layout-${layout} matrix-phase-${phase}`}
@@ -2395,11 +2573,11 @@ function BacklogPage({
 
   const explainer =
     effectiveArrangement === "figure"
-      ? "Read the shape of the whole backlog by urgency and importance. Select a dot to act on it."
+      ? "Figure — position is the grouping. Hover a dot for its title."
       : effectiveArrangement === "quadrant"
         ? "Ranked by what deserves attention first. Deadlines lead within each quadrant, then importance."
         : effectiveArrangement === "project"
-          ? "Grouped by project without filtering anything out. The same tasks keep their identity as they move."
+          ? "Grouped by project — all of them, separated."
           : "Grouped by when a decision is due: Today, Next three days, Later this week, then No deadline.";
 
   return (
@@ -2435,9 +2613,8 @@ function BacklogPage({
       ) : (
         <>
           <p className="view-explainer">
-            One place for everything defined but not given a day. There is no second
-            view — Arrange regroups the same {tasks.length} tasks, and each task stays
-            the same element as it travels.
+            Arrange the same {tasks.length} {tasks.length === 1 ? "task" : "tasks"} by
+            pressure, project or deadline — nothing is ever filtered out.
           </p>
           <p className="backlog-arrangement-note">{explainer}</p>
           {scopeProjectId && projects.get(scopeProjectId) && (

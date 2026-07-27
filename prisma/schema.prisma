@@ -89,6 +89,7 @@ model Task {
   estimateMinutes Int             @default(30)
   actualMinutes   Int             @default(0)
   sortOrder       Int             @default(0)
+  focusQueuePosition Int?
   completedAt     DateTime?
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
@@ -104,6 +105,7 @@ model Task {
   scheduleChanges TaskScheduleChange[]
 
   @@index([date])
+  @@index([focusQueuePosition])
   @@index([projectId])
   @@index([phaseId])
 }

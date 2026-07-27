@@ -29,7 +29,8 @@ export async function GET() {
           OR: [
             { date: { gte: weekStart, lt: weekEnd } },
             { date: { lt: today }, status: { not: "DONE" } },
-            { date: null }
+            { date: null },
+            { focusQueuePosition: { not: null } }
           ]
         },
         orderBy: [{ date: "asc" }, { sortOrder: "asc" }, { createdAt: "asc" }]

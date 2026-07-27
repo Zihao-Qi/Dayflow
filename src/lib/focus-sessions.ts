@@ -1,6 +1,7 @@
 import { FocusSessionKind, FocusSessionStatus } from "@prisma/client";
 import { sameDayRange } from "@/lib/dates";
 import { suggestedBreakMinutes } from "@/lib/focus-domain";
+import { consumeFocusQueueTask } from "@/lib/focus-queue";
 import { prisma } from "@/lib/prisma";
 
 const focusSessionInclude = {
@@ -126,15 +127,19 @@ export async function startFocusSession(input: {
       : "") ||
     "Focus session";
 
-  return prisma.focusSession.create({
-    data: {
-      kind,
-      plannedMinutes,
-      label,
-      taskId,
-      projectId
-    },
-    include: focusSessionInclude
+  return prisma.$transaction(async (transaction) => {
+    const session = await transaction.focusSession.create({
+      data: {
+        kind,
+        plannedMinutes,
+        label,
+        taskId,
+        projectId
+      },
+      include: focusSessionInclude
+    });
+    if (taskId) await consumeFocusQueueTask(transaction, taskId);
+    return session;
   });
 }
 
@@ -229,6 +234,7 @@ export async function transitionFocusSession(
             completedAt: now
           }
         });
+        await consumeFocusQueueTask(transaction, session.taskId);
       }
       await transaction.focusSession.update({
         where: { id },

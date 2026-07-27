@@ -42,7 +42,7 @@ type FocusSessionContextValue = {
     note: string;
     category: string;
     taskCompleted: boolean;
-    takeBreak: boolean;
+    next: FocusStartInput | null;
   }) => Promise<boolean>;
   dismissBreakSuggestion: () => void;
   requestNotificationPermission: () => Promise<void>;
@@ -190,6 +190,7 @@ export function FocusSessionProvider({ children }: { children: React.ReactNode }
         setSnapshot(result.snapshot);
         setSuggestedBreak(null);
         setNow(Date.now());
+        setActivityRevision((revision) => revision + 1);
         return true;
       } catch (caught) {
         setError(messageFrom(caught));
@@ -206,7 +207,7 @@ export function FocusSessionProvider({ children }: { children: React.ReactNode }
       note: string;
       category: string;
       taskCompleted: boolean;
-      takeBreak: boolean;
+      next: FocusStartInput | null;
     }) => {
       const completion = snapshot?.pendingCompletion;
       if (!completion || busy) return false;
@@ -228,23 +229,25 @@ export function FocusSessionProvider({ children }: { children: React.ReactNode }
           throw new Error(result.error ?? "The completion record could not be saved.");
         }
         let nextSnapshot = result.snapshot;
-        if (input.takeBreak && result.suggestedBreakMinutes) {
-          const breakResponse = await fetch("/api/focus-session", {
+        if (input.next) {
+          const nextResponse = await fetch("/api/focus-session", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              kind: "BREAK",
-              plannedMinutes: result.suggestedBreakMinutes
+              ...input.next,
+              kind: input.next.kind ?? "FOCUS"
             })
           });
-          const breakResult = (await breakResponse.json()) as {
+          const nextResult = (await nextResponse.json()) as {
             snapshot?: FocusSnapshot;
             error?: string;
           };
-          if (!breakResponse.ok || !breakResult.snapshot) {
-            throw new Error(breakResult.error ?? "The break could not be started.");
+          if (!nextResponse.ok || !nextResult.snapshot) {
+            throw new Error(
+              nextResult.error ?? "The next queue item could not be started."
+            );
           }
-          nextSnapshot = breakResult.snapshot;
+          nextSnapshot = nextResult.snapshot;
         }
         setSnapshot(nextSnapshot);
         setSuggestedBreak(null);

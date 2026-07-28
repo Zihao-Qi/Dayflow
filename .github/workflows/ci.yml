@@ -56,11 +56,10 @@ jobs:
         env:
           DATABASE_URL: file:${{ runner.temp }}/dayflow-ci.db
           DAYFLOW_BACKUP_DIRECTORY: ${{ runner.temp }}/dayflow-ci-backups
-          DAYFLOW_DISABLE_RESTORE: "1"
 
       - name: Upload browser failure artifacts
         if: ${{ failure() }}
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-failure-${{ github.run_id }}-${{ github.run_attempt }}
           path: |

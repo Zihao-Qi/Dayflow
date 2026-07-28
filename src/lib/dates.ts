@@ -53,6 +53,15 @@ export function dateKey(input = new Date()) {
   return startOfLocalDay(input).toISOString();
 }
 
+export function localDateKey(input = new Date()) {
+  const date = startOfLocalDay(input);
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0")
+  ].join("-");
+}
+
 export function sameDayRange(input = new Date()) {
   const start = startOfLocalDay(input);
   const end = addDays(start, 1);

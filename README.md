@@ -23,6 +23,9 @@ lucide-react. The app runs locally without accounts or hosted services.
 - Expandable task details keep status, deadline, estimate, urgency, and importance available without crowding each row.
 - Log views for scheduled work and recorded daily activity, plus Backlog
   arrangements for Quadrant, Project, Due, and sufficiently wide Figure views.
+- Manual Time Blocks with freeform or Task-prefilled creation, non-overlapping
+  planning, full editing, confirmed deletion, and planned-versus-recorded
+  Timeline comparison.
 - Journal workspace for diary entries, quick notes, and saved references.
 - Review workspace for seven-day evidence summaries, Project movement, and a
   period-bound narrative and next-period intention.
@@ -39,6 +42,7 @@ Product and corrective specifications:
 - [Weekly Evidence Review v1](./docs/specs/WEEKLY_EVIDENCE_REVIEW_V1.md)
 - [Local Data Reliability v1](./docs/specs/LOCAL_DATA_RELIABILITY_V1.md)
 - [Command Palette v1](./docs/specs/COMMAND_PALETTE_V1.md)
+- [Manual Time Blocks v1](./docs/specs/TIME_BLOCKS_V1.md)
 - [Six-destination workspace decision](./docs/adr/0001-six-destination-workspace.md)
 
 ## Local Setup

@@ -2,12 +2,15 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import {
   addDays,
+  localDateKey,
   reviewPeriodRange,
   sameDayRange,
   startOfLocalDay
 } from "@/lib/dates";
 import { listProjectSummaries } from "@/lib/projects";
 import { buildReviewSummary } from "@/lib/review-domain";
+import { serializeTimeBlock } from "@/lib/time-block-persistence";
+import { isTimeBlockRecord } from "@/lib/time-blocks";
 
 export async function GET() {
   const today = startOfLocalDay();
@@ -66,7 +69,16 @@ export async function GET() {
       prisma.material.findMany({ orderBy: { createdAt: "desc" }, take: 12 }),
       prisma.timeBlock.findMany({
         where: { date: { gte: today, lt: weekEnd } },
-        orderBy: [{ date: "asc" }, { startTime: "asc" }]
+        orderBy: [
+          { date: "asc" },
+          { startTime: "asc" },
+          { endTime: "asc" },
+          { createdAt: "asc" },
+          { id: "asc" }
+        ],
+        include: {
+          task: { select: { id: true, title: true, estimateMinutes: true } }
+        }
       }),
       prisma.activityEntry.findMany({
         where: { startedAt: { gte: start, lt: end } },
@@ -156,12 +168,15 @@ export async function GET() {
 
   return NextResponse.json({
     today: start.toISOString(),
+    todayKey: localDateKey(start),
     tasks,
     paletteTasks,
     notes: notes.map((note) => ({ ...note, tags: safeTags(note.tags) })),
     diary: diaryEntry,
     materials,
-    timeBlocks,
+    timeBlocks: timeBlocks
+      .map(serializeTimeBlock)
+      .filter(isTimeBlockRecord),
     activities,
     projects,
     unfinishedTasks: tasks.filter(
@@ -237,11 +252,4 @@ function buildStats(
 
 function roundHours(minutes: number) {
   return Math.round((minutes / 60) * 10) / 10;
-}
-
-function localDateKey(date: Date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
 }

@@ -35,6 +35,10 @@ The global capture contract is:
 
 - `docs/specs/COMMAND_PALETTE_V1.md` — implemented July 28
 
+The manual planning contract is:
+
+- `docs/specs/TIME_BLOCKS_V1.md` — implemented July 28
+
 The canonical workspace navigation decision is:
 
 - `docs/adr/0001-six-destination-workspace.md`
@@ -177,6 +181,19 @@ Funemployment Day has a narrower and immediately understandable promise around r
 - Supports deleting activity entries.
 - Includes activities in the local agent export.
 - Reconciles legacy task-level actual minutes into Activity entries during migration.
+
+### Manual Time Blocks
+
+- Keeps planned Time Blocks distinct from recorded Activity and Focus evidence.
+- Supports freeform and Task-prefilled creation from the Log Timeline.
+- Preserves a Task-linked title snapshot without changing the Task itself.
+- Supports full editing and deliberately confirmed deletion.
+- Rejects overlapping planned intervals while allowing adjacent blocks and
+  planned-versus-recorded overlap.
+- Uses idempotent creation, typed errors, canonical response validation, and
+  draft preservation across failed saves.
+- Keeps the single planned lane and editor usable with keyboard, pointer,
+  touch, and phone layouts.
 
 ### Urgency and Importance Matrix
 
@@ -395,7 +412,8 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
 ### 2. Improve Planning
 
 - Add a simple day picker for planning future days.
-- Add quick creation of time blocks from tasks.
+- Validate manual Time Blocks through daily use before adding drag-resizing or
+  automatic placement.
 - Explore capacity-aware scheduling suggestions only after the manual Projects workflow has been validated.
 
 ### 3. Extend Activity and Time Logging

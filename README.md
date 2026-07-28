@@ -27,7 +27,9 @@ lucide-react. The app runs locally without accounts or hosted services.
 - Review workspace for seven-day evidence summaries, Project movement, and a
   period-bound narrative and next-period intention.
 - Project attribution for activities, notes, and saved references.
-- Global Capture menu for jumping directly to a task, activity, note, or reference.
+- Global Capture palette with Task and Project search, typed Focus commands,
+  URL and Note intent recognition, and draft-preserving handoff to the owning
+  workspace.
 - Deadline-aware urgency that increases as a due date approaches.
 - Advanced tools such as compact density and agent export are kept in the Tools menu.
 
@@ -36,6 +38,7 @@ Product and corrective specifications:
 - [Evidence Integrity v1](./docs/specs/EVIDENCE_INTEGRITY_V1.md)
 - [Weekly Evidence Review v1](./docs/specs/WEEKLY_EVIDENCE_REVIEW_V1.md)
 - [Local Data Reliability v1](./docs/specs/LOCAL_DATA_RELIABILITY_V1.md)
+- [Command Palette v1](./docs/specs/COMMAND_PALETTE_V1.md)
 - [Six-destination workspace decision](./docs/adr/0001-six-destination-workspace.md)
 
 ## Local Setup

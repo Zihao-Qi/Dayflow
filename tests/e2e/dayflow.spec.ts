@@ -97,7 +97,9 @@ test("uses the redesigned navigation, command palette, and contextual focus rail
   await page.getByRole("button", { name: /Search or add/ }).click();
   const palette = page.getByRole("dialog", { name: "Search or add" });
   await expect(palette).toBeVisible();
-  await expect(palette.getByText("Start a 50m focus block", { exact: true })).toBeVisible();
+  await expect(
+    palette.getByText("Start a 50m Focus Session", { exact: true })
+  ).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(palette).toHaveCount(0);
 
@@ -745,7 +747,7 @@ test("keeps Activity and Project drafts after malformed success JSON", async ({
   await openDashboard(page);
 
   await page.getByRole("button", { name: /Search or add/ }).click();
-  await page.getByRole("button", { name: /Log an activity by hand/ }).click();
+  await page.getByRole("option", { name: /Log an activity by hand/ }).click();
   const activityDialog = page.getByRole("dialog", { name: "Log activity" });
   const activityDraft = activityDialog.getByPlaceholder(
     "Record a small win or what moved forward."
@@ -2061,7 +2063,7 @@ test("records activity through the palette and shows it in the rail", async ({ p
   await addTask(page, "Capture activity evidence");
 
   await page.getByRole("button", { name: /Search or add/ }).click();
-  await page.getByRole("button", { name: /Log an activity by hand/ }).click();
+  await page.getByRole("option", { name: /Log an activity by hand/ }).click();
   const dialog = page.getByRole("dialog", { name: "Log activity" });
   await dialog.getByRole("button", { name: "Add activity" }).click();
   await expect(dialog.getByText("Add a short note about what happened.")).toBeVisible();
@@ -2089,7 +2091,7 @@ test("captures direct Project evidence from Activity, Notes, and Materials", asy
   await openDashboard(page);
 
   await page.getByRole("button", { name: /Search or add/ }).click();
-  await page.getByRole("button", { name: /Log an activity by hand/ }).click();
+  await page.getByRole("option", { name: /Log an activity by hand/ }).click();
   const activityDialog = page.getByRole("dialog", { name: "Log activity" });
   await activityDialog
     .getByPlaceholder("Record a small win or what moved forward.")

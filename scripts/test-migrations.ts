@@ -21,7 +21,7 @@ const seededSetupDatabase = join(temporaryDirectory, "seeded-setup.db");
 try {
   runMigration(freshDatabase);
   assert.equal(query(freshDatabase, "PRAGMA integrity_check;"), "ok");
-  assert.equal(appliedMigrationCount(freshDatabase), "3");
+  assert.equal(appliedMigrationCount(freshDatabase), "4");
 
   execFileSync("sqlite3", [legacyDatabase], {
     input: readFileSync(
@@ -268,7 +268,7 @@ try {
 
   runMigration(legacyDatabase);
   assert.equal(query(legacyDatabase, "PRAGMA integrity_check;"), "ok");
-  assert.equal(appliedMigrationCount(legacyDatabase), "3");
+  assert.equal(appliedMigrationCount(legacyDatabase), "4");
   assert.equal(
     query(
       legacyDatabase,
@@ -373,7 +373,7 @@ try {
   });
   runMigration(currentSetupDatabase);
   assert.equal(query(currentSetupDatabase, "PRAGMA integrity_check;"), "ok");
-  assert.equal(appliedMigrationCount(currentSetupDatabase), "3");
+  assert.equal(appliedMigrationCount(currentSetupDatabase), "4");
 
   execFileSync("sqlite3", [preProjectDatabase], {
     input: `
@@ -434,7 +434,7 @@ try {
     `
   });
   runMigration(preProjectDatabase);
-  assert.equal(appliedMigrationCount(preProjectDatabase), "3");
+  assert.equal(appliedMigrationCount(preProjectDatabase), "4");
   assert.equal(
     query(
       preProjectDatabase,
@@ -471,7 +471,7 @@ try {
      );`
   ]);
   runMigration(earliestDatabase);
-  assert.equal(appliedMigrationCount(earliestDatabase), "3");
+  assert.equal(appliedMigrationCount(earliestDatabase), "4");
   assert.equal(
     query(
       earliestDatabase,
@@ -501,7 +501,7 @@ try {
      );`
   ]);
   runMigration(projectEraDatabase);
-  assert.equal(appliedMigrationCount(projectEraDatabase), "3");
+  assert.equal(appliedMigrationCount(projectEraDatabase), "4");
   assert.equal(
     query(
       projectEraDatabase,
@@ -532,7 +532,7 @@ try {
     input: historicalSchema("501aa95")
   });
   runMigration(focusEraDatabase);
-  assert.equal(appliedMigrationCount(focusEraDatabase), "3");
+  assert.equal(appliedMigrationCount(focusEraDatabase), "4");
   assert.equal(
     query(
       focusEraDatabase,

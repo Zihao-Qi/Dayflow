@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Archive,
   ArrowLeft,
@@ -64,6 +64,92 @@ type ProjectPatch = Partial<{
   confirm: boolean;
 }>;
 
+type PendingMutation = { id: string; fingerprint: string };
+
+function mutationIdFor(
+  reference: React.MutableRefObject<PendingMutation | null>,
+  payload: unknown
+) {
+  const fingerprint = JSON.stringify(payload);
+  if (reference.current?.fingerprint === fingerprint) {
+    return reference.current.id;
+  }
+  const id =
+    typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `dayflow-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  reference.current = { id, fingerprint };
+  return id;
+}
+
+function isProjectDetailResponse(value: unknown): value is ProjectDetail {
+  if (!value || typeof value !== "object") return false;
+  const project = value as Partial<ProjectDetail>;
+  return (
+    typeof project.id === "string" &&
+    typeof project.name === "string" &&
+    typeof project.desiredOutcome === "string" &&
+    ["ACTIVE", "PAUSED", "COMPLETED", "ARCHIVED"].includes(
+      String(project.status)
+    ) &&
+    Number.isInteger(project.completedTaskCount) &&
+    Number.isInteger(project.taskCount) &&
+    Number.isInteger(project.phaseCount) &&
+    Number.isInteger(project.backlogCount) &&
+    Number.isInteger(project.investedMinutes) &&
+    Number.isInteger(project.reviewPeriodInvestedMinutes) &&
+    typeof project.createdAt === "string" &&
+    typeof project.updatedAt === "string" &&
+    Array.isArray(project.phases) &&
+    Array.isArray(project.tasks) &&
+    Array.isArray(project.activities) &&
+    Array.isArray(project.notes) &&
+    Array.isArray(project.materials)
+  );
+}
+
+function isProjectPhaseResponse(value: unknown): value is ProjectPhaseRecord {
+  if (!value || typeof value !== "object") return false;
+  const phase = value as Partial<ProjectPhaseRecord>;
+  return (
+    typeof phase.id === "string" &&
+    typeof phase.projectId === "string" &&
+    typeof phase.name === "string" &&
+    Number.isInteger(phase.sortOrder) &&
+    typeof phase.createdAt === "string" &&
+    typeof phase.updatedAt === "string"
+  );
+}
+
+function isProjectTaskResponse(value: unknown): value is ProjectTaskRecord {
+  if (!value || typeof value !== "object") return false;
+  const task = value as Partial<ProjectTaskRecord>;
+  return (
+    typeof task.id === "string" &&
+    typeof task.title === "string" &&
+    (task.date === null || typeof task.date === "string") &&
+    ["TODO", "IN_PROGRESS", "DONE"].includes(String(task.status)) &&
+    ["LOW", "MEDIUM", "HIGH"].includes(String(task.priority)) &&
+    Number.isInteger(task.urgentScore) &&
+    Number.isInteger(task.importanceScore) &&
+    (task.deadline === null || typeof task.deadline === "string") &&
+    Number.isInteger(task.estimateMinutes) &&
+    Number.isInteger(task.actualMinutes) &&
+    Number.isInteger(task.sortOrder) &&
+    (task.completedAt === null || typeof task.completedAt === "string") &&
+    (task.projectId === null || typeof task.projectId === "string") &&
+    (task.phaseId === null || typeof task.phaseId === "string")
+  );
+}
+
+function isOkResponse(value: unknown): value is { ok: true } {
+  return (
+    Boolean(value) &&
+    typeof value === "object" &&
+    (value as { ok?: unknown }).ok === true
+  );
+}
+
 export function ProjectsWorkspace({
   projects,
   selectedProjectId,
@@ -120,33 +206,75 @@ export function ProjectsWorkspace({
   async function updateProject(patch: ProjectPatch, reportError = true) {
     if (!selectedProjectId) return false;
     setError("");
-    const response = await fetch(`/api/projects/${selectedProjectId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(patch)
-    });
-    const result = await response.json().catch(() => null);
-    if (!response.ok) {
+    let result: unknown;
+    try {
+      const response = await fetch(`/api/projects/${selectedProjectId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch)
+      });
+      result = await response.json().catch(() => null);
+      if (!response.ok || !isProjectDetailResponse(result)) {
+        if (reportError) {
+          setError(
+            result &&
+              typeof result === "object" &&
+              "error" in result &&
+              typeof result.error === "string"
+              ? result.error
+              : "Project could not be updated. Your edits are still here."
+          );
+        }
+        return false;
+      }
+    } catch {
       if (reportError) {
-        setError(result?.error ?? "Project could not be updated.");
+        setError("Project could not be updated. Your edits are still here.");
       }
       return false;
     }
     setDetail(result);
-    await onDataChanged();
+    try {
+      await onDataChanged();
+    } catch {
+      setError(
+        "The Project was saved, but the Project list could not be refreshed."
+      );
+    }
     return true;
   }
 
   async function deleteProject() {
     if (!detail) return;
-    const response = await fetch(`/api/projects/${detail.id}?confirm=true`, { method: "DELETE" });
-    if (!response.ok) {
+    try {
+      const response = await fetch(
+        `/api/projects/${detail.id}?confirm=true`,
+        { method: "DELETE" }
+      );
       const result = await response.json().catch(() => null);
-      setError(result?.error ?? "Project could not be deleted.");
+      if (!response.ok || !isOkResponse(result)) {
+        setError(
+          result &&
+            typeof result === "object" &&
+            "error" in result &&
+            typeof result.error === "string"
+            ? result.error
+            : "Project could not be deleted."
+        );
+        return;
+      }
+    } catch {
+      setError("Project could not be deleted.");
       return;
     }
     onSelectedProjectChange(null);
-    await onDataChanged();
+    try {
+      await onDataChanged();
+    } catch {
+      setError(
+        "The Project was deleted, but the Project list could not be refreshed."
+      );
+    }
   }
 
   if (selectedProjectId) {
@@ -189,7 +317,13 @@ export function ProjectsWorkspace({
             onCancel={() => onCreateOpenChange(false)}
             onCreated={async (project) => {
               onCreateOpenChange(false);
-              await onDataChanged();
+              try {
+                await onDataChanged();
+              } catch {
+                setError(
+                  "The Project was saved, but the Project list could not be refreshed."
+                );
+              }
               onSelectedProjectChange(project.id);
             }}
           />
@@ -259,47 +393,79 @@ function ProjectCreateForm({
   const [weeklyHours, setWeeklyHours] = useState("5");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const createMutation = useRef<PendingMutation | null>(null);
 
   useEffect(() => {
     function closeOnEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") onCancel();
+      if (event.key === "Escape" && !saving) onCancel();
     }
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [onCancel]);
+  }, [onCancel, saving]);
 
   async function createProject() {
     if (!name.trim()) {
       setError("Project name is required.");
       return;
     }
+    const payload = {
+      name,
+      desiredOutcome,
+      targetDate: durationChoice === "date" ? targetDate || null : null,
+      targetDurationValue:
+        durationChoice === "date" ? null : Number(durationChoice),
+      targetDurationUnit: durationChoice === "date" ? null : "WEEKS",
+      weeklyMinutesBudget: weeklyHours
+        ? Math.max(0, Math.round(Number(weeklyHours) * 60))
+        : null
+    };
+    const mutationId = mutationIdFor(createMutation, payload);
     setSaving(true);
     setError("");
-    const response = await fetch("/api/projects", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name,
-        desiredOutcome,
-        targetDate: durationChoice === "date" ? targetDate || null : null,
-        targetDurationValue: durationChoice === "date" ? null : Number(durationChoice),
-        targetDurationUnit: durationChoice === "date" ? null : "WEEKS",
-        weeklyMinutesBudget: weeklyHours
-          ? Math.max(0, Math.round(Number(weeklyHours) * 60))
-          : null
-      })
-    });
-    const result = await response.json().catch(() => null);
-    setSaving(false);
-    if (!response.ok) {
-      setError(result?.error ?? "Project could not be created.");
+    let result: ProjectDetail | null = null;
+    try {
+      const response = await fetch("/api/projects", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Dayflow-Mutation-Id": mutationId
+        },
+        body: JSON.stringify(payload)
+      });
+      const body = await response.json().catch(() => null);
+      if (
+        !response.ok ||
+        !isProjectDetailResponse(body) ||
+        body.name !== payload.name.trim() ||
+        body.desiredOutcome !== payload.desiredOutcome.trim()
+      ) {
+        setError(
+          body && typeof body.error === "string"
+            ? body.error
+            : "Project could not be created. Your draft is still here."
+        );
+        return;
+      }
+      result = body;
+    } catch {
+      setError("Project could not be created. Your draft is still here.");
+      return;
+    } finally {
+      setSaving(false);
+    }
+    if (!result) {
       return;
     }
+    createMutation.current = null;
     await onCreated(result);
   }
 
   return (
-    <div className="project-dialog-overlay" role="presentation" onMouseDown={onCancel}>
+    <div
+      className="project-dialog-overlay"
+      role="presentation"
+      onMouseDown={saving ? undefined : onCancel}
+    >
       <section
         className="project-create-dialog"
         role="dialog"
@@ -321,6 +487,7 @@ function ProjectCreateForm({
               id="new-project-name"
               autoFocus
               value={name}
+              disabled={saving}
               onChange={(event) => setName(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Enter") void createProject();
@@ -332,6 +499,7 @@ function ProjectCreateForm({
             Outcome
             <textarea
               value={desiredOutcome}
+              disabled={saving}
               onChange={(event) => setDesiredOutcome(event.target.value)}
               placeholder="One or two sentences. Optional."
             />
@@ -343,6 +511,7 @@ function ProjectCreateForm({
                 <button
                   type="button"
                   key={value}
+                  disabled={saving}
                   className={durationChoice === value ? "active" : ""}
                   onClick={() => setDurationChoice(value)}
                 >
@@ -351,6 +520,7 @@ function ProjectCreateForm({
               ))}
               <button
                 type="button"
+                disabled={saving}
                 className={durationChoice === "date" ? "active pick-date" : "pick-date"}
                 onClick={() => setDurationChoice("date")}
               >
@@ -362,6 +532,7 @@ function ProjectCreateForm({
                 type="date"
                 aria-label="Project end date"
                 value={targetDate}
+                disabled={saving}
                 onChange={(event) => setTargetDate(event.target.value)}
               />
             )}
@@ -374,6 +545,7 @@ function ProjectCreateForm({
                 min="0"
                 step="0.5"
                 value={weeklyHours}
+                disabled={saving}
                 onChange={(event) => setWeeklyHours(event.target.value)}
               />
               <small>h / week</small>
@@ -386,7 +558,7 @@ function ProjectCreateForm({
           {error && <p className="form-error">{error}</p>}
         </div>
         <footer>
-          <button className="text-button" onClick={onCancel}>
+          <button className="text-button" disabled={saving} onClick={onCancel}>
           Cancel
           </button>
           <button
@@ -517,7 +689,11 @@ function ProjectDetailWorkspace({
   const [newPhase, setNewPhase] = useState("");
   const [newTask, setNewTask] = useState("");
   const [newTaskPhase, setNewTaskPhase] = useState("");
+  const [phaseSaving, setPhaseSaving] = useState(false);
+  const [taskSaving, setTaskSaving] = useState(false);
   const [phaseComposerOpen, setPhaseComposerOpen] = useState(false);
+  const phaseCreateMutation = useRef<PendingMutation | null>(null);
+  const taskCreateMutation = useRef<PendingMutation | null>(null);
   const [collapsedPhases, setCollapsedPhases] = useState<Set<string>>(
     () => new Set()
   );
@@ -526,6 +702,8 @@ function ProjectDetailWorkspace({
     setEditing(false);
     setPhaseComposerOpen(false);
     setCollapsedPhases(new Set());
+    phaseCreateMutation.current = null;
+    taskCreateMutation.current = null;
   }, [detail?.id]);
 
   if (loading || !detail) {
@@ -550,55 +728,113 @@ function ProjectDetailWorkspace({
   const allTasksDone = detail.taskCount > 0 && detail.completedTaskCount === detail.taskCount;
   const canAddWork = detail.status !== "COMPLETED" && detail.status !== "ARCHIVED";
 
-  async function request(path: string, init: RequestInit) {
+  async function request(
+    path: string,
+    init: RequestInit,
+    validateResult: (value: unknown) => boolean
+  ) {
     onError("");
-    const response = await fetch(path, init);
-    const result = await response.json().catch(() => null);
-    if (!response.ok) {
-      onError(result?.error ?? "The change could not be saved.");
+    let result: unknown;
+    try {
+      const response = await fetch(path, init);
+      result = await response.json().catch(() => null);
+      if (!response.ok || !validateResult(result)) {
+        onError(
+          result &&
+            typeof result === "object" &&
+            "error" in result &&
+            typeof result.error === "string"
+            ? result.error
+            : "The change could not be saved. Your draft is still here."
+        );
+        return false;
+      }
+    } catch {
+      onError("The change could not be saved. Your draft is still here.");
       return false;
     }
-    await onSync();
+    try {
+      await onSync();
+    } catch {
+      onError(
+        "Your change was saved, but the latest Project view could not be refreshed. Reload to try again."
+      );
+    }
     return true;
   }
 
   async function addPhase() {
-    if (!newPhase.trim()) return;
-    const saved = await request(`/api/projects/${project.id}/phases`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: newPhase })
-    });
+    if (!newPhase.trim() || phaseSaving) return;
+    const payload = { name: newPhase };
+    const mutationId = mutationIdFor(phaseCreateMutation, payload);
+    setPhaseSaving(true);
+    const saved = await request(
+      `/api/projects/${project.id}/phases`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Dayflow-Mutation-Id": mutationId
+        },
+        body: JSON.stringify(payload)
+      },
+      (value) =>
+        isProjectPhaseResponse(value) &&
+        value.projectId === project.id &&
+        value.name === payload.name.trim()
+    );
+    setPhaseSaving(false);
     if (saved) {
+      phaseCreateMutation.current = null;
       setNewPhase("");
       setPhaseComposerOpen(false);
     }
   }
 
   async function addTask() {
-    if (!newTask.trim()) return;
-    const saved = await request("/api/tasks", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        title: newTask,
-        projectId: project.id,
-        phaseId: newTaskPhase || null,
-        date: null,
-        estimateMinutes: 30
-      })
-    });
+    if (!newTask.trim() || taskSaving) return;
+    const payload = {
+      title: newTask,
+      projectId: project.id,
+      phaseId: newTaskPhase || null,
+      date: null,
+      estimateMinutes: 30
+    };
+    const mutationId = mutationIdFor(taskCreateMutation, payload);
+    setTaskSaving(true);
+    const saved = await request(
+      "/api/tasks",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Dayflow-Mutation-Id": mutationId
+        },
+        body: JSON.stringify(payload)
+      },
+      (value) =>
+        isProjectTaskResponse(value) &&
+        value.title === payload.title.trim() &&
+        value.projectId === payload.projectId &&
+        value.phaseId === payload.phaseId
+    );
+    setTaskSaving(false);
     if (saved) {
+      taskCreateMutation.current = null;
       setNewTask("");
     }
   }
 
   async function updateTask(id: string, patch: Partial<ProjectTaskRecord> & { scheduleSource?: string }) {
-    await request(`/api/tasks/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(patch)
-    });
+    await request(
+      `/api/tasks/${id}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch)
+      },
+      (value) => isProjectTaskResponse(value) && value.id === id
+    );
   }
 
   async function completeProject() {
@@ -844,6 +1080,7 @@ function ProjectDetailWorkspace({
               <input
                 id="project-new-task"
                 value={newTask}
+                disabled={taskSaving}
                 onChange={(event) => setNewTask(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") void addTask();
@@ -853,6 +1090,7 @@ function ProjectDetailWorkspace({
               />
               <select
                 value={newTaskPhase}
+                disabled={taskSaving}
                 onChange={(event) => setNewTaskPhase(event.target.value)}
                 aria-label="Task phase"
               >
@@ -863,8 +1101,12 @@ function ProjectDetailWorkspace({
                   </option>
                 ))}
               </select>
-              <button className="primary-button" onClick={() => void addTask()}>
-                Add
+              <button
+                className="primary-button"
+                disabled={taskSaving || !newTask.trim()}
+                onClick={() => void addTask()}
+              >
+                {taskSaving ? "Adding…" : "Add"}
               </button>
             </div>
           ) : (
@@ -963,6 +1205,7 @@ function ProjectDetailWorkspace({
             <input
               id="project-new-phase"
               value={newPhase}
+              disabled={phaseSaving}
               onChange={(event) => setNewPhase(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Enter") void addPhase();
@@ -970,9 +1213,13 @@ function ProjectDetailWorkspace({
               placeholder="Add an optional phase"
               aria-label="New phase name"
             />
-            <button className="secondary-button" onClick={() => void addPhase()}>
+            <button
+              className="secondary-button"
+              disabled={phaseSaving || !newPhase.trim()}
+              onClick={() => void addPhase()}
+            >
               <Plus size={15} />
-              Add phase
+              {phaseSaving ? "Adding…" : "Add phase"}
             </button>
           </div>
         )}
@@ -1522,7 +1769,15 @@ function EditablePhaseName({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name })
       });
-      if (!response.ok) return false;
+      const result = await response.json().catch(() => null);
+      if (
+        !response.ok ||
+        !isProjectPhaseResponse(result) ||
+        result.id !== phase.id ||
+        result.name !== name
+      ) {
+        return false;
+      }
       await onSaved();
       return true;
     },

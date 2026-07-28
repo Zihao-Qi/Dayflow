@@ -1,11 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { addDays, startOfLocalDay } from "@/lib/dates";
 
 export async function GET() {
-  const today = startOfLocalDay();
-  const horizon = addDays(today, 14);
-
   const [
     projects,
     phases,
@@ -20,32 +16,22 @@ export async function GET() {
   ] = await Promise.all([
     prisma.project.findMany({ orderBy: { updatedAt: "desc" } }),
     prisma.projectPhase.findMany({ orderBy: [{ projectId: "asc" }, { sortOrder: "asc" }] }),
-    prisma.focusSession.findMany({ orderBy: { startedAt: "desc" }, take: 250 }),
-    prisma.task.findMany({
-      where: {
-        OR: [
-          { date: { gte: today, lt: horizon } },
-          { date: null },
-          { projectId: { not: null } }
-        ]
-      },
-      orderBy: [{ date: "asc" }, { sortOrder: "asc" }]
-    }),
-    prisma.taskScheduleChange.findMany({ orderBy: { createdAt: "desc" }, take: 250 }),
-    prisma.note.findMany({ orderBy: { createdAt: "desc" }, take: 100 }),
-    prisma.diaryEntry.findMany({ orderBy: { date: "desc" }, take: 30 }),
-    prisma.material.findMany({ orderBy: { createdAt: "desc" }, take: 100 }),
-    prisma.timeBlock.findMany({ where: { date: { gte: today, lt: horizon } }, orderBy: { date: "asc" } }),
-    prisma.activityEntry.findMany({
-      where: { startedAt: { gte: today, lt: horizon } },
-      orderBy: { startedAt: "asc" }
-    })
+    prisma.focusSession.findMany({ orderBy: { startedAt: "desc" } }),
+    prisma.task.findMany({ orderBy: [{ date: "asc" }, { sortOrder: "asc" }] }),
+    prisma.taskScheduleChange.findMany({ orderBy: { createdAt: "desc" } }),
+    prisma.note.findMany({ orderBy: { createdAt: "desc" } }),
+    prisma.diaryEntry.findMany({ orderBy: { date: "desc" } }),
+    prisma.material.findMany({ orderBy: { createdAt: "desc" } }),
+    prisma.timeBlock.findMany({ orderBy: { date: "asc" } }),
+    prisma.activityEntry.findMany({ orderBy: { startedAt: "asc" } })
   ]);
 
   return NextResponse.json({
     app: "Dayflow",
+    exportFormat: "dayflow-json",
+    exportVersion: 1,
     exportedAt: new Date().toISOString(),
-    purpose: "Local-first productivity data for a future external agent integration.",
+    purpose: "Complete local-first productivity data for analysis and external agents.",
     schemaVersion: 5,
     projects,
     phases,

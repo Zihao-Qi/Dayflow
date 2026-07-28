@@ -18,6 +18,7 @@ import {
   ChevronUp,
   Circle,
   Clock3,
+  DatabaseBackup,
   ExternalLink,
   FileText,
   FolderKanban,
@@ -37,6 +38,7 @@ import {
   Timer,
   Trash2
 } from "lucide-react";
+import { DataManagementDialog } from "@/components/data-management-dialog";
 import { ProjectsWorkspace } from "@/components/projects-workspace";
 import { FocusDraft, FocusRail } from "@/components/focus-timer";
 import { useFocusSession } from "@/components/focus-session-provider";
@@ -71,6 +73,15 @@ type DayView = "stream" | "timeline";
 type JournalView = "daily" | "notes" | "references";
 type BacklogArrange = "figure" | "quadrant" | "project" | "due";
 type FocusTarget = Omit<FocusDraft, "revision">;
+type PendingMutation = { id: string; fingerprint: string };
+type HistoryState<T> = {
+  items: T[];
+  nextCursor: string | null;
+  totalCount: number | null;
+  loaded: boolean;
+  loading: boolean;
+  error: string;
+};
 
 type Task = {
   id: string;
@@ -177,6 +188,14 @@ type Bootstrap = {
 };
 
 const activityCategories = ["Deep Work", "Learning", "Admin", "Health", "Rest"];
+const emptyHistory = <T,>(): HistoryState<T> => ({
+  items: [],
+  nextCursor: null,
+  totalCount: null,
+  loaded: false,
+  loading: false,
+  error: ""
+});
 
 const nav = [
   { id: "today", label: "Today", icon: LayoutDashboard },
@@ -205,12 +224,173 @@ function diariesEqual(left: Diary, right: Diary) {
   );
 }
 
+function isTaskResponse(value: unknown): value is Task {
+  if (!value || typeof value !== "object") return false;
+  const task = value as Partial<Task>;
+  return (
+    typeof task.id === "string" &&
+    typeof task.title === "string" &&
+    (task.date === null || typeof task.date === "string") &&
+    ["TODO", "IN_PROGRESS", "DONE"].includes(String(task.status)) &&
+    ["LOW", "MEDIUM", "HIGH"].includes(String(task.priority)) &&
+    Number.isInteger(task.urgentScore) &&
+    Number.isInteger(task.importanceScore) &&
+    (task.deadline === null || typeof task.deadline === "string") &&
+    Number.isInteger(task.estimateMinutes) &&
+    Number.isInteger(task.actualMinutes) &&
+    Number.isInteger(task.sortOrder) &&
+    (task.focusQueuePosition === null ||
+      Number.isInteger(task.focusQueuePosition)) &&
+    (task.completedAt === null || typeof task.completedAt === "string") &&
+    (task.projectId === null || typeof task.projectId === "string") &&
+    (task.phaseId === null || typeof task.phaseId === "string")
+  );
+}
+
+function isNoteResponse(value: unknown): value is Note {
+  if (!value || typeof value !== "object") return false;
+  const note = value as Partial<Note>;
+  return (
+    typeof note.id === "string" &&
+    typeof note.content === "string" &&
+    Array.isArray(note.tags) &&
+    note.tags.every((tag) => typeof tag === "string") &&
+    (note.taskId === null || typeof note.taskId === "string") &&
+    (note.projectId === null || typeof note.projectId === "string") &&
+    typeof note.date === "string" &&
+    typeof note.createdAt === "string"
+  );
+}
+
+function isMaterialResponse(value: unknown): value is Material {
+  if (!value || typeof value !== "object") return false;
+  const material = value as Partial<Material>;
+  return (
+    typeof material.id === "string" &&
+    typeof material.title === "string" &&
+    typeof material.url === "string" &&
+    typeof material.type === "string" &&
+    typeof material.notes === "string" &&
+    (material.taskId === null || typeof material.taskId === "string") &&
+    (material.projectId === null || typeof material.projectId === "string") &&
+    typeof material.createdAt === "string"
+  );
+}
+
+function isActivityResponse(value: unknown): value is ActivityEntry {
+  if (!value || typeof value !== "object") return false;
+  const activity = value as Partial<ActivityEntry>;
+  return (
+    typeof activity.id === "string" &&
+    typeof activity.startedAt === "string" &&
+    Number.isInteger(activity.durationMinutes) &&
+    typeof activity.category === "string" &&
+    typeof activity.note === "string" &&
+    (activity.taskId === null || typeof activity.taskId === "string") &&
+    (activity.projectId === null || typeof activity.projectId === "string") &&
+    typeof activity.createdAt === "string"
+  );
+}
+
+function isPersistedDiaryResponse(value: unknown): value is Diary & {
+  id: string;
+  persisted: true;
+} {
+  if (!value || typeof value !== "object") return false;
+  const diary = value as Partial<Diary>;
+  return (
+    typeof diary.id === "string" &&
+    typeof diary.date === "string" &&
+    typeof diary.content === "string" &&
+    typeof diary.reflection === "string" &&
+    Number.isInteger(diary.mood) &&
+    Number.isInteger(diary.energy) &&
+    diary.persisted === true
+  );
+}
+
+function isFocusQueueResponse(
+  value: unknown
+): value is { tasks: Task[] } {
+  if (!value || typeof value !== "object") return false;
+  const result = value as { tasks?: unknown };
+  return Array.isArray(result.tasks) && result.tasks.every(isTaskResponse);
+}
+
+function isTaskReorderResponse(
+  value: unknown
+): value is { ok: true; tasks: Task[] } {
+  return (
+    Boolean(value) &&
+    typeof value === "object" &&
+    (value as { ok?: unknown }).ok === true &&
+    isFocusQueueResponse(value)
+  );
+}
+
+function isHistoryResponse<T>(
+  value: unknown,
+  isItem: (item: unknown) => item is T
+): value is { items: T[]; nextCursor: string | null; totalCount: number } {
+  if (!value || typeof value !== "object") return false;
+  const page = value as {
+    items?: unknown;
+    nextCursor?: unknown;
+    totalCount?: unknown;
+  };
+  return (
+    Array.isArray(page.items) &&
+    page.items.every(isItem) &&
+    (page.nextCursor === null || typeof page.nextCursor === "string") &&
+    Number.isInteger(page.totalCount) &&
+    Number(page.totalCount) >= 0
+  );
+}
+
+function appendUnique<T extends { id: string }>(current: T[], next: T[]) {
+  const seen = new Set(current.map((item) => item.id));
+  return [...current, ...next.filter((item) => !seen.has(item.id))];
+}
+
+function mergeHistoryReset<T extends { id: string; createdAt: string }>(
+  serverItems: T[],
+  currentItems: T[]
+) {
+  return appendUnique(serverItems, currentItems).sort(
+    (left, right) =>
+      Date.parse(right.createdAt) - Date.parse(left.createdAt) ||
+      right.id.localeCompare(left.id)
+  );
+}
+
+function mutationIdFor(
+  reference: React.MutableRefObject<PendingMutation | null>,
+  payload: unknown
+) {
+  const fingerprint = JSON.stringify(payload);
+  if (reference.current?.fingerprint === fingerprint) {
+    return reference.current.id;
+  }
+  const id =
+    typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `dayflow-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  reference.current = { id, fingerprint };
+  return id;
+}
+
 export function Dashboard() {
   const focus = useFocusSession();
   const { mode: layoutMode, figureArrangement, wideFocusRail } = useLayoutMode();
   const compactLayout = layoutMode !== "desktop";
   const phoneLayout = layoutMode === "phone";
   const [data, setData] = useState<Bootstrap | null>(null);
+  const [noteHistory, setNoteHistory] = useState<HistoryState<Note>>(
+    emptyHistory<Note>
+  );
+  const [materialHistory, setMaterialHistory] = useState<HistoryState<Material>>(
+    emptyHistory<Material>
+  );
   const [screen, setScreen] = useState<Screen>("today");
   const [railExpanded, setRailExpanded] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -221,13 +401,16 @@ export function Dashboard() {
     null
   );
   const [newTask, setNewTask] = useState("");
+  const [taskCreatePending, setTaskCreatePending] = useState(false);
   const [newNote, setNewNote] = useState("");
   const [noteTags, setNoteTags] = useState("");
   const [noteProjectId, setNoteProjectId] = useState("");
+  const [noteSaving, setNoteSaving] = useState(false);
   const [materialTitle, setMaterialTitle] = useState("");
   const [materialUrl, setMaterialUrl] = useState("");
   const [materialNotes, setMaterialNotes] = useState("");
   const [materialProjectId, setMaterialProjectId] = useState("");
+  const [materialSaving, setMaterialSaving] = useState(false);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [projectCreateOpen, setProjectCreateOpen] = useState(false);
   const [focusDraft, setFocusDraft] = useState<FocusDraft | null>(null);
@@ -239,13 +422,25 @@ export function Dashboard() {
   const [activityProjectId, setActivityProjectId] = useState("");
   const [activityNote, setActivityNote] = useState("");
   const [activityError, setActivityError] = useState("");
+  const [activitySaving, setActivitySaving] = useState(false);
   const [dismissedUnfinished, setDismissedUnfinished] = useState<string[]>([]);
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
+  const [dataManagementOpen, setDataManagementOpen] = useState(false);
   const [firstRunSeen, setFirstRunSeen] = useState<boolean | null>(null);
   const [appAnnouncement, setAppAnnouncement] = useState("");
   const [appError, setAppError] = useState("");
   const taskSaveWasInError = useRef(false);
   const diarySaveWasInError = useRef(false);
+  const taskCreateWasInError = useRef(false);
+  const noteCreateWasInError = useRef(false);
+  const materialCreateWasInError = useRef(false);
+  const activityCreateWasInError = useRef(false);
+  const taskCreateMutation = useRef<PendingMutation | null>(null);
+  const noteCreateMutation = useRef<PendingMutation | null>(null);
+  const materialCreateMutation = useRef<PendingMutation | null>(null);
+  const activityCreateMutation = useRef<PendingMutation | null>(null);
+  const noteHistoryRequest = useRef(false);
+  const materialHistoryRequest = useRef(false);
 
   useEffect(() => {
     setActivityTime(formatTimeInput(new Date()));
@@ -270,6 +465,42 @@ export function Dashboard() {
   }, [focus.retryNext]);
 
   useEffect(() => {
+    if (
+      screen === "journal" &&
+      journalView === "notes" &&
+      !noteHistory.loaded &&
+      !noteHistory.loading &&
+      !noteHistory.error
+    ) {
+      void loadNoteHistory(true);
+    }
+  }, [
+    screen,
+    journalView,
+    noteHistory.loaded,
+    noteHistory.loading,
+    noteHistory.error
+  ]);
+
+  useEffect(() => {
+    if (
+      screen === "journal" &&
+      journalView === "references" &&
+      !materialHistory.loaded &&
+      !materialHistory.loading &&
+      !materialHistory.error
+    ) {
+      void loadMaterialHistory(true);
+    }
+  }, [
+    screen,
+    journalView,
+    materialHistory.loaded,
+    materialHistory.loading,
+    materialHistory.error
+  ]);
+
+  useEffect(() => {
     function onShortcut(event: KeyboardEvent) {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
@@ -290,7 +521,115 @@ export function Dashboard() {
 
   async function refresh() {
     const response = await fetch("/api/bootstrap", { cache: "no-store" });
-    setData(await response.json());
+    const result = await response.json().catch(() => null);
+    if (
+      !response.ok ||
+      !result ||
+      typeof result !== "object" ||
+      !Array.isArray(result.tasks)
+    ) {
+      throw new Error("Dayflow could not refresh its latest data.");
+    }
+    setData(result);
+  }
+
+  async function refreshAfterConfirmedMutation() {
+    try {
+      await refresh();
+    } catch {
+      setAppError(
+        "Your change was saved, but Dayflow could not refresh the latest view. Reload to try again."
+      );
+      setAppAnnouncement("Saved, but the latest view could not be refreshed.");
+    }
+  }
+
+  async function loadNoteHistory(reset = false) {
+    if (noteHistoryRequest.current) return;
+    const cursor = reset ? null : noteHistory.nextCursor;
+    if (!reset && noteHistory.loaded && !cursor) return;
+    noteHistoryRequest.current = true;
+    setNoteHistory((current) => ({ ...current, loading: true, error: "" }));
+    try {
+      const query = new URLSearchParams({ limit: "50" });
+      if (cursor) query.set("cursor", cursor);
+      const response = await fetch(`/api/notes?${query}`, { cache: "no-store" });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !isHistoryResponse(result, isNoteResponse)) {
+        throw new Error(
+          result && typeof result.error === "string"
+            ? result.error
+            : "Note history could not be loaded."
+        );
+      }
+      setNoteHistory((current) => {
+        const items = reset
+          ? mergeHistoryReset(result.items, current.items)
+          : appendUnique(current.items, result.items);
+        return {
+          items,
+          nextCursor: result.nextCursor,
+          totalCount: Math.max(result.totalCount, items.length),
+          loaded: true,
+          loading: false,
+          error: ""
+        };
+      });
+    } catch (error) {
+      setNoteHistory((current) => ({
+        ...current,
+        loading: false,
+        error:
+          error instanceof Error ? error.message : "Note history could not be loaded."
+      }));
+    } finally {
+      noteHistoryRequest.current = false;
+    }
+  }
+
+  async function loadMaterialHistory(reset = false) {
+    if (materialHistoryRequest.current) return;
+    const cursor = reset ? null : materialHistory.nextCursor;
+    if (!reset && materialHistory.loaded && !cursor) return;
+    materialHistoryRequest.current = true;
+    setMaterialHistory((current) => ({ ...current, loading: true, error: "" }));
+    try {
+      const query = new URLSearchParams({ limit: "50" });
+      if (cursor) query.set("cursor", cursor);
+      const response = await fetch(`/api/materials?${query}`, { cache: "no-store" });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !isHistoryResponse(result, isMaterialResponse)) {
+        throw new Error(
+          result && typeof result.error === "string"
+            ? result.error
+            : "Reference history could not be loaded."
+        );
+      }
+      setMaterialHistory((current) => {
+        const items = reset
+          ? mergeHistoryReset(result.items, current.items)
+          : appendUnique(current.items, result.items);
+        return {
+          items,
+          nextCursor: result.nextCursor,
+          totalCount: Math.max(result.totalCount, items.length),
+          loaded: true,
+          loading: false,
+          error: ""
+        };
+      });
+    } catch (error) {
+      setMaterialHistory((current) => ({
+        ...current,
+        loading: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Reference history could not be loaded."
+      }));
+    } finally {
+      materialHistoryRequest.current = false;
+    }
   }
 
   const todayTasks = useMemo(() => {
@@ -377,39 +716,108 @@ export function Dashboard() {
   }
 
   async function addTask(date: string | null = data?.today.slice(0, 10) ?? null) {
-    if (!newTask.trim()) return;
-    await fetch("/api/tasks", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: newTask.trim(), date, estimateMinutes: 30 })
-    });
-    setNewTask("");
-    await refresh();
+    const title = newTask.trim();
+    if (!title || taskCreatePending) return false;
+    const payload = { title, date, estimateMinutes: 30 };
+    const mutationId = mutationIdFor(taskCreateMutation, payload);
+    setTaskCreatePending(true);
+    try {
+      const response = await fetch("/api/tasks", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Dayflow-Mutation-Id": mutationId
+        },
+        body: JSON.stringify(payload)
+      });
+      const result = await response.json().catch(() => null);
+      if (
+        !response.ok ||
+        !isTaskResponse(result) ||
+        result.title !== payload.title
+      ) {
+        const message =
+          result && typeof result.error === "string"
+            ? result.error
+            : "Your task was not saved. Your draft is still here.";
+        setAppError(message);
+        setAppAnnouncement("Task was not saved.");
+        taskCreateWasInError.current = true;
+        return false;
+      }
+      setNewTask((current) => (current.trim() === title ? "" : current));
+      taskCreateMutation.current = null;
+      setAppError("");
+      if (taskCreateWasInError.current) {
+        taskCreateWasInError.current = false;
+        setAppAnnouncement("Saved.");
+      }
+      await refreshAfterConfirmedMutation();
+      return true;
+    } catch {
+      setAppError("Your task was not saved. Your draft is still here.");
+      setAppAnnouncement("Task was not saved.");
+      taskCreateWasInError.current = true;
+      return false;
+    } finally {
+      setTaskCreatePending(false);
+    }
   }
 
   async function beginFirstRun(title: string, startFocus: boolean) {
     const trimmed = title.trim();
-    if (!trimmed || !data) return;
-    const response = await fetch("/api/tasks", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        title: trimmed,
-        date: data.today.slice(0, 10),
-        estimateMinutes: 25
-      })
-    });
-    if (!response.ok) return;
-    const task = (await response.json()) as Task;
-    window.localStorage.setItem("dayflow-first-run-seen", "1");
-    setFirstRunSeen(true);
-    await refresh();
-    if (startFocus) {
-      openFocus({
-        taskId: task.id,
-        label: task.title,
-        plannedMinutes: 25
+    if (!trimmed || !data || taskCreatePending) return;
+    const payload = {
+      title: trimmed,
+      date: data.today.slice(0, 10),
+      estimateMinutes: 25
+    };
+    const mutationId = mutationIdFor(taskCreateMutation, payload);
+    setTaskCreatePending(true);
+    try {
+      const response = await fetch("/api/tasks", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Dayflow-Mutation-Id": mutationId
+        },
+        body: JSON.stringify(payload)
       });
+      const result = await response.json().catch(() => null);
+      if (
+        !response.ok ||
+        !isTaskResponse(result) ||
+        result.title !== payload.title
+      ) {
+        setAppError(
+          result && typeof result.error === "string"
+            ? result.error
+            : "Your first task was not saved. Your draft is still here."
+        );
+        taskCreateWasInError.current = true;
+        return;
+      }
+      window.localStorage.setItem("dayflow-first-run-seen", "1");
+      taskCreateMutation.current = null;
+      setFirstRunSeen(true);
+      setAppError("");
+      if (taskCreateWasInError.current) {
+        taskCreateWasInError.current = false;
+        setAppAnnouncement("Saved.");
+      }
+      await refreshAfterConfirmedMutation();
+      if (startFocus) {
+        openFocus({
+          taskId: result.id,
+          label: result.title,
+          plannedMinutes: 25
+        });
+      }
+    } catch {
+      setAppError("Your first task was not saved. Your draft is still here.");
+      taskCreateWasInError.current = true;
+    } finally {
+      setTaskCreatePending(false);
     }
   }
 
@@ -434,8 +842,11 @@ export function Dashboard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(patch)
       });
-      if (!response.ok) return false;
-      await refresh();
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !isTaskResponse(result) || result.id !== id) {
+        return false;
+      }
+      await refreshAfterConfirmedMutation();
       return true;
     } catch {
       return false;
@@ -476,8 +887,27 @@ export function Dashboard() {
   }
 
   async function deleteTask(id: string) {
-    await fetch(`/api/tasks/${id}`, { method: "DELETE" });
-    await refresh();
+    try {
+      const response = await fetch(`/api/tasks/${id}`, { method: "DELETE" });
+      const result = await response.json().catch(() => null);
+      if (
+        !response.ok ||
+        !result ||
+        typeof result !== "object" ||
+        result.ok !== true
+      ) {
+        setAppError(
+          result && typeof result.error === "string"
+            ? result.error
+            : "Task could not be deleted."
+        );
+        return;
+      }
+      setAppError("");
+      await refreshAfterConfirmedMutation();
+    } catch {
+      setAppError("Task could not be deleted.");
+    }
   }
 
   async function reorderTask(
@@ -509,19 +939,27 @@ export function Dashboard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ids: reordered.map((task) => task.id) })
       });
-      if (!response.ok) throw new Error("Order could not be saved.");
+      const result = await response.json().catch(() => null);
+      if (
+        !response.ok ||
+        !isTaskReorderResponse(result) ||
+        result.tasks.length !== reordered.length ||
+        result.tasks.some((task, index) => task.id !== reordered[index]?.id)
+      ) {
+        throw new Error("Order could not be saved.");
+      }
       setAppError("");
       if (announce) {
         setAppAnnouncement(
           describeTaskMove(item.title, newIndex, reordered.length)
         );
       }
-      await refresh();
+      await refreshAfterConfirmedMutation();
       return true;
     } catch {
       setAppError("Couldn’t save the new order. Retry the move.");
       setAppAnnouncement("The new task order was not saved.");
-      await refresh();
+      await refresh().catch(() => undefined);
       return false;
     }
   }
@@ -533,15 +971,25 @@ export function Dashboard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ taskId: task.id, placement })
       });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error ?? "The queue could not be saved.");
+      const result = await response.json().catch(() => null);
+      if (
+        !response.ok ||
+        !isFocusQueueResponse(result) ||
+        !result.tasks.some(
+          (queuedTask) =>
+            queuedTask.id === task.id &&
+            queuedTask.focusQueuePosition !== null
+        )
+      ) {
+        throw new Error("The queue could not be saved.");
+      }
       setAppError("");
       setAppAnnouncement(
         placement === "next"
           ? `${task.title}, queued next.`
           : `${task.title}, added to the queue.`
       );
-      await refresh();
+      await refreshAfterConfirmedMutation();
       return true;
     } catch {
       setAppError("Couldn’t save the focus queue. Try that action again.");
@@ -557,11 +1005,17 @@ export function Dashboard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ taskId: task.id })
       });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error ?? "The queue could not be saved.");
+      const result = await response.json().catch(() => null);
+      if (
+        !response.ok ||
+        !isFocusQueueResponse(result) ||
+        result.tasks.some((queuedTask) => queuedTask.id === task.id)
+      ) {
+        throw new Error("The queue could not be saved.");
+      }
       setAppError("");
       setAppAnnouncement(`${task.title}, removed from the queue.`);
-      await refresh();
+      await refreshAfterConfirmedMutation();
       return true;
     } catch {
       setAppError("Couldn’t remove that task from the focus queue.");
@@ -594,11 +1048,18 @@ export function Dashboard() {
           expectedIds: previous.map((task) => task.id)
         })
       });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error ?? "The queue could not be saved.");
+      const result = await response.json().catch(() => null);
+      if (
+        !response.ok ||
+        !isFocusQueueResponse(result) ||
+        result.tasks.some((task, index) => task.id !== ids[index]) ||
+        result.tasks.length !== ids.length
+      ) {
+        throw new Error("The queue could not be saved.");
+      }
       setAppError("");
       setAppAnnouncement(announcement);
-      await refresh();
+      await refreshAfterConfirmedMutation();
       return true;
     } catch {
       setData((current) =>
@@ -616,69 +1077,141 @@ export function Dashboard() {
       );
       setAppError("Couldn’t save the new queue order. Retry the move.");
       setAppAnnouncement("The new queue order was not saved.");
-      await refresh();
+      await refresh().catch(() => undefined);
       return false;
     }
   }
 
   async function addNote() {
-    if (!newNote.trim()) return;
+    if (!newNote.trim() || noteSaving) return;
+    const payload = {
+      content: newNote.trim(),
+      tags: noteTags
+        .split(",")
+        .map((tag) => tag.trim())
+        .filter(Boolean),
+      projectId: noteProjectId || null
+    };
+    const mutationId = mutationIdFor(noteCreateMutation, payload);
+    setNoteSaving(true);
     try {
       const response = await fetch("/api/notes", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          content: newNote.trim(),
-          tags: noteTags
-            .split(",")
-            .map((tag) => tag.trim())
-            .filter(Boolean),
-          projectId: noteProjectId || null
-        })
+        headers: {
+          "Content-Type": "application/json",
+          "X-Dayflow-Mutation-Id": mutationId
+        },
+        body: JSON.stringify(payload)
       });
-      const result = (await response.json()) as { error?: string };
-      if (!response.ok) {
-        setAppError(result.error ?? "The note could not be saved.");
+      const result = await response.json().catch(() => null);
+      if (
+        !response.ok ||
+        !isNoteResponse(result) ||
+        result.content !== payload.content
+      ) {
+        setAppError(
+          result && typeof result.error === "string"
+            ? result.error
+            : "The note could not be saved. Your draft is still here."
+        );
+        noteCreateWasInError.current = true;
         return;
       }
       setNewNote("");
       setNoteTags("");
       setNoteProjectId("");
+      noteCreateMutation.current = null;
+      setNoteHistory((current) => {
+        const exists = current.items.some((item) => item.id === result.id);
+        return {
+          ...current,
+          items: [result, ...current.items.filter((item) => item.id !== result.id)],
+          totalCount:
+            current.totalCount === null
+              ? null
+              : current.totalCount + (exists ? 0 : 1)
+        };
+      });
       setAppError("");
-      await refresh();
+      if (noteCreateWasInError.current) {
+        noteCreateWasInError.current = false;
+        setAppAnnouncement("Saved.");
+      }
+      await refreshAfterConfirmedMutation();
     } catch {
       setAppError("The note could not be saved. Your draft is still here.");
+      noteCreateWasInError.current = true;
+    } finally {
+      setNoteSaving(false);
     }
   }
 
   async function addMaterial() {
-    if (!materialUrl.trim()) return;
+    if (!materialUrl.trim() || materialSaving) return;
+    const payload = {
+      title: materialTitle.trim(),
+      url: materialUrl.trim(),
+      notes: materialNotes.trim(),
+      projectId: materialProjectId || null
+    };
+    const mutationId = mutationIdFor(materialCreateMutation, payload);
+    setMaterialSaving(true);
     try {
       const response = await fetch("/api/materials", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: materialTitle.trim(),
-          url: materialUrl.trim(),
-          notes: materialNotes.trim(),
-          projectId: materialProjectId || null
-        })
+        headers: {
+          "Content-Type": "application/json",
+          "X-Dayflow-Mutation-Id": mutationId
+        },
+        body: JSON.stringify(payload)
       });
-      const result = (await response.json()) as { error?: string };
-      if (!response.ok) {
-        setAppError(result.error ?? "The reference could not be saved.");
+      const result = await response.json().catch(() => null);
+      if (
+        !response.ok ||
+        !isMaterialResponse(result) ||
+        result.url !== payload.url ||
+        result.title !== payload.title
+      ) {
+        setAppError(
+          result && typeof result.error === "string"
+            ? result.error
+            : "The reference could not be saved. Your draft is still here."
+        );
+        materialCreateWasInError.current = true;
         return;
       }
       setMaterialTitle("");
       setMaterialUrl("");
       setMaterialNotes("");
       setMaterialProjectId("");
+      materialCreateMutation.current = null;
+      setMaterialHistory((current) => {
+        const exists = current.items.some((item) => item.id === result.id);
+        return {
+          ...current,
+          items: [
+            result,
+            ...current.items.filter((item) => item.id !== result.id)
+          ],
+          totalCount:
+            current.totalCount === null
+              ? null
+              : current.totalCount + (exists ? 0 : 1)
+        };
+      });
       setAppError("");
-      await refresh();
+      if (materialCreateWasInError.current) {
+        materialCreateWasInError.current = false;
+        setAppAnnouncement("Saved.");
+      }
+      await refreshAfterConfirmedMutation();
     } catch {
       setAppError(
         "The reference could not be saved. Your draft is still here."
       );
+      materialCreateWasInError.current = true;
+    } finally {
+      setMaterialSaving(false);
     }
   }
 
@@ -689,8 +1222,19 @@ export function Dashboard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(diary)
       });
-      if (!response.ok) return false;
-      await refresh();
+      const result = await response.json().catch(() => null);
+      if (
+        !response.ok ||
+        !isPersistedDiaryResponse(result) ||
+        result.date !== diary.date ||
+        result.content !== diary.content ||
+        result.reflection !== diary.reflection ||
+        result.mood !== diary.mood ||
+        result.energy !== diary.energy
+      ) {
+        return false;
+      }
+      await refreshAfterConfirmedMutation();
       return true;
     } catch {
       return false;
@@ -719,6 +1263,7 @@ export function Dashboard() {
   }
 
   async function addActivity() {
+    if (activitySaving) return;
     const minutes = Number(activityDuration);
     if (!activityNote.trim()) {
       setActivityError("Add a short note about what happened.");
@@ -728,30 +1273,59 @@ export function Dashboard() {
       setActivityError("Duration must be between 1 and 1440 minutes.");
       return;
     }
-    const response = await fetch("/api/activities", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        date: data?.today,
-        startTime: activityTime,
-        durationMinutes: minutes,
-        category: activityCategory,
-        taskId: activityTaskId || null,
-        projectId: activityProjectId || null,
-        note: activityNote.trim()
-      })
-    });
-    if (!response.ok) {
+    const payload = {
+      date: data?.today,
+      startTime: activityTime,
+      durationMinutes: minutes,
+      category: activityCategory,
+      taskId: activityTaskId || null,
+      projectId: activityProjectId || null,
+      note: activityNote.trim()
+    };
+    const mutationId = mutationIdFor(activityCreateMutation, payload);
+    setActivitySaving(true);
+    try {
+      const response = await fetch("/api/activities", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Dayflow-Mutation-Id": mutationId
+        },
+        body: JSON.stringify(payload)
+      });
       const result = await response.json().catch(() => null);
-      setActivityError(result?.error ?? "Activity could not be saved.");
-      return;
+      if (
+        !response.ok ||
+        !isActivityResponse(result) ||
+        result.note !== payload.note ||
+        result.durationMinutes !== payload.durationMinutes ||
+        result.category !== payload.category
+      ) {
+        setActivityError(
+          result && typeof result.error === "string"
+            ? result.error
+            : "Activity could not be saved. Your draft is still here."
+        );
+        activityCreateWasInError.current = true;
+        return;
+      }
+      setActivityNote("");
+      setActivityTaskId("");
+      setActivityProjectId("");
+      activityCreateMutation.current = null;
+      setActivityError("");
+      setActivityOpen(false);
+      if (activityCreateWasInError.current) {
+        activityCreateWasInError.current = false;
+        setAppAnnouncement("Saved.");
+      }
+      await refreshAfterConfirmedMutation();
+    } catch {
+      setActivityError("Activity could not be saved. Your draft is still here.");
+      activityCreateWasInError.current = true;
+    } finally {
+      setActivitySaving(false);
     }
-    setActivityNote("");
-    setActivityTaskId("");
-    setActivityProjectId("");
-    setActivityError("");
-    setActivityOpen(false);
-    await refresh();
   }
 
   if (!data) {
@@ -844,6 +1418,14 @@ export function Dashboard() {
             <kbd>⌘⇧F</kbd>
           </button>
         )}
+        <button
+          className="sidebar-data-button"
+          aria-label="Data & backups"
+          onClick={() => setDataManagementOpen(true)}
+        >
+          <DatabaseBackup size={15} />
+          <span>Data &amp; backups</span>
+        </button>
         <footer className="sidebar-focus-summary">
           <span className="eyebrow">Today&apos;s focus</span>
           <strong>{formatMinutes(focusedMinutes)}</strong>
@@ -866,7 +1448,11 @@ export function Dashboard() {
           <span>Capture</span>
         </button>
         {screen === "today" && firstRun && (
-          <FirstRunPage today={data.today} onBegin={beginFirstRun} />
+          <FirstRunPage
+            today={data.today}
+            saving={taskCreatePending}
+            onBegin={beginFirstRun}
+          />
         )}
         {screen === "today" && !firstRun && (
           <TodayPage
@@ -885,6 +1471,7 @@ export function Dashboard() {
             onFocusTransition={focus.transition}
             onAddTask={addTask}
             newTask={newTask}
+            taskCreatePending={taskCreatePending}
             onNewTaskChange={setNewTask}
             onUpdateTask={updateTask}
             onSaveTaskField={saveTaskAttempt}
@@ -964,8 +1551,22 @@ export function Dashboard() {
             view={journalView}
             onViewChange={setJournalView}
             diary={data.diary}
-            notes={data.notes}
-            materials={data.materials}
+            notes={journalView === "notes" ? noteHistory.items : data.notes}
+            materials={
+              journalView === "references" ? materialHistory.items : data.materials
+            }
+            noteHistory={noteHistory}
+            materialHistory={materialHistory}
+            onLoadMoreNotes={() => void loadNoteHistory(false)}
+            onRetryNotes={() => {
+              setNoteHistory((current) => ({ ...current, error: "" }));
+              void loadNoteHistory(!noteHistory.loaded);
+            }}
+            onLoadMoreMaterials={() => void loadMaterialHistory(false)}
+            onRetryMaterials={() => {
+              setMaterialHistory((current) => ({ ...current, error: "" }));
+              void loadMaterialHistory(!materialHistory.loaded);
+            }}
             projects={projectById}
             onDiaryChange={setDiaryValue}
             onSaveDiary={saveDiary}
@@ -974,6 +1575,7 @@ export function Dashboard() {
             newNote={newNote}
             noteTags={noteTags}
             noteProjectId={noteProjectId}
+            noteSaving={noteSaving}
             onNewNoteChange={setNewNote}
             onNoteTagsChange={setNoteTags}
             onNoteProjectChange={setNoteProjectId}
@@ -982,6 +1584,7 @@ export function Dashboard() {
             materialUrl={materialUrl}
             materialNotes={materialNotes}
             materialProjectId={materialProjectId}
+            materialSaving={materialSaving}
             onMaterialTitleChange={setMaterialTitle}
             onMaterialUrlChange={setMaterialUrl}
             onMaterialNotesChange={setMaterialNotes}
@@ -1016,6 +1619,16 @@ export function Dashboard() {
           <button role="menuitem" onClick={() => navigate("journal")}>
             <NotebookPen size={17} />
             Journal
+          </button>
+          <button
+            role="menuitem"
+            onClick={() => {
+              setMobileMoreOpen(false);
+              setDataManagementOpen(true);
+            }}
+          >
+            <DatabaseBackup size={17} />
+            Data &amp; backups
           </button>
         </div>
       )}
@@ -1110,6 +1723,7 @@ export function Dashboard() {
           projectId={activityProjectId}
           note={activityNote}
           error={activityError}
+          saving={activitySaving}
           onTimeChange={setActivityTime}
           onDurationChange={setActivityDuration}
           onCategoryChange={setActivityCategory}
@@ -1126,6 +1740,12 @@ export function Dashboard() {
           }}
           onClose={() => setActivityOpen(false)}
           onSave={addActivity}
+        />
+      )}
+      {dataManagementOpen && (
+        <DataManagementDialog
+          onClose={() => setDataManagementOpen(false)}
+          onAnnounce={setAppAnnouncement}
         />
       )}
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
@@ -1159,6 +1779,7 @@ function TodayPage({
   onFocusTransition,
   onAddTask,
   newTask,
+  taskCreatePending,
   onNewTaskChange,
   onUpdateTask,
   onSaveTaskField,
@@ -1187,8 +1808,9 @@ function TodayPage({
   focusNow: number;
   focusBusy: boolean;
   onFocusTransition: ReturnType<typeof useFocusSession>["transition"];
-  onAddTask: () => Promise<void>;
+  onAddTask: () => Promise<boolean>;
   newTask: string;
+  taskCreatePending: boolean;
   onNewTaskChange: (value: string) => void;
   onUpdateTask: (
     id: string,
@@ -1410,13 +2032,17 @@ function TodayPage({
             value={newTask}
             onChange={(event) => onNewTaskChange(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === "Enter") void onAddTask();
+              if (event.key === "Enter" && !taskCreatePending) void onAddTask();
             }}
             placeholder="Add a task for today"
           />
-          <button className="primary-button" onClick={() => void onAddTask()}>
+          <button
+            className="primary-button"
+            disabled={taskCreatePending || !newTask.trim()}
+            onClick={() => void onAddTask()}
+          >
             <Plus size={15} />
-            Add
+            {taskCreatePending ? "Adding…" : "Add"}
           </button>
         </div>
         <div className="task-list">
@@ -1890,9 +2516,11 @@ function TaskRow({
 
 function FirstRunPage({
   today,
+  saving,
   onBegin
 }: {
   today: string;
+  saving: boolean;
   onBegin: (title: string, startFocus: boolean) => Promise<void>;
 }) {
   const [title, setTitle] = useState("");
@@ -1916,15 +2544,15 @@ function FirstRunPage({
         <div>
           <button
             className="primary-button"
-            disabled={!title.trim()}
+            disabled={saving || !title.trim()}
             onClick={() => void onBegin(title, true)}
           >
             <Play size={15} />
-            Focus on it for 25m
+            {saving ? "Saving…" : "Focus on it for 25m"}
           </button>
           <button
             className="secondary-button"
-            disabled={!title.trim()}
+            disabled={saving || !title.trim()}
             onClick={() => void onBegin(title, false)}
           >
             Just add it to today
@@ -2711,6 +3339,12 @@ function JournalPage({
   diary,
   notes,
   materials,
+  noteHistory,
+  materialHistory,
+  onLoadMoreNotes,
+  onRetryNotes,
+  onLoadMoreMaterials,
+  onRetryMaterials,
   projects,
   onDiaryChange,
   onSaveDiary,
@@ -2719,6 +3353,7 @@ function JournalPage({
   newNote,
   noteTags,
   noteProjectId,
+  noteSaving,
   onNewNoteChange,
   onNoteTagsChange,
   onNoteProjectChange,
@@ -2727,6 +3362,7 @@ function JournalPage({
   materialUrl,
   materialNotes,
   materialProjectId,
+  materialSaving,
   onMaterialTitleChange,
   onMaterialUrlChange,
   onMaterialNotesChange,
@@ -2739,6 +3375,12 @@ function JournalPage({
   diary: Diary;
   notes: Note[];
   materials: Material[];
+  noteHistory: HistoryState<Note>;
+  materialHistory: HistoryState<Material>;
+  onLoadMoreNotes: () => void;
+  onRetryNotes: () => void;
+  onLoadMoreMaterials: () => void;
+  onRetryMaterials: () => void;
   projects: Map<string, ProjectSummary>;
   onDiaryChange: <K extends keyof Diary>(key: K, value: Diary[K]) => void;
   onSaveDiary: (diary: Diary) => Promise<boolean>;
@@ -2747,6 +3389,7 @@ function JournalPage({
   newNote: string;
   noteTags: string;
   noteProjectId: string;
+  noteSaving: boolean;
   onNewNoteChange: (value: string) => void;
   onNoteTagsChange: (value: string) => void;
   onNoteProjectChange: (value: string) => void;
@@ -2755,6 +3398,7 @@ function JournalPage({
   materialUrl: string;
   materialNotes: string;
   materialProjectId: string;
+  materialSaving: boolean;
   onMaterialTitleChange: (value: string) => void;
   onMaterialUrlChange: (value: string) => void;
   onMaterialNotesChange: (value: string) => void;
@@ -2784,8 +3428,17 @@ function JournalPage({
             value={view}
             options={[
               ["daily", "Daily page"],
-              ["notes", `Notes · ${notes.length}`],
-              ["references", `References · ${materials.length}`]
+              [
+                "notes",
+                `Notes · ${noteHistory.totalCount ?? (view === "notes" ? notes.length : "…")}`
+              ],
+              [
+                "references",
+                `References · ${
+                  materialHistory.totalCount ??
+                  (view === "references" ? materials.length : "…")
+                }`
+              ]
             ]}
             onChange={onViewChange}
           />
@@ -2859,11 +3512,13 @@ function JournalPage({
             <textarea
               id="new-note"
               value={newNote}
+              disabled={noteSaving}
               onChange={(event) => onNewNoteChange(event.target.value)}
               placeholder="Capture a thought, decision, or reminder."
             />
             <input
               value={noteTags}
+              disabled={noteSaving}
               onChange={(event) => onNoteTagsChange(event.target.value)}
               placeholder="Tags, comma separated"
             />
@@ -2872,6 +3527,7 @@ function JournalPage({
               <select
                 aria-label="Project"
                 value={noteProjectId}
+                disabled={noteSaving}
                 onChange={(event) => onNoteProjectChange(event.target.value)}
               >
                 <option value="">No Project</option>
@@ -2882,13 +3538,27 @@ function JournalPage({
                 ))}
               </select>
             </label>
-            <button className="primary-button" onClick={() => void onAddNote()}>
+            <button
+              className="primary-button"
+              disabled={noteSaving || !newNote.trim()}
+              onClick={() => void onAddNote()}
+            >
               <Plus size={14} />
-              Save note
+              {noteSaving ? "Saving…" : "Save note"}
             </button>
           </section>
           <section>
-            <NoteCards notes={notes} projects={projects} />
+            <NoteCards
+              notes={notes}
+              projects={projects}
+              emptyCopy={noteHistory.loading ? "" : "No notes saved yet."}
+            />
+            <HistoryFooter
+              noun="notes"
+              state={noteHistory}
+              onLoadMore={onLoadMoreNotes}
+              onRetry={onRetryNotes}
+            />
           </section>
         </div>
       )}
@@ -2898,17 +3568,20 @@ function JournalPage({
             <h2>Save reference</h2>
             <input
               value={materialTitle}
+              disabled={materialSaving}
               onChange={(event) => onMaterialTitleChange(event.target.value)}
               placeholder="Title"
             />
             <input
               id="material-url"
               value={materialUrl}
+              disabled={materialSaving}
               onChange={(event) => onMaterialUrlChange(event.target.value)}
               placeholder="URL"
             />
             <textarea
               value={materialNotes}
+              disabled={materialSaving}
               onChange={(event) => onMaterialNotesChange(event.target.value)}
               placeholder="Why this matters"
             />
@@ -2917,6 +3590,7 @@ function JournalPage({
               <select
                 aria-label="Project"
                 value={materialProjectId}
+                disabled={materialSaving}
                 onChange={(event) => onMaterialProjectChange(event.target.value)}
               >
                 <option value="">No Project</option>
@@ -2927,13 +3601,27 @@ function JournalPage({
                 ))}
               </select>
             </label>
-            <button className="primary-button" onClick={() => void onAddMaterial()}>
+            <button
+              className="primary-button"
+              disabled={materialSaving || !materialUrl.trim()}
+              onClick={() => void onAddMaterial()}
+            >
               <LinkIcon size={14} />
-              Save reference
+              {materialSaving ? "Saving…" : "Save reference"}
             </button>
           </section>
           <section>
-            <ReferenceCards materials={materials} projects={projects} />
+            <ReferenceCards
+              materials={materials}
+              projects={projects}
+              emptyCopy={materialHistory.loading ? "" : "No references saved yet."}
+            />
+            <HistoryFooter
+              noun="references"
+              state={materialHistory}
+              onLoadMore={onLoadMoreMaterials}
+              onRetry={onRetryMaterials}
+            />
           </section>
         </div>
       )}
@@ -3274,6 +3962,7 @@ function ActivityDialog({
   projectId,
   note,
   error,
+  saving,
   onTimeChange,
   onDurationChange,
   onCategoryChange,
@@ -3292,6 +3981,7 @@ function ActivityDialog({
   projectId: string;
   note: string;
   error: string;
+  saving: boolean;
   onTimeChange: (value: string) => void;
   onDurationChange: (value: string) => void;
   onCategoryChange: (value: string) => void;
@@ -3304,7 +3994,11 @@ function ActivityDialog({
   const linkedTaskProjectId =
     tasks.find((task) => task.id === taskId)?.projectId ?? null;
   return (
-    <div className="palette-overlay" role="presentation" onMouseDown={onClose}>
+    <div
+      className="palette-overlay"
+      role="presentation"
+      onMouseDown={saving ? undefined : onClose}
+    >
       <section
         className="activity-dialog panel"
         role="dialog"
@@ -3317,18 +4011,24 @@ function ActivityDialog({
             <span className="eyebrow">Captured today</span>
             <h2>Log activity</h2>
           </div>
-          <button className="text-button" onClick={onClose}>Close</button>
+          <button className="text-button" disabled={saving} onClick={onClose}>Close</button>
         </div>
         <textarea
           autoFocus
           value={note}
+          disabled={saving}
           onChange={(event) => onNoteChange(event.target.value)}
           placeholder="Record a small win or what moved forward."
         />
         <div className="activity-dialog-grid">
           <label>
             Time
-            <input type="time" value={time} onChange={(event) => onTimeChange(event.target.value)} />
+            <input
+              type="time"
+              value={time}
+              disabled={saving}
+              onChange={(event) => onTimeChange(event.target.value)}
+            />
           </label>
           <label>
             Minutes
@@ -3337,18 +4037,27 @@ function ActivityDialog({
               min="1"
               max="1440"
               value={duration}
+              disabled={saving}
               onChange={(event) => onDurationChange(event.target.value)}
             />
           </label>
           <label>
             Category
-            <select value={category} onChange={(event) => onCategoryChange(event.target.value)}>
+            <select
+              value={category}
+              disabled={saving}
+              onChange={(event) => onCategoryChange(event.target.value)}
+            >
               {activityCategories.map((item) => <option key={item}>{item}</option>)}
             </select>
           </label>
           <label>
             Linked task
-            <select value={taskId} onChange={(event) => onTaskChange(event.target.value)}>
+            <select
+              value={taskId}
+              disabled={saving}
+              onChange={(event) => onTaskChange(event.target.value)}
+            >
               <option value="">No linked task</option>
               {tasks.map((task) => <option key={task.id} value={task.id}>{task.title}</option>)}
             </select>
@@ -3358,7 +4067,7 @@ function ActivityDialog({
             <select
               aria-label="Project"
               value={linkedTaskProjectId ?? projectId}
-              disabled={Boolean(linkedTaskProjectId)}
+              disabled={saving || Boolean(linkedTaskProjectId)}
               onChange={(event) => onProjectChange(event.target.value)}
             >
               <option value="">No Project</option>
@@ -3372,9 +4081,9 @@ function ActivityDialog({
           </label>
         </div>
         {error && <p className="form-error">{error}</p>}
-        <button className="primary-button" onClick={() => void onSave()}>
+        <button className="primary-button" disabled={saving} onClick={() => void onSave()}>
           <Plus size={14} />
-          Add activity
+          {saving ? "Saving…" : "Add activity"}
         </button>
       </section>
     </div>
@@ -3554,10 +4263,12 @@ function ScoreDots({
 
 function NoteCards({
   notes,
-  projects
+  projects,
+  emptyCopy = "No notes captured today."
 }: {
   notes: Note[];
   projects: Map<string, ProjectSummary>;
+  emptyCopy?: string;
 }) {
   return (
     <div className="note-list">
@@ -3572,17 +4283,19 @@ function NoteCards({
           </small>
         </article>
       ))}
-      {!notes.length && <p className="empty-copy">No notes captured today.</p>}
+      {!notes.length && emptyCopy && <p className="empty-copy">{emptyCopy}</p>}
     </div>
   );
 }
 
 function ReferenceCards({
   materials,
-  projects
+  projects,
+  emptyCopy = "No references saved yet."
 }: {
   materials: Material[];
   projects: Map<string, ProjectSummary>;
+  emptyCopy?: string;
 }) {
   return (
     <div className="material-list">
@@ -3605,9 +4318,60 @@ function ReferenceCards({
           <ExternalLink size={13} />
         </a>
       ))}
-      {!materials.length && <p className="empty-copy">No references saved yet.</p>}
+      {!materials.length && emptyCopy && <p className="empty-copy">{emptyCopy}</p>}
     </div>
   );
+}
+
+function HistoryFooter<T>({
+  noun,
+  state,
+  onLoadMore,
+  onRetry
+}: {
+  noun: string;
+  state: HistoryState<T>;
+  onLoadMore: () => void;
+  onRetry: () => void;
+}) {
+  if (state.error) {
+    return (
+      <div className="history-status" role="alert">
+        <span>{state.error}</span>
+        <button className="secondary-button" onClick={onRetry}>
+          Retry
+        </button>
+      </div>
+    );
+  }
+  if (state.loading) {
+    return (
+      <p className="history-status" role="status">
+        Loading {noun}…
+      </p>
+    );
+  }
+  if (state.nextCursor) {
+    return (
+      <div className="history-status">
+        <span>
+          Showing {state.items.length}
+          {state.totalCount === null ? "" : ` of ${state.totalCount}`} {noun}
+        </span>
+        <button className="secondary-button" onClick={onLoadMore}>
+          Load more
+        </button>
+      </div>
+    );
+  }
+  if (state.loaded && state.totalCount !== null) {
+    return (
+      <p className="history-status" role="status">
+        All {state.totalCount} {noun} loaded.
+      </p>
+    );
+  }
+  return null;
 }
 
 function ReviewMetric({

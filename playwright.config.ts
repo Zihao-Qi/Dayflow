@@ -1,5 +1,8 @@
 import { defineConfig, devices } from "@playwright/test";
-import { testDatabaseUrl } from "./tests/e2e/database";
+import {
+  testBackupDirectory,
+  testDatabaseUrl
+} from "./tests/e2e/database";
 
 const baseURL = "http://127.0.0.1:3100";
 
@@ -23,7 +26,9 @@ export default defineConfig({
     reuseExistingServer: false,
     timeout: 120_000,
     env: {
-      DATABASE_URL: testDatabaseUrl
+      DATABASE_URL: testDatabaseUrl,
+      DAYFLOW_BACKUP_DIRECTORY: testBackupDirectory,
+      DAYFLOW_DISABLE_RESTORE: "1"
     }
   }
 });

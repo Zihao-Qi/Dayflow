@@ -30,7 +30,7 @@ export async function addToFocusQueue(
     });
     if (!task) throw new FocusQueueNotFoundError("Task not found.");
     if (task.status === TaskStatus.DONE) {
-      throw new FocusQueueError("Completed tasks cannot be queued.");
+      throw new FocusQueueConflictError("Completed tasks cannot be queued.");
     }
 
     const current = await queueIds(transaction);
@@ -56,7 +56,9 @@ export async function reorderFocusQueue(
       new Set(ids).size !== ids.length ||
       current.some((id) => !ids.includes(id))
     ) {
-      throw new FocusQueueError("Queue order is out of date. Refresh and try again.");
+      throw new FocusQueueConflictError(
+        "Queue order is out of date. Refresh and try again."
+      );
     }
     await writeQueueOrder(transaction, ids);
     return listFocusQueue(transaction);
@@ -141,3 +143,4 @@ function sameOrder(left: string[], right: string[]) {
 
 export class FocusQueueError extends Error {}
 export class FocusQueueNotFoundError extends FocusQueueError {}
+export class FocusQueueConflictError extends FocusQueueError {}

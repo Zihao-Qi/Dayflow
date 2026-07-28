@@ -29,7 +29,7 @@ backlogs, progress tracking, and confirmation-based unfinished-task handling is:
 The July 27 independent review produced two corrective specifications:
 
 - `docs/specs/EVIDENCE_INTEGRITY_V1.md` — implemented July 27
-- `docs/specs/LOCAL_DATA_RELIABILITY_V1.md`
+- `docs/specs/LOCAL_DATA_RELIABILITY_V1.md` — implemented July 27
 
 The canonical workspace navigation decision is:
 
@@ -102,6 +102,33 @@ Funemployment Day has a narrower and immediately understandable promise around r
   effort budget.
 - Confirms cancellation when a Focus Session has accumulated meaningful work.
 - Makes Activity span the tablet grid instead of leaving an empty panel cell.
+
+### Local Data Reliability
+
+- Preserves Task, Activity, Note, Material, Project, and Phase drafts until the
+  server returns a validated canonical record.
+- Makes retried Task, Activity, Note, Material, Project, Phase, and Focus
+  Session creates idempotent with stable client mutation IDs and transactional
+  durable receipts; Diary uses its unique date as a natural key.
+- Centralizes bounded API validation and returns typed validation, not-found,
+  conflict, and internal errors without exposing database details.
+- Keeps Notes and References completely reachable with stable cursor
+  pagination and snapshot-consistent totals.
+- Provides a complete, versioned JSON export without dashboard preview caps.
+- Uses checked-in migrations for supported upgrades and tests every prior
+  schema fixture.
+- Adds atomic, checksummed `db:backup` and conservative `db:restore` commands.
+  Restore verifies data, relationships, the exact schema, and migration
+  checksums, recreates a missing working database, and retains a safety backup
+  before replacing an existing one.
+- Adds a local **Data & backups** dialog for creating, downloading, inspecting,
+  and selecting managed backups. UI restores are checksum-bound and staged for
+  the next process startup, before the first Prisma request opens the database.
+  Pre-replacement failures preserve the active database; interrupted
+  post-replacement outcomes direct the user to verify data and retain any
+  safety copy that was actually created.
+- Runs browser, migration, and destructive backup tests against disposable
+  databases outside the user’s active data path.
 
 ### Projects and Multi-Layer Planning
 
@@ -225,7 +252,7 @@ Funemployment Day has a narrower and immediately understandable promise around r
 - Shows unfinished tasks.
 - Provides a reflection area for planning tomorrow.
 
-### Agent Integration Placeholder
+### Agent Export
 
 - Includes a local export API route for external agent consumption:
 
@@ -233,8 +260,11 @@ Funemployment Day has a narrower and immediately understandable promise around r
 /api/agent-export
 ```
 
-This is intended as a future integration point for tools such as Hermes agent.
-The endpoint is exposed through the Tools menu instead of primary navigation.
+The versioned endpoint exports complete Tasks, schedule changes, Projects,
+Phases, Focus Sessions, Notes, Diary entries, Materials, Time Blocks, and
+Activities for analysis or a future integration such as Hermes. It is exposed
+through the Tools menu instead of primary navigation. It is supplemental; the
+checksummed database artifact is the lossless restore format.
 
 ## Data and Local Setup
 
@@ -256,8 +286,11 @@ Useful commands:
 
 ```bash
 npm run db:setup
+npm run db:backup
+npm run db:restore -- --from /path/to/dayflow.dayflow-backup --confirm-replace
 npm run dev
 npm run test:unit
+npm run test:backup
 npm run test:migrations
 npm run typecheck
 npm run build
@@ -276,6 +309,7 @@ The following checks have passed:
 ```bash
 npm run test:e2e
 npm run test:unit
+npm run test:backup
 npm run test:migrations
 npm run typecheck
 npm run build
@@ -285,7 +319,14 @@ The Playwright browser suite runs against a disposable SQLite database in the
 operating system's temporary directory. It covers focus-session persistence and
 Activity recording, activity deletion, task completion, section navigation,
 compact mode, task reordering, matrix placement, Project workflows, and narrow
-mobile navigation.
+mobile navigation. Reliability scenarios also cover failed and malformed
+creates, idempotent replay, more than 100 Notes and References, and complete
+JSON export. Managed-backup browser coverage verifies creation, download,
+confirmation gating, pending-restore cancellation, and visible scheduling
+failure without enabling live restore. The destructive integration suite
+covers backup/restore round trips, checksum changes after staging, interrupted
+restore markers, a real staged Next startup before first bootstrap, and corrupt
+artifacts in its own temporary directory.
 
 The app has also been opened and visually checked in Chrome at:
 
@@ -322,12 +363,17 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
 - Activity categories use a fixed default list; user-defined categories are not implemented yet.
 - Activity entry is currently focused on today rather than retrospective logging for another date.
 - The review flow does not yet produce a complete weekly evidence-of-progress summary.
-- Export is currently agent-oriented JSON; CSV export, printable summaries, and full import are not implemented.
+- Complete JSON export and lossless database backup/restore are available from
+  local commands and a managed local UI. UI restore is intentionally applied
+  on the next Dayflow startup rather than against a live Prisma connection.
+  CSV export, printable summaries, structured JSON import, arbitrary-path
+  browser import, and automatic rolling backups are not implemented.
 - The app is responsive but is not yet configured as an installable PWA.
 - Notes and materials have fields for task linking, but the UI for attaching them to tasks is still limited.
 - PDF upload/storage is not implemented yet; materials currently store reference URLs and notes.
 - There is no hosted sync, authentication, or multi-device support yet.
-- There is no real Hermes integration yet, only a local API/export placeholder.
+- There is no live Hermes integration yet; the local export endpoint is the
+  integration boundary.
 
 ## Near-Term Plan
 
@@ -372,10 +418,11 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
 
 ### 6. Add Local-First Durability and Portability
 
-- Add export and import for all local data.
+- Add opt-in rolling automatic backups around the validated manual UI.
+- Consider structured JSON import only after conflict and replacement semantics
+  are specified; keep database backup as the lossless recovery path.
 - Add CSV export for activity and task history alongside the existing JSON agent export.
 - Add a printable or shareable weekly summary.
-- Add a backup command or UI action.
 
 ### 7. Improve the App-Like Experience
 
@@ -393,21 +440,17 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
 
 ## Suggested Next Technical Steps
 
-1. Add focused browser tests for the main flows:
-   - Add task
-   - Complete task
-   - Add activity
-   - Add note
-   - Add material
-   - Update urgency and importance
-   - Drag reorder tasks
-   - Toggle compact mode
-2. Build the first weekly evidence-of-progress summary from tasks, activities, diary state, notes, and materials.
-3. Add CSV export and a small data export/import UI.
-4. Add activity editing, custom categories, and an optional timer.
-5. Improve task-to-note and task-to-material linking.
-6. Add installable PWA metadata and verify offline/local behavior.
-7. Add a handoff convention:
+1. Keep the reliability, migration, and backup gates mandatory as feature work
+   resumes.
+2. Build the first weekly evidence-of-progress summary from tasks, activities,
+   diary state, notes, and materials.
+3. Replace the remaining visible placeholder controls with working manual
+   planning actions or remove them until specified.
+4. Add CSV export.
+5. Add activity editing and custom categories.
+6. Improve task-to-note and task-to-material linking.
+7. Add installable PWA metadata and verify offline/local behavior.
+8. Keep the handoff convention:
    - Gemini records front-end design and UI changes in `DAYFLOW_CHANGELOG.md`.
    - This file records product status, implementation status, limitations, and development plan.
-8. Expand the README with the core Decide → Plan → Record → Capture → Review workflow as the app shape stabilizes.
+9. Expand the README with the core Decide → Plan → Record → Capture → Review workflow as the app shape stabilizes.

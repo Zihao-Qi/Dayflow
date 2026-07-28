@@ -1,5 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
-import { resetTestDatabase, setFocusSessionElapsedMinutes } from "./database";
+import {
+  resetTestDatabase,
+  seedJournalHistory,
+  setFocusSessionElapsedMinutes
+} from "./database";
 
 test.beforeEach(() => {
   resetTestDatabase();
@@ -46,6 +50,42 @@ function taskRow(page: Page, title: string) {
   return page.getByRole("article", { name: `Task: ${title}`, exact: true });
 }
 
+async function openDataAndBackups(page: Page) {
+  const opener = page.getByRole("button", {
+    name: "Data & backups",
+    exact: true
+  });
+  await opener.click();
+  const dialog = page.getByRole("dialog", {
+    name: "Data & backups",
+    exact: true
+  });
+  await expect(dialog).toBeVisible();
+  await expect(
+    dialog.getByRole("button", { name: "Create backup", exact: true })
+  ).toBeEnabled();
+  return { dialog, opener };
+}
+
+async function createBackupFromDialog(page: Page) {
+  const { dialog } = await openDataAndBackups(page);
+  const createResponse = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/backups" &&
+      response.request().method() === "POST"
+  );
+  await dialog
+    .getByRole("button", { name: "Create backup", exact: true })
+    .click();
+  expect((await createResponse).status()).toBe(201);
+  await expect(
+    dialog.getByRole("status").getByText("Backup created and verified.", {
+      exact: true
+    })
+  ).toBeVisible();
+  return dialog;
+}
+
 test("uses the redesigned navigation, command palette, and contextual focus rail", async ({
   page
 }) => {
@@ -70,6 +110,270 @@ test("uses the redesigned navigation, command palette, and contextual focus rail
   await expect(page.getByRole("complementary", { name: "Focus rail" })).toBeVisible();
   await page.getByRole("button", { name: "Collapse", exact: true }).click();
   await expect(page.getByRole("complementary", { name: "Focus rail" })).toHaveCount(0);
+});
+
+test("creates, lists, and exposes a verified local backup accessibly", async ({
+  page
+}) => {
+  await openDashboard(page);
+  await addTask(page, "Keep this in the recovery copy");
+
+  const { dialog, opener } = await openDataAndBackups(page);
+  const close = dialog.getByRole("button", {
+    name: "Close data and backups",
+    exact: true
+  });
+  await expect(close).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(opener).toBeFocused();
+
+  const reopened = (await openDataAndBackups(page)).dialog;
+  await expect(
+    reopened.getByText("No backups yet", { exact: true })
+  ).toBeVisible();
+  const createResponse = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/backups" &&
+      response.request().method() === "POST"
+  );
+  await reopened
+    .getByRole("button", { name: "Create backup", exact: true })
+    .click();
+  expect((await createResponse).status()).toBe(201);
+
+  await expect(
+    reopened.getByRole("status").getByText("Backup created and verified.", {
+      exact: true
+    })
+  ).toBeVisible();
+  const backups = reopened.getByRole("region", {
+    name: "Available backups",
+    exact: true
+  });
+  await expect(backups.locator(".backup-list-item")).toHaveCount(1);
+
+  const details = reopened.getByRole("region", {
+    name: "Backup details",
+    exact: true
+  });
+  await expect(details.getByText("Verified", { exact: true })).toBeVisible();
+  await expect(details.getByText("Records", { exact: true })).toBeVisible();
+  await expect(
+    details.getByText("Keep this in the recovery copy", { exact: true })
+  ).toHaveCount(0);
+  await expect(
+    details.locator(".backup-technical-details code").first()
+  ).toHaveText(/^[a-f0-9]{64}$/);
+  const downloadLink = details.getByRole("link", {
+    name: "Download",
+    exact: true
+  });
+  await expect(downloadLink).toHaveAttribute(
+    "href",
+    /^\/api\/backups\/[^/]+\/download$/
+  );
+  const downloadPath = await downloadLink.getAttribute("href");
+  expect(downloadPath).toBeTruthy();
+  const download = await page.request.get(downloadPath!);
+  expect(download.status()).toBe(200);
+  expect(download.headers()["content-disposition"]).toMatch(
+    /^attachment; filename=".+\.dayflow-backup"$/
+  );
+  expect((await download.body()).subarray(0, 15).toString("utf8")).toBe(
+    "DAYFLOW-BACKUP\n"
+  );
+
+  await page.reload();
+  await expect(taskRow(page, "Keep this in the recovery copy")).toBeVisible();
+  const afterReload = (await openDataAndBackups(page)).dialog;
+  await expect(
+    afterReload
+      .getByRole("region", { name: "Available backups", exact: true })
+      .locator(".backup-list-item")
+  ).toHaveCount(1);
+});
+
+test("gates and stages restore without replacing the running browser-test database", async ({
+  page
+}) => {
+  await openDashboard(page);
+  const dialog = await createBackupFromDialog(page);
+  const indexResponse = await page.request.get("/api/backups");
+  expect(indexResponse.status()).toBe(200);
+  const backupIndex = (await indexResponse.json()) as Record<string, unknown> & {
+    backups: Array<Record<string, unknown>>;
+  };
+  expect(backupIndex.backups).toHaveLength(1);
+
+  const restoreCapture: { request: Record<string, unknown> | null } = {
+    request: null
+  };
+  let pendingRestore: Record<string, unknown> | null = null;
+  let cancelRequests = 0;
+  await page.route("**/api/backups", async (route) => {
+    if (route.request().method() !== "GET") {
+      await route.continue();
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      json: { ...backupIndex, pendingRestore }
+    });
+  });
+  await page.route("**/api/backups/restore", async (route) => {
+    if (route.request().method() === "DELETE") {
+      cancelRequests += 1;
+      pendingRestore = null;
+      await route.fulfill({
+        status: 200,
+        json: { ...backupIndex, pendingRestore: null }
+      });
+      return;
+    }
+    if (route.request().method() !== "POST") {
+      await route.continue();
+      return;
+    }
+    restoreCapture.request = route.request().postDataJSON() as Record<
+      string,
+      unknown
+    >;
+    pendingRestore = {
+      version: 1,
+      status: "pending_restart",
+      backupId: restoreCapture.request.backupId,
+      fileName: backupIndex.backups[0]?.fileName,
+      expectedPayloadSha256:
+        restoreCapture.request.expectedPayloadSha256,
+      scheduledAt: new Date().toISOString()
+    };
+    await route.fulfill({
+      status: 202,
+      json: { ...backupIndex, pendingRestore }
+    });
+  });
+
+  await dialog
+    .getByRole("button", { name: "Restore this backup…", exact: true })
+    .click();
+  const confirmation = page.getByRole("alertdialog", {
+    name: "Restore this backup on next startup?",
+    exact: true
+  });
+  await expect(confirmation).toBeVisible();
+  await expect(
+    confirmation.getByRole("button", { name: "Cancel", exact: true })
+  ).toBeFocused();
+  await expect(confirmation).toContainText(
+    "Dayflow will keep using the current data until its next startup."
+  );
+  await expect(confirmation).toContainText(
+    "a separate safety backup of the current database"
+  );
+
+  const confirmInput = confirmation.getByLabel(
+    "Type RESTORE to schedule replacement",
+    { exact: true }
+  );
+  const restore = confirmation.getByRole("button", {
+    name: "Restore on next startup",
+    exact: true
+  });
+  await expect(restore).toBeDisabled();
+  await confirmInput.fill("restore");
+  await expect(restore).toBeDisabled();
+  await confirmInput.fill("RESTORE");
+  await expect(restore).toBeEnabled();
+  await restore.click();
+
+  await expect.poll(() => restoreCapture.request).not.toBeNull();
+  const restoreRequest = restoreCapture.request;
+  if (!restoreRequest) {
+    throw new Error("The staged restore request was not intercepted.");
+  }
+  expect(restoreRequest.confirmation).toBe("RESTORE");
+  expect(restoreRequest.backupId).toEqual(expect.any(String));
+  expect(String(restoreRequest.backupId)).not.toHaveLength(0);
+  expect(restoreRequest.expectedPayloadSha256).toEqual(
+    expect.stringMatching(/^[a-f0-9]{64}$/)
+  );
+
+  await expect(confirmation).toHaveCount(0);
+  await expect(dialog.getByRole("status")).toContainText(
+    "Restore scheduled. It will replace the data on the next Dayflow startup after creating a safety backup."
+  );
+  await expect(page.locator(".sr-only[role='status']")).toHaveText(
+    "Restore scheduled for the next Dayflow startup."
+  );
+  const pending = dialog.getByRole("region", {
+    name: "Pending restore",
+    exact: true
+  });
+  await expect(pending).toBeVisible();
+  await pending
+    .getByRole("button", { name: "Cancel pending restore", exact: true })
+    .click();
+  await expect.poll(() => cancelRequests).toBe(1);
+  await expect(pending).toHaveCount(0);
+  await expect(dialog.getByRole("status")).toContainText(
+    "Pending restore canceled. The current data will stay active."
+  );
+  await expect(page.locator(".sr-only[role='status']")).toHaveText(
+    "Pending restore canceled."
+  );
+});
+
+test("keeps restore confirmation open when scheduling fails", async ({
+  page
+}) => {
+  await openDashboard(page);
+  const dialog = await createBackupFromDialog(page);
+  await page.route("**/api/backups/restore", async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.continue();
+      return;
+    }
+    await route.fulfill({
+      status: 409,
+      json: {
+        error:
+          "The selected backup changed after it was inspected. Refresh and try again.",
+        code: "CONFLICT",
+        field: "expectedPayloadSha256"
+      }
+    });
+  });
+
+  const restoreTrigger = dialog.getByRole("button", {
+    name: "Restore this backup…",
+    exact: true
+  });
+  await restoreTrigger.click();
+  const confirmation = page.getByRole("alertdialog", {
+    name: "Restore this backup on next startup?",
+    exact: true
+  });
+  const confirmInput = confirmation.getByLabel(
+    "Type RESTORE to schedule replacement",
+    { exact: true }
+  );
+  await confirmInput.fill("RESTORE");
+  await confirmation
+    .getByRole("button", {
+      name: "Restore on next startup",
+      exact: true
+    })
+    .click();
+
+  await expect(confirmation).toBeVisible();
+  await expect(confirmInput).toHaveValue("RESTORE");
+  await expect(confirmation.getByRole("alert")).toHaveText(
+    /selected backup changed after it was inspected/i
+  );
+  await page.keyboard.press("Escape");
+  await expect(confirmation).toHaveCount(0);
+  await expect(restoreTrigger).toBeFocused();
 });
 
 test("persists task editing, completion, and accessible ordering", async ({ page }) => {
@@ -197,6 +501,441 @@ test("keeps retries silent until failure and speaks only the recovery", async ({
   await expect(failedRow.getByLabel("Task title: Preserve this title")).toHaveValue(
     "Preserve this title"
   );
+});
+
+test("preserves a new Task draft through a failed create and retries once", async ({
+  page
+}) => {
+  await openDashboard(page);
+  const draft = page.getByPlaceholder("Add a task for today");
+  await draft.fill("Keep this new task");
+
+  await page.route("**/api/tasks", async (route) => {
+    if (route.request().method() === "POST") {
+      await route.fulfill({ status: 500, json: { error: "Task create failed." } });
+      return;
+    }
+    await route.continue();
+  });
+
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(draft).toHaveValue("Keep this new task");
+  await expect(page.getByText("Task create failed.", { exact: true })).toBeVisible();
+  await expect(page.locator(".sr-only[role='status']")).toHaveText(
+    "Task was not saved."
+  );
+
+  await page.unroute("**/api/tasks");
+  const createTask = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/tasks") &&
+      response.request().method() === "POST"
+  );
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  expect((await createTask).ok()).toBe(true);
+  await expect(draft).toHaveValue("");
+  await expect(taskRow(page, "Keep this new task")).toHaveCount(1);
+});
+
+test("treats malformed Task success JSON as a failed create", async ({ page }) => {
+  await openDashboard(page);
+  const draft = page.getByPlaceholder("Add a task for today");
+  await draft.fill("Do not clear this draft");
+
+  await page.route("**/api/tasks", async (route) => {
+    if (route.request().method() === "POST") {
+      await route.fulfill({ status: 200, json: { ok: true } });
+      return;
+    }
+    await route.continue();
+  });
+
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(draft).toHaveValue("Do not clear this draft");
+  await expect(
+    page.getByText("Your task was not saved. Your draft is still here.", {
+      exact: true
+    })
+  ).toBeVisible();
+  await expect(taskRow(page, "Do not clear this draft")).toHaveCount(0);
+});
+
+test("treats malformed Task and Diary update success JSON as save failures", async ({
+  page
+}) => {
+  test.slow();
+  await openDashboard(page);
+  await addTask(page, "Keep canonical edits");
+
+  let taskAttempts = 0;
+  await page.route("**/api/tasks/*", async (route) => {
+    if (route.request().method() !== "PATCH") {
+      await route.continue();
+      return;
+    }
+    taskAttempts += 1;
+    await route.fulfill({ status: 200, json: { ok: true } });
+  });
+
+  const taskTitle = taskRow(page, "Keep canonical edits").getByLabel(
+    "Task title: Keep canonical edits"
+  );
+  await taskTitle.fill("Keep this Task draft");
+  await taskTitle.press("Meta+Enter");
+  const failedTaskRow = taskRow(page, "Keep this Task draft");
+  await expect(failedTaskRow.locator(".save-state-chip.error")).toContainText(
+    "Not saved",
+    { timeout: 8_000 }
+  );
+  expect(taskAttempts).toBe(3);
+  await expect(
+    failedTaskRow.getByLabel("Task title: Keep this Task draft")
+  ).toHaveValue("Keep this Task draft");
+  await expect(page.locator(".sr-only[role='status']")).toHaveText(
+    "Changes were not saved."
+  );
+  await page.unroute("**/api/tasks/*");
+
+  await page.getByRole("button", { name: "Journal", exact: true }).click();
+  let diaryAttempts = 0;
+  await page.route("**/api/diary", async (route) => {
+    if (route.request().method() !== "PUT") {
+      await route.continue();
+      return;
+    }
+    diaryAttempts += 1;
+    await route.fulfill({ status: 200, json: { ok: true } });
+  });
+
+  const diaryDraft = page.getByPlaceholder("Write a few lines about the day.");
+  await diaryDraft.fill("Keep this Journal draft");
+  await diaryDraft.press("Meta+Enter");
+  await expect(
+    page.locator(".journal-card-heading .save-state-chip.error")
+  ).toContainText("Not saved", { timeout: 8_000 });
+  expect(diaryAttempts).toBe(3);
+  await expect(diaryDraft).toHaveValue("Keep this Journal draft");
+  await expect(page.locator(".sr-only[role='status']")).toHaveText(
+    "Journal was not saved."
+  );
+});
+
+test("treats malformed focus queue and Phase success JSON as failures", async ({
+  page
+}) => {
+  test.slow();
+  await openDashboard(page);
+  await addTask(page, "Current malformed focus");
+  await addTask(page, "Keep out of a malformed queue");
+
+  await taskRow(page, "Current malformed focus")
+    .getByRole("button", { name: "Focus 30m", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Start 30m focus", exact: true })
+    .click();
+
+  await page.route("**/api/focus-queue", async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.continue();
+      return;
+    }
+    await route.fulfill({ status: 200, json: { ok: true } });
+  });
+  await taskRow(page, "Keep out of a malformed queue")
+    .getByRole("button", { name: /^Queue(?: next)?$/ })
+    .click();
+  await expect(page.locator(".sr-only[role='status']")).toHaveText(
+    "The focus queue was not saved."
+  );
+  await expect(
+    page.getByText("Couldn’t save the focus queue. Try that action again.", {
+      exact: true
+    })
+  ).toBeVisible();
+  await page.unroute("**/api/focus-queue");
+
+  const queued = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/focus-queue") &&
+      response.request().method() === "POST"
+  );
+  await taskRow(page, "Keep out of a malformed queue")
+    .getByRole("button", { name: /^Queue(?: next)?$/ })
+    .click();
+  expect((await queued).ok()).toBe(true);
+
+  const rail = page.getByRole("complementary", { name: "Focus rail" });
+  await rail.getByRole("button", { name: "Reorder", exact: true }).click();
+  await page.route("**/api/focus-queue", async (route) => {
+    if (!["PATCH", "DELETE"].includes(route.request().method())) {
+      await route.continue();
+      return;
+    }
+    await route.fulfill({ status: 200, json: { ok: true } });
+  });
+  await rail
+    .getByRole("button", {
+      name: "Move Keep out of a malformed queue up",
+      exact: true
+    })
+    .click();
+  await expect(page.locator(".sr-only[role='status']")).toHaveText(
+    "The new queue order was not saved."
+  );
+  await expect(
+    page.getByText("Couldn’t save the new queue order. Retry the move.", {
+      exact: true
+    })
+  ).toBeVisible();
+
+  await rail
+    .getByRole("button", {
+      name: "Remove Keep out of a malformed queue from queue",
+      exact: true
+    })
+    .click();
+  await expect(page.locator(".sr-only[role='status']")).toHaveText(
+    "The focus queue was not saved."
+  );
+  await expect(
+    page.getByText("Couldn’t remove that task from the focus queue.", {
+      exact: true
+    })
+  ).toBeVisible();
+  await page.unroute("**/api/focus-queue");
+
+  await page.getByRole("button", { name: /Projects/ }).click();
+  await page.getByRole("button", { name: "New project", exact: true }).click();
+  await page.getByLabel(/Name required/).fill("Canonical Project responses");
+  await page.getByRole("button", { name: "Create project" }).click();
+  await page.getByRole("button", { name: "Add a phase", exact: true }).click();
+  await page.getByPlaceholder("Add an optional phase").fill("Canonical Phase");
+  await page.getByRole("button", { name: "Add phase" }).click();
+
+  await page.route("**/api/phases/*", async (route) => {
+    if (route.request().method() !== "PATCH") {
+      await route.continue();
+      return;
+    }
+    await route.fulfill({ status: 200, json: { ok: true } });
+  });
+  const phaseName = page.getByLabel("Phase name: Canonical Phase");
+  await phaseName.fill("Keep this Phase draft");
+  await phaseName.press("Meta+Enter");
+  const failedPhase = page
+    .locator(".phase-header")
+    .filter({ has: phaseName });
+  await expect(failedPhase.locator(".save-state-chip.error")).toContainText(
+    "Not saved",
+    { timeout: 8_000 }
+  );
+  await expect(phaseName).toHaveValue("Keep this Phase draft");
+  await expect(
+    page.getByText(
+      "Couldn’t save the phase name. Your text is still here — retry.",
+      { exact: true }
+    )
+  ).toBeVisible();
+});
+
+test("keeps Activity and Project drafts after malformed success JSON", async ({
+  page
+}) => {
+  await openDashboard(page);
+
+  await page.getByRole("button", { name: /Search or add/ }).click();
+  await page.getByRole("button", { name: /Log an activity by hand/ }).click();
+  const activityDialog = page.getByRole("dialog", { name: "Log activity" });
+  const activityDraft = activityDialog.getByPlaceholder(
+    "Record a small win or what moved forward."
+  );
+  await activityDraft.fill("Keep this activity draft");
+  await page.route("**/api/activities", async (route) => {
+    if (route.request().method() === "POST") {
+      await route.fulfill({ status: 201, json: { id: "not-canonical" } });
+      return;
+    }
+    await route.continue();
+  });
+  await activityDialog.getByRole("button", { name: "Add activity" }).click();
+  await expect(activityDialog).toBeVisible();
+  await expect(activityDraft).toHaveValue("Keep this activity draft");
+  await expect(
+    activityDialog.getByText(
+      "Activity could not be saved. Your draft is still here.",
+      { exact: true }
+    )
+  ).toBeVisible();
+  await page.unroute("**/api/activities");
+  await activityDialog.getByRole("button", { name: "Close" }).click();
+
+  await page.getByRole("button", { name: /Projects/ }).click();
+  await page.getByRole("button", { name: "New project", exact: true }).click();
+  const projectDialog = page.getByRole("dialog", { name: "Create project" });
+  const projectDraft = projectDialog.getByLabel(/Name required/);
+  await projectDraft.fill("Keep this Project draft");
+  await page.route("**/api/projects", async (route) => {
+    if (route.request().method() === "POST") {
+      await route.fulfill({ status: 201, json: { id: "not-canonical" } });
+      return;
+    }
+    await route.continue();
+  });
+  await projectDialog.getByRole("button", { name: "Create project" }).click();
+  await expect(projectDialog).toBeVisible();
+  await expect(projectDraft).toHaveValue("Keep this Project draft");
+  await expect(
+    projectDialog.getByText(
+      "Project could not be created. Your draft is still here.",
+      { exact: true }
+    )
+  ).toBeVisible();
+});
+
+test("replays an idempotent Task create without duplicating the record", async ({
+  page
+}) => {
+  await openDashboard(page);
+  const headers = { "X-Dayflow-Mutation-Id": "e2e-task-create-1" };
+  const bootstrap = await page.request.get("/api/bootstrap");
+  const today = String((await bootstrap.json()).today).slice(0, 10);
+  const data = {
+    title: "Create exactly once",
+    date: today,
+    estimateMinutes: 30
+  };
+
+  const first = await page.request.post("/api/tasks", { data, headers });
+  const replay = await page.request.post("/api/tasks", { data, headers });
+  expect(first.status()).toBe(201);
+  expect(replay.status()).toBe(201);
+  expect((await replay.json()).id).toBe((await first.json()).id);
+
+  const conflict = await page.request.post("/api/tasks", {
+    data: { ...data, title: "A different logical request" },
+    headers
+  });
+  expect(conflict.status()).toBe(409);
+  expect((await conflict.json()).code).toBe("MUTATION_ID_CONFLICT");
+
+  await page.reload();
+  await expect(taskRow(page, "Create exactly once")).toHaveCount(1);
+  await expect(taskRow(page, "A different logical request")).toHaveCount(0);
+});
+
+test("replays idempotent Project and Phase creates without duplicates", async ({
+  page
+}) => {
+  const projectHeaders = {
+    "X-Dayflow-Mutation-Id": "e2e-project-create-1"
+  };
+  const projectData = {
+    name: "Reliable planning",
+    desiredOutcome: "One durable Project"
+  };
+  const projectFirst = await page.request.post("/api/projects", {
+    data: projectData,
+    headers: projectHeaders
+  });
+  const projectReplay = await page.request.post("/api/projects", {
+    data: projectData,
+    headers: projectHeaders
+  });
+  expect(projectFirst.status()).toBe(201);
+  expect(projectReplay.status()).toBe(201);
+  const project = (await projectFirst.json()) as { id: string };
+  expect((await projectReplay.json()).id).toBe(project.id);
+
+  const phaseHeaders = {
+    "X-Dayflow-Mutation-Id": "e2e-phase-create-1"
+  };
+  const phaseFirst = await page.request.post(
+    `/api/projects/${project.id}/phases`,
+    { data: { name: "Only once" }, headers: phaseHeaders }
+  );
+  const phaseReplay = await page.request.post(
+    `/api/projects/${project.id}/phases`,
+    { data: { name: "Only once" }, headers: phaseHeaders }
+  );
+  expect(phaseFirst.status()).toBe(201);
+  expect(phaseReplay.status()).toBe(201);
+  expect((await phaseReplay.json()).id).toBe((await phaseFirst.json()).id);
+
+  const detail = (await (
+    await page.request.get(`/api/projects/${project.id}`)
+  ).json()) as { phases: Array<{ name: string }> };
+  expect(detail.phases.filter((phase) => phase.name === "Only once")).toHaveLength(
+    1
+  );
+  const projects = (await (
+    await page.request.get("/api/projects")
+  ).json()) as Array<{ name: string }>;
+  expect(
+    projects.filter((candidate) => candidate.name === "Reliable planning")
+  ).toHaveLength(1);
+});
+
+test("replays a committed Focus start after malformed success JSON", async ({
+  page
+}) => {
+  await openDashboard(page);
+  await addTask(page, "Replay malformed Focus start");
+  await taskRow(page, "Replay malformed Focus start")
+    .getByRole("button", { name: "Focus 30m", exact: true })
+    .click();
+
+  const mutationIds: string[] = [];
+  let replacedCommittedResponse = false;
+  await page.route("**/api/focus-session", async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.continue();
+      return;
+    }
+    mutationIds.push(
+      route.request().headers()["x-dayflow-mutation-id"] ?? ""
+    );
+    if (!replacedCommittedResponse) {
+      replacedCommittedResponse = true;
+      const committed = await route.fetch();
+      expect(committed.status()).toBe(201);
+      await route.fulfill({ status: 201, json: { snapshot: {} } });
+      return;
+    }
+    await route.continue();
+  });
+
+  const start = page.getByRole("button", {
+    name: "Start 30m focus",
+    exact: true
+  });
+  await start.click();
+  await expect(
+    page.getByText("The timer could not be started.", { exact: true })
+  ).toBeVisible();
+  await expect(start).toBeVisible();
+
+  const replay = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/focus-session") &&
+      response.request().method() === "POST"
+  );
+  await start.click();
+  expect((await replay).status()).toBe(201);
+  expect(mutationIds).toHaveLength(2);
+  expect(mutationIds[0]).not.toBe("");
+  expect(mutationIds[1]).toBe(mutationIds[0]);
+  await expect(
+    page
+      .getByRole("complementary", { name: "Focus rail" })
+      .getByRole("button", { name: "Pause", exact: true })
+  ).toBeVisible();
+
+  const exported = await page.request.get("/api/agent-export");
+  expect(exported.ok()).toBe(true);
+  expect(
+    ((await exported.json()) as { focusSessions: unknown[] }).focusSessions
+  ).toHaveLength(1);
 });
 
 test("persists a focus session in the rail and collapses it to a strip", async ({
@@ -617,7 +1356,7 @@ test("rejects invalid and stale focus queue writes", async ({ page }) => {
   const stale = await page.request.patch("/api/focus-queue", {
     data: { expectedIds: original, ids: original }
   });
-  expect(stale.status()).toBe(400);
+  expect(stale.status()).toBe(409);
 });
 
 test("rejects invalid evidence dates, times, durations, and Focus kinds", async ({
@@ -680,9 +1419,9 @@ test("rejects invalid evidence dates, times, durations, and Focus kinds", async 
   ]) {
     const response = await page.request.post("/api/activities", { data });
     expect(response.status()).toBe(400);
-    expect(await response.json()).toEqual({
+    expect(await response.json()).toEqual(expect.objectContaining({
       error: expect.any(String)
-    });
+    }));
   }
 
   const invalidNoteDate = await page.request.post("/api/notes", {
@@ -720,7 +1459,7 @@ test("rejects invalid evidence dates, times, durations, and Focus kinds", async 
       noteId: "missing-note"
     }
   });
-  expect(missingMaterialNote.status()).toBe(400);
+  expect(missingMaterialNote.status()).toBe(404);
 });
 
 test("offers queue actions during a taskless live focus session", async ({
@@ -1277,10 +2016,10 @@ test("rejects conflicting Project attribution for Notes and Materials", async ({
       projectId: second.id
     }
   });
-  expect(note.status()).toBe(400);
-  expect(await note.json()).toEqual({
+  expect(note.status()).toBe(409);
+  expect(await note.json()).toEqual(expect.objectContaining({
     error: "The selected task belongs to a different project."
-  });
+  }));
 
   const material = await page.request.post("/api/materials", {
     data: {
@@ -1290,10 +2029,10 @@ test("rejects conflicting Project attribution for Notes and Materials", async ({
       projectId: second.id
     }
   });
-  expect(material.status()).toBe(400);
-  expect(await material.json()).toEqual({
+  expect(material.status()).toBe(409);
+  expect(await material.json()).toEqual(expect.objectContaining({
     error: "The selected task belongs to a different project."
-  });
+  }));
 });
 
 test("records activity through the palette and shows it in the rail", async ({ page }) => {
@@ -1839,7 +2578,7 @@ test("supports the redesigned Journal and Review destinations", async ({ page })
   await expect(
     page.locator(".journal-card-heading").getByText("Saved", { exact: true })
   ).toBeVisible();
-  await page.getByRole("button", { name: "Notes · 0", exact: true }).click();
+  await page.getByRole("button", { name: /Notes/ }).click();
   await page
     .getByPlaceholder("Capture a thought, decision, or reminder.")
     .fill("Keep the interface calm.");
@@ -1852,7 +2591,7 @@ test("supports the redesigned Journal and Review destinations", async ({ page })
   expect((await saveNote).ok()).toBe(true);
   await expect(page.getByText("Keep the interface calm.", { exact: true })).toBeVisible();
 
-  await page.getByRole("button", { name: "References · 0", exact: true }).click();
+  await page.getByRole("button", { name: /References/ }).click();
   await page.getByPlaceholder("Title").fill("Interface notes");
   await page.getByPlaceholder("URL").fill("https://example.com/interface-notes");
   const saveReference = page.waitForResponse(
@@ -1876,6 +2615,61 @@ test("supports the redesigned Journal and Review destinations", async ({ page })
   await expect(
     page.locator(".reflection-heading").getByText("Saved", { exact: true })
   ).toBeVisible();
+});
+
+test("reaches complete Note and Material history through stable pagination", async ({
+  page
+}) => {
+  seedJournalHistory();
+  await openDashboard(page);
+  await page.getByRole("button", { name: "Journal", exact: true }).click();
+
+  await page.getByRole("button", { name: /Notes/ }).click();
+  await expect(page.getByRole("button", { name: "Notes · 105" })).toBeVisible();
+  await expect(page.getByText("History note 104", { exact: true })).toBeVisible();
+  await expect(page.getByText("History note 000", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Load more" }).click();
+  await expect(page.getByText("Showing 100 of 105 notes", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Load more" }).click();
+  await expect(page.getByText("History note 000", { exact: true })).toBeVisible();
+  await expect(page.getByText("All 105 notes loaded.", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: /References/ }).click();
+  await expect(
+    page.getByRole("button", { name: "References · 105" })
+  ).toBeVisible();
+  await expect(
+    page.getByText("History reference 104", { exact: true })
+  ).toBeVisible();
+  await expect(
+    page.getByText("History reference 000", { exact: true })
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Load more" }).click();
+  await page.getByRole("button", { name: "Load more" }).click();
+  await expect(
+    page.getByText("History reference 000", { exact: true })
+  ).toBeVisible();
+  await expect(
+    page.getByText("All 105 references loaded.", { exact: true })
+  ).toBeVisible();
+});
+
+test("exports complete user history without dashboard preview caps", async ({ page }) => {
+  seedJournalHistory();
+
+  const response = await page.request.get("/api/agent-export");
+  expect(response.ok()).toBe(true);
+  const exported = (await response.json()) as {
+    exportFormat: string;
+    exportVersion: number;
+    notes: Array<{ id: string }>;
+    materials: Array<{ id: string }>;
+  };
+
+  expect(exported.exportFormat).toBe("dayflow-json");
+  expect(exported.exportVersion).toBe(1);
+  expect(exported.notes).toHaveLength(105);
+  expect(exported.materials).toHaveLength(105);
 });
 
 test("preserves Note and Material drafts when a write is rejected", async ({

@@ -26,15 +26,17 @@ const focusSessionInclude = {
   }
 };
 
-export async function getFocusSnapshot() {
+export async function getFocusSnapshot(
+  database: Prisma.TransactionClient | typeof prisma = prisma
+) {
   const { start, end } = sameDayRange();
   const [active, pendingCompletion, completed, focused] = await Promise.all([
-    prisma.focusSession.findFirst({
+    database.focusSession.findFirst({
       where: { status: { in: ["RUNNING", "PAUSED"] } },
       orderBy: { startedAt: "desc" },
       include: focusSessionInclude
     }),
-    prisma.focusSession.findFirst({
+    database.focusSession.findFirst({
       where: {
         kind: "FOCUS",
         status: "COMPLETED",
@@ -43,7 +45,7 @@ export async function getFocusSnapshot() {
       orderBy: { completedAt: "desc" },
       include: focusSessionInclude
     }),
-    prisma.focusSession.findMany({
+    database.focusSession.findMany({
       where: {
         kind: "FOCUS",
         status: "COMPLETED",
@@ -51,7 +53,7 @@ export async function getFocusSnapshot() {
       },
       select: { actualMinutes: true }
     }),
-    prisma.activityEntry.aggregate({
+    database.activityEntry.aggregate({
       where: {
         origin: "FOCUS",
         startedAt: { gte: start, lt: end }
@@ -70,13 +72,16 @@ export async function getFocusSnapshot() {
   };
 }
 
-export async function startFocusSession(input: {
-  kind?: string;
-  plannedMinutes: number;
-  label?: string;
-  taskId?: string | null;
-  projectId?: string | null;
-}) {
+export async function startFocusSession(
+  input: {
+    kind?: string;
+    plannedMinutes: number;
+    label?: string;
+    taskId?: string | null;
+    projectId?: string | null;
+  },
+  transaction?: Prisma.TransactionClient
+) {
   const kind = parseKind(input.kind);
   const plannedMinutes = Number(input.plannedMinutes);
   if (
@@ -87,15 +92,20 @@ export async function startFocusSession(input: {
     throw new FocusSessionError("Timer duration must be between 1 and 240 minutes.");
   }
 
-  const active = await prisma.focusSession.findFirst({
+  const database = transaction ?? prisma;
+  const active = await database.focusSession.findFirst({
     where: { status: { in: ["RUNNING", "PAUSED"] } },
     select: { id: true }
   });
-  if (active) throw new FocusSessionConflictError("Finish or cancel the active timer first.");
+  if (active) {
+    throw new FocusSessionConflictError(
+      "Finish or cancel the active timer first."
+    );
+  }
 
   if (kind === "BREAK") {
     return createWithActiveSessionGuard(() =>
-      prisma.focusSession.create({
+      database.focusSession.create({
         data: {
           activeKey: 1,
           kind,
@@ -108,62 +118,71 @@ export async function startFocusSession(input: {
   }
 
   const taskId = String(input.taskId ?? "").trim() || null;
-  let projectId = String(input.projectId ?? "").trim() || null;
-  const task = taskId
-    ? await prisma.task.findUnique({
-        where: { id: taskId },
-        select: {
-          id: true,
-          title: true,
-          projectId: true,
-          project: { select: { name: true } }
-        }
-      })
-    : null;
-  if (taskId && !task) throw new FocusSessionError("The selected task could not be found.");
+  const requestedProjectId = String(input.projectId ?? "").trim() || null;
 
-  if (task?.projectId) {
-    if (projectId && projectId !== task.projectId) {
-      throw new FocusSessionError("The selected task belongs to a different project.");
+  const createSession = async (sessionTransaction: Prisma.TransactionClient) => {
+    const task = taskId
+      ? await sessionTransaction.task.findUnique({
+          where: { id: taskId },
+          select: {
+            id: true,
+            title: true,
+            projectId: true
+          }
+        })
+      : null;
+    if (taskId && !task) {
+      throw new FocusSessionNotFoundError(
+        "The selected task could not be found."
+      );
     }
-    projectId = null;
-  } else if (projectId) {
-    const project = await prisma.project.findUnique({
-      where: { id: projectId },
-      select: { id: true }
-    });
-    if (!project) throw new FocusSessionError("The selected project could not be found.");
-  }
 
-  const label =
-    String(input.label ?? "").trim() ||
-    task?.title ||
-    (projectId
-      ? (
-          await prisma.project.findUnique({
-            where: { id: projectId },
-            select: { name: true }
-          })
-        )?.name
-      : "") ||
-    "Focus session";
+    let projectId = requestedProjectId;
+    let projectName = "";
+    if (task?.projectId) {
+      if (projectId && projectId !== task.projectId) {
+        throw new FocusSessionConflictError(
+          "The selected task belongs to a different project."
+        );
+      }
+      projectId = null;
+    } else if (projectId) {
+      const project = await sessionTransaction.project.findUnique({
+        where: { id: projectId },
+        select: { name: true }
+      });
+      if (!project) {
+        throw new FocusSessionNotFoundError(
+          "The selected project could not be found."
+        );
+      }
+      projectName = project.name;
+    }
+
+    const label =
+      String(input.label ?? "").trim() ||
+      task?.title ||
+      projectName ||
+      "Focus session";
+    const session = await sessionTransaction.focusSession.create({
+      data: {
+        activeKey: 1,
+        kind,
+        plannedMinutes,
+        label,
+        taskId,
+        projectId
+      },
+      include: focusSessionInclude
+    });
+    if (taskId) await consumeFocusQueueTask(sessionTransaction, taskId);
+    return session;
+  };
 
   return createWithActiveSessionGuard(() =>
-    prisma.$transaction(async (transaction) => {
-      const session = await transaction.focusSession.create({
-        data: {
-          activeKey: 1,
-          kind,
-          plannedMinutes,
-          label,
-          taskId,
-          projectId
-        },
-        include: focusSessionInclude
-      });
-      if (taskId) await consumeFocusQueueTask(transaction, taskId);
-      return session;
-    })
+    transaction
+      ? createSession(transaction)
+      : prisma.$transaction(createSession)
   );
 }
 
@@ -181,11 +200,15 @@ export async function transitionFocusSession(
     where: { id },
     include: focusSessionInclude
   });
-  if (!session) throw new FocusSessionError("Focus session not found.");
+  if (!session) {
+    throw new FocusSessionNotFoundError("Focus session not found.");
+  }
 
   if (action === "pause") {
     if (session.status !== "RUNNING") {
-      throw new FocusSessionError("Only a running timer can be paused.");
+      throw new FocusSessionConflictError(
+        "Only a running timer can be paused."
+      );
     }
     const paused = await prisma.focusSession.updateMany({
       where: { id, status: "RUNNING", activeKey: 1 },
@@ -197,7 +220,9 @@ export async function transitionFocusSession(
 
   if (action === "resume") {
     if (session.status !== "PAUSED" || !session.pausedAt) {
-      throw new FocusSessionError("Only a paused timer can be resumed.");
+      throw new FocusSessionConflictError(
+        "Only a paused timer can be resumed."
+      );
     }
     const pausedSeconds = Math.max(
       0,
@@ -217,7 +242,9 @@ export async function transitionFocusSession(
 
   if (action === "cancel") {
     if (!isActive(session.status)) {
-      throw new FocusSessionError("This timer is no longer active.");
+      throw new FocusSessionConflictError(
+        "This timer is no longer active."
+      );
     }
     const canceled = await prisma.focusSession.updateMany({
       where: {
@@ -238,7 +265,9 @@ export async function transitionFocusSession(
 
   if (action === "enrich" || action === "record") {
     if (session.kind !== "FOCUS" || session.status !== "COMPLETED") {
-      throw new FocusSessionError("Only a completed focus block can be enriched.");
+      throw new FocusSessionConflictError(
+        "Only a completed focus block can be enriched."
+      );
     }
     const note = String(input.note ?? "").trim();
     const category = String(input.category ?? "").trim() || "Deep Work";
@@ -314,7 +343,9 @@ export async function transitionFocusSession(
       };
     }
     if (!isActive(session.status)) {
-      throw new FocusSessionError("This timer is no longer active.");
+      throw new FocusSessionConflictError(
+        "This timer is no longer active."
+      );
     }
 
     const effectiveEnd = session.status === "PAUSED" && session.pausedAt ? session.pausedAt : now;
@@ -388,6 +419,7 @@ export async function transitionFocusSession(
 
 export class FocusSessionError extends Error {}
 export class FocusSessionConflictError extends FocusSessionError {}
+export class FocusSessionNotFoundError extends FocusSessionError {}
 
 function parseKind(value: unknown): FocusSessionKind {
   const kind = String(value ?? "FOCUS").trim().toUpperCase();

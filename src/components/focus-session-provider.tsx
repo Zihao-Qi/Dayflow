@@ -13,8 +13,15 @@ import {
   FocusSessionKind,
   FocusSessionRecord,
   FocusSnapshot,
-  focusRemainingSeconds
+  focusRemainingSeconds,
+  isFocusSessionRecord,
+  isFocusSnapshot,
+  isFocusStartResponse
 } from "@/lib/focus-domain";
+import {
+  prepareFocusStartAttempt,
+  type FocusStartAttempt
+} from "@/lib/focus-start-idempotency";
 
 export type FocusStartInput = {
   kind?: FocusSessionKind;
@@ -61,6 +68,30 @@ type TransitionResult = {
 const FocusSessionContext = createContext<FocusSessionContextValue | null>(null);
 const retryNextStorageKey = "dayflow-focus-retry-next";
 
+function isTransitionResult(value: unknown): value is TransitionResult {
+  if (!value || typeof value !== "object") return false;
+  const result = value as Partial<TransitionResult>;
+  return (
+    typeof result.completed === "boolean" &&
+    (result.suggestedBreakMinutes === null ||
+      (Number.isInteger(result.suggestedBreakMinutes) &&
+        Number(result.suggestedBreakMinutes) >= 0)) &&
+    (result.completedSession === undefined ||
+      result.completedSession === null ||
+      isFocusSessionRecord(result.completedSession)) &&
+    isFocusSnapshot(result.snapshot)
+  );
+}
+
+function responseError(value: unknown, fallback: string) {
+  return value &&
+    typeof value === "object" &&
+    "error" in value &&
+    typeof value.error === "string"
+    ? value.error
+    : fallback;
+}
+
 export function FocusSessionProvider({ children }: { children: React.ReactNode }) {
   const [snapshot, setSnapshot] = useState<FocusSnapshot | null>(null);
   const [now, setNow] = useState(() => Date.now());
@@ -73,6 +104,7 @@ export function FocusSessionProvider({ children }: { children: React.ReactNode }
   >("unsupported");
   const [activityRevision, setActivityRevision] = useState(0);
   const autoFinishingId = useRef<string | null>(null);
+  const startAttempt = useRef<FocusStartAttempt | null>(null);
   const active = snapshot?.active ?? null;
   const pendingCompletion = snapshot?.pendingCompletion ?? null;
   const rememberRetryNext = useCallback((next: FocusStartInput | null) => {
@@ -90,8 +122,12 @@ export function FocusSessionProvider({ children }: { children: React.ReactNode }
     if ("Notification" in window) setNotificationState(Notification.permission);
     void fetch("/api/focus-session", { cache: "no-store" })
       .then(async (response) => {
-        if (!response.ok) throw new Error("Focus timer could not be loaded.");
-        const result = (await response.json()) as FocusSnapshot;
+        const result: unknown = await response.json().catch(() => null);
+        if (!response.ok || !isFocusSnapshot(result)) {
+          throw new Error(
+            responseError(result, "Focus timer could not be loaded.")
+          );
+        }
         if (live) {
           setSnapshot(result);
           if (result.active || result.pendingCompletion) {
@@ -139,8 +175,12 @@ export function FocusSessionProvider({ children }: { children: React.ReactNode }
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action })
         });
-        const result = (await response.json()) as TransitionResult;
-        if (!response.ok) throw new Error(result.error ?? "The timer could not be updated.");
+        const result: unknown = await response.json().catch(() => null);
+        if (!response.ok || !isTransitionResult(result)) {
+          throw new Error(
+            responseError(result, "The timer could not be updated.")
+          );
+        }
         setSnapshot(result.snapshot);
         if (action === "complete") {
           notifyCompletion(current);
@@ -189,22 +229,26 @@ export function FocusSessionProvider({ children }: { children: React.ReactNode }
       setBusy(true);
       setError("");
       try {
+        const attempt = prepareFocusStartAttempt(startAttempt.current, {
+          ...input,
+          plannedMinutes: minutes
+        });
+        startAttempt.current = attempt;
         const response = await fetch("/api/focus-session", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            ...input,
-            kind: input.kind ?? "FOCUS",
-            plannedMinutes: minutes
-          })
+          headers: {
+            "Content-Type": "application/json",
+            "X-Dayflow-Mutation-Id": attempt.mutationId
+          },
+          body: JSON.stringify(attempt.payload)
         });
-        const result = (await response.json()) as {
-          snapshot?: FocusSnapshot;
-          error?: string;
-        };
-        if (!response.ok || !result.snapshot) {
-          throw new Error(result.error ?? "The timer could not be started.");
+        const result: unknown = await response.json().catch(() => null);
+        if (!response.ok || !isFocusStartResponse(result)) {
+          throw new Error(
+            responseError(result, "The timer could not be started.")
+          );
         }
+        startAttempt.current = null;
         setSnapshot(result.snapshot);
         setSuggestedBreak(null);
         rememberRetryNext(null);
@@ -243,9 +287,14 @@ export function FocusSessionProvider({ children }: { children: React.ReactNode }
             taskCompleted: input.taskCompleted
           })
         });
-        const result = (await response.json()) as TransitionResult;
-        if (!response.ok) {
-          throw new Error(result.error ?? "The completion record could not be saved.");
+        const result: unknown = await response.json().catch(() => null);
+        if (!response.ok || !isTransitionResult(result)) {
+          throw new Error(
+            responseError(
+              result,
+              "The completion record could not be saved."
+            )
+          );
         }
         setSnapshot(result.snapshot);
         setSuggestedBreak(null);
@@ -254,25 +303,33 @@ export function FocusSessionProvider({ children }: { children: React.ReactNode }
         setActivityRevision((revision) => revision + 1);
         let nextSnapshot = result.snapshot;
         if (input.next) {
+          rememberRetryNext(input.next);
+          const attempt = prepareFocusStartAttempt(
+            startAttempt.current,
+            input.next
+          );
+          startAttempt.current = attempt;
           const nextResponse = await fetch("/api/focus-session", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              ...input.next,
-              kind: input.next.kind ?? "FOCUS"
-            })
+            headers: {
+              "Content-Type": "application/json",
+              "X-Dayflow-Mutation-Id": attempt.mutationId
+            },
+            body: JSON.stringify(attempt.payload)
           });
-          const nextResult = (await nextResponse.json()) as {
-            snapshot?: FocusSnapshot;
-            error?: string;
-          };
-          if (!nextResponse.ok || !nextResult.snapshot) {
-            rememberRetryNext(input.next);
+          const nextResult: unknown = await nextResponse
+            .json()
+            .catch(() => null);
+          if (!nextResponse.ok || !isFocusStartResponse(nextResult)) {
             throw new Error(
-              nextResult.error ?? "The next queue item could not be started."
+              responseError(
+                nextResult,
+                "The next queue item could not be started."
+              )
             );
           }
           nextSnapshot = nextResult.snapshot;
+          startAttempt.current = null;
           rememberRetryNext(null);
         }
         setSnapshot(nextSnapshot);

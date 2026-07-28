@@ -1,0 +1,1094 @@
+import { createHash, randomUUID } from "node:crypto";
+import {
+  closeSync,
+  constants as fsConstants,
+  fstatSync,
+  fsyncSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  writeFileSync
+} from "node:fs";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
+import {
+  createDatabaseBackup,
+  defaultBackupPath,
+  inspectOpenDatabaseBackup,
+  resolveActiveDatabase,
+  restoreDatabaseBackup
+} from "../../scripts/database-backup";
+
+const BACKUP_FILE_PATTERN =
+  /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}\.dayflow-backup$/;
+const BACKUP_ID_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+const PENDING_FILE = ".dayflow-restore-pending.json";
+const APPLYING_FILE = ".dayflow-restore-applying.json";
+const STATUS_FILE = ".dayflow-restore-status.json";
+const OWNER_FILE = ".dayflow-restore-owner.json";
+const METADATA_VERSION = 1;
+const RESTORE_OWNER_POLL_MS = 100;
+const RESTORE_OWNER_WAIT_MS = 10 * 60 * 1000;
+const RESTORE_OWNER_STALE_MS = 6 * 60 * 60 * 1000;
+const MAX_METADATA_BYTES = 64 * 1024;
+const MAX_PERSISTED_ERROR_LENGTH = 600;
+
+export type ManagedBackupSummary = {
+  id: string;
+  fileName: string;
+  path: string;
+  createdAt: string | null;
+  applicationVersion: string | null;
+  schemaVersion: string | null;
+  sizeBytes: number;
+  payloadBytes: number | null;
+  payloadSha256: string | null;
+  totalRecords: number | null;
+  recordCounts: Record<string, number>;
+  status: "verified" | "invalid";
+  error?: string;
+};
+
+export type PendingRestore = {
+  version: typeof METADATA_VERSION;
+  status: "pending_restart";
+  backupId: string;
+  fileName: string;
+  expectedPayloadSha256: string;
+  scheduledAt: string;
+  safetyBackupPath?: string;
+};
+
+export type RestoreStatus = {
+  version: typeof METADATA_VERSION;
+  status: "succeeded" | "failed";
+  backupId: string;
+  fileName: string;
+  requestedAt: string;
+  completedAt: string;
+  safetyBackupPath: string | null;
+  schemaVersion?: string;
+  recordCounts?: Record<string, number>;
+  error?: string;
+};
+
+export type ManagedBackupIndex = {
+  directory: string;
+  backups: ManagedBackupSummary[];
+  pendingRestore: Record<string, unknown> | null;
+  lastRestore: Record<string, unknown> | null;
+};
+
+export type BackupManagementOptions = {
+  repositoryRoot?: string;
+  environment?: NodeJS.ProcessEnv;
+  now?: Date;
+};
+
+type BackupContext = {
+  repositoryRoot: string;
+  environment: NodeJS.ProcessEnv;
+  databasePath: string;
+  directory: string;
+  directoryExists: boolean;
+};
+
+type RestoreOwner = {
+  version: typeof METADATA_VERSION;
+  token: string;
+  pid: number;
+  startedAt: string;
+};
+
+export class BackupManagementError extends Error {
+  constructor(
+    message: string,
+    readonly code:
+      | "VALIDATION_ERROR"
+      | "NOT_FOUND"
+      | "CONFLICT"
+      | "CORRUPT_BACKUP"
+      | "RESTORE_DISABLED",
+    readonly status: 400 | 404 | 409 | 422 | 503,
+    readonly field?: string
+  ) {
+    super(message);
+    this.name = "BackupManagementError";
+  }
+}
+
+let operationInProgress = false;
+
+export function getManagedBackupIndex(
+  options: BackupManagementOptions = {}
+): ManagedBackupIndex {
+  const context = resolveBackupContext(options, "read");
+  return {
+    directory: context.directory,
+    backups: listBackupFiles(context),
+    pendingRestore: readMetadataForDisplay(
+      join(context.directory, PENDING_FILE),
+      "Pending restore metadata could not be read. Cancel it before scheduling another restore."
+    ),
+    lastRestore: readMetadataForDisplay(
+      join(context.directory, STATUS_FILE),
+      "The last restore status could not be read."
+    )
+  };
+}
+
+export function createManagedBackup(
+  options: BackupManagementOptions = {}
+): ManagedBackupSummary {
+  return withOperation(() => {
+    const context = resolveBackupContext(options, "mutation");
+    const now = options.now ?? new Date();
+    const outputPath = join(
+      context.directory,
+      basename(defaultBackupPath(context.databasePath, "manual", now))
+    );
+    const result = createDatabaseBackup({
+      databasePath: context.databasePath,
+      outputPath,
+      repositoryRoot: context.repositoryRoot,
+      now
+    });
+    return verifiedSummary(result.destinationPath);
+  });
+}
+
+export function stageManagedRestore(
+  input: {
+    backupId: string;
+    expectedPayloadSha256: string;
+    confirmation: string;
+  },
+  options: BackupManagementOptions = {}
+): PendingRestore {
+  return withOperation(() => {
+    if (input.confirmation !== "RESTORE") {
+      throw new BackupManagementError(
+        "Type RESTORE exactly to schedule replacement.",
+        "VALIDATION_ERROR",
+        400,
+        "confirmation"
+      );
+    }
+    if (!/^[a-f0-9]{64}$/.test(input.expectedPayloadSha256)) {
+      throw new BackupManagementError(
+        "The selected backup checksum is invalid.",
+        "VALIDATION_ERROR",
+        400,
+        "expectedPayloadSha256"
+      );
+    }
+
+    const context = resolveBackupContext(options, "mutation");
+    assertRestoreEnabled(context.environment);
+    const pendingPath = join(context.directory, PENDING_FILE);
+    const applyingPath = join(context.directory, APPLYING_FILE);
+    if (pathEntryExists(pendingPath) || pathEntryExists(applyingPath)) {
+      throw new BackupManagementError(
+        "Another restore is already pending.",
+        "CONFLICT",
+        409
+      );
+    }
+
+    const backup = resolveVerifiedBackup(input.backupId, context);
+    if (backup.payloadSha256 !== input.expectedPayloadSha256) {
+      throw new BackupManagementError(
+        "The selected backup changed after it was inspected. Refresh and try again.",
+        "CONFLICT",
+        409,
+        "expectedPayloadSha256"
+      );
+    }
+
+    const pending: PendingRestore = {
+      version: METADATA_VERSION,
+      status: "pending_restart",
+      backupId: backup.id,
+      fileName: backup.fileName,
+      expectedPayloadSha256: input.expectedPayloadSha256,
+      scheduledAt: (options.now ?? new Date()).toISOString()
+    };
+    writeJsonAtomically(pendingPath, pending);
+    return pending;
+  });
+}
+
+export function cancelManagedRestore(
+  options: BackupManagementOptions = {}
+) {
+  return withOperation(() => {
+    const context = resolveBackupContext(options, "mutation");
+    const pendingPath = join(context.directory, PENDING_FILE);
+    if (!pathEntryExists(pendingPath)) {
+      throw new BackupManagementError(
+        "No restore is currently pending.",
+        "NOT_FOUND",
+        404
+      );
+    }
+    rmSync(pendingPath);
+    syncDirectory(context.directory);
+  });
+}
+
+export function resolveManagedBackupDownload(
+  backupId: string,
+  options: BackupManagementOptions = {}
+) {
+  const context = resolveBackupContext(options, "read");
+  const backupPath = resolveManagedBackupPath(backupId, context);
+  const opened = openVerifiedManagedBackup(backupPath);
+  return {
+    path: opened.summary.path,
+    fileName: opened.summary.fileName,
+    sizeBytes: opened.summary.sizeBytes,
+    fileDescriptor: opened.fileDescriptor
+  };
+}
+
+export async function applyPendingManagedRestore(
+  options: BackupManagementOptions = {}
+): Promise<RestoreStatus | null> {
+  const context = resolveBackupContext(options, "read");
+  if (context.environment.DAYFLOW_DISABLE_RESTORE === "1") return null;
+  if (!context.directoryExists) return null;
+
+  return withAsyncOperation(async () => {
+    const pendingPath = join(context.directory, PENDING_FILE);
+    const applyingPath = join(context.directory, APPLYING_FILE);
+    const statusPath = join(context.directory, STATUS_FILE);
+    if (!pathEntryExists(pendingPath) && !pathEntryExists(applyingPath)) {
+      return null;
+    }
+
+    const owner = await acquireRestoreOwnership(context.directory);
+    try {
+      if (pathEntryExists(applyingPath)) {
+        let interrupted: PendingRestore;
+        try {
+          interrupted = readPendingRestore(applyingPath);
+        } catch (error) {
+          console.error(
+            "[Dayflow restore] Interrupted restore metadata was invalid.",
+            error
+          );
+          interrupted = fallbackPendingRestore();
+        }
+
+        const completed = readRestoreStatus(statusPath);
+        if (
+          completed?.status === "succeeded" &&
+          restoreStatusMatches(completed, interrupted)
+        ) {
+          clearRestoreMarkers(context.directory);
+          return completed;
+        }
+
+        const verifiedSafetyPath = verifiedSafetyBackupPath(
+          interrupted.safetyBackupPath,
+          context.directory
+        );
+        const status = failedRestoreStatus(
+          interrupted,
+          verifiedSafetyPath
+            ? "A previous restore stopped before completion could be confirmed. Verify the active data before choosing whether to recover from the verified safety backup."
+            : "A previous restore stopped before completion could be confirmed. Verify the active data before scheduling another restore.",
+          verifiedSafetyPath
+        );
+        writeJsonAtomically(statusPath, status);
+        clearRestoreMarkers(context.directory);
+        console.error(`[Dayflow restore] ${status.error}`);
+        return status;
+      }
+      if (!pathEntryExists(pendingPath)) return null;
+
+      renameSync(pendingPath, applyingPath);
+      syncDirectory(context.directory);
+
+      let pending: PendingRestore;
+      try {
+        pending = readPendingRestore(applyingPath);
+      } catch (error) {
+        console.error(
+          "[Dayflow restore] Scheduled restore metadata was invalid.",
+          error
+        );
+        const fallback = fallbackPendingRestore();
+        const status = failedRestoreStatus(
+          fallback,
+          "The scheduled restore metadata was invalid and was discarded. The active database was not intentionally replaced.",
+          null
+        );
+        writeJsonAtomically(statusPath, status);
+        clearRestoreMarkers(context.directory);
+        return status;
+      }
+
+      const safetyBackupPath = join(
+        context.directory,
+        basename(
+          defaultBackupPath(
+            context.databasePath,
+            "restore-safety",
+            options.now ?? new Date()
+          )
+        )
+      );
+      pending = { ...pending, safetyBackupPath };
+      writeJsonAtomically(applyingPath, pending);
+
+      try {
+        const backup = resolveVerifiedBackup(pending.backupId, context);
+        if (
+          backup.fileName !== pending.fileName ||
+          backup.payloadSha256 !== pending.expectedPayloadSha256
+        ) {
+          throw new BackupManagementError(
+            "The scheduled backup changed before startup and was not restored.",
+            "CONFLICT",
+            409
+          );
+        }
+
+        const result = await restoreDatabaseBackup({
+          databasePath: context.databasePath,
+          backupPath: backup.path,
+          safetyBackupPath,
+          expectedPayloadSha256: pending.expectedPayloadSha256,
+          repositoryRoot: context.repositoryRoot,
+          onProgress: (message) =>
+            console.log(`[Dayflow restore] ${message}`)
+        });
+        const status: RestoreStatus = {
+          version: METADATA_VERSION,
+          status: "succeeded",
+          backupId: pending.backupId,
+          fileName: pending.fileName,
+          requestedAt: pending.scheduledAt,
+          completedAt: new Date().toISOString(),
+          safetyBackupPath: result.safetyBackupPath,
+          schemaVersion: result.schemaVersion,
+          recordCounts: result.restoredRecordCounts
+        };
+        writeJsonAtomically(statusPath, status);
+        clearRestoreMarkers(context.directory);
+        console.log(
+          `[Dayflow restore] Restored ${pending.fileName}. Safety backup: ${result.safetyBackupPath ?? "not needed"}.`
+        );
+        return status;
+      } catch (error) {
+        console.error("[Dayflow restore] Raw restore diagnostic:", error);
+        const safetyPath = verifiedSafetyBackupPath(
+          pending.safetyBackupPath,
+          context.directory
+        );
+        const status = failedRestoreStatus(
+          pending,
+          persistedRestoreError(error, Boolean(safetyPath)),
+          safetyPath
+        );
+        writeJsonAtomically(statusPath, status);
+        clearRestoreMarkers(context.directory);
+        console.error(`[Dayflow restore] ${status.error}`);
+        return status;
+      }
+    } finally {
+      releaseRestoreOwnership(context.directory, owner);
+    }
+  });
+}
+
+export function isValidBackupId(value: unknown): value is string {
+  return typeof value === "string" && BACKUP_ID_PATTERN.test(value);
+}
+
+function resolveBackupContext(
+  options: BackupManagementOptions,
+  access: "read" | "mutation"
+): BackupContext {
+  const repositoryRoot = resolve(options.repositoryRoot ?? process.cwd());
+  const environment = options.environment ?? process.env;
+  const { databasePath } = resolveActiveDatabase(repositoryRoot, environment);
+  const configuredDirectory = environment.DAYFLOW_BACKUP_DIRECTORY?.trim();
+  const directory = configuredDirectory
+    ? resolve(
+        isAbsolute(configuredDirectory) ? configuredDirectory : repositoryRoot,
+        isAbsolute(configuredDirectory) ? "." : configuredDirectory
+      )
+    : join(dirname(databasePath), "backups");
+
+  const directoryExists =
+    access === "mutation"
+      ? ensureManagedDirectory(directory)
+      : inspectManagedDirectory(directory);
+  return {
+    repositoryRoot,
+    environment,
+    databasePath,
+    directory,
+    directoryExists
+  };
+}
+
+function ensureManagedDirectory(directory: string) {
+  if (!inspectManagedDirectory(directory)) {
+    try {
+      mkdirSync(directory, { recursive: true, mode: 0o700 });
+    } catch (error) {
+      if (errorCode(error) !== "EEXIST") throw error;
+    }
+  }
+  if (!inspectManagedDirectory(directory)) {
+    throw new Error("The managed backup directory could not be created.");
+  }
+  return true;
+}
+
+function inspectManagedDirectory(directory: string) {
+  let stats: ReturnType<typeof lstatSync>;
+  try {
+    stats = lstatSync(directory);
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") return false;
+    throw error;
+  }
+  if (stats.isSymbolicLink() || !stats.isDirectory()) {
+    throw new BackupManagementError(
+      "The managed backup location is not a safe directory.",
+      "CONFLICT",
+      409
+    );
+  }
+  return true;
+}
+
+function listBackupFiles(context: BackupContext) {
+  if (!context.directoryExists) return [];
+  return readdirSync(context.directory, { withFileTypes: true })
+    .filter(
+      (entry) =>
+        entry.isFile() && BACKUP_FILE_PATTERN.test(entry.name)
+    )
+    .map((entry) => summarizeBackup(join(context.directory, entry.name)))
+    .sort((left, right) => {
+      if (left.status !== right.status) {
+        return left.status === "verified" ? -1 : 1;
+      }
+      return sortTimestamp(right) - sortTimestamp(left);
+    });
+}
+
+function summarizeBackup(path: string): ManagedBackupSummary {
+  const fileName = basename(path);
+  let sizeBytes = 0;
+  try {
+    const stats = lstatSync(path);
+    if (stats.isSymbolicLink() || !stats.isFile()) {
+      throw new Error("Managed backup is not a regular file.");
+    }
+    sizeBytes = stats.size;
+    return verifiedSummary(path);
+  } catch {
+    return {
+      id: backupIdForFileName(fileName),
+      fileName,
+      path,
+      createdAt: null,
+      applicationVersion: null,
+      schemaVersion: null,
+      sizeBytes,
+      payloadBytes: null,
+      payloadSha256: null,
+      totalRecords: null,
+      recordCounts: {},
+      status: "invalid",
+      error: "This backup could not be verified and cannot be restored."
+    };
+  }
+}
+
+function verifiedSummary(path: string): ManagedBackupSummary {
+  const opened = openVerifiedManagedBackup(path);
+  try {
+    return opened.summary;
+  } finally {
+    closeSync(opened.fileDescriptor);
+  }
+}
+
+function openVerifiedManagedBackup(path: string) {
+  let fileDescriptor: number | null = null;
+  try {
+    fileDescriptor = openSync(
+      path,
+      fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW
+    );
+    const stats = fstatSync(fileDescriptor);
+    if (!stats.isFile()) {
+      throw new Error("Managed backup is not a regular file.");
+    }
+    const inspection = inspectOpenDatabaseBackup(fileDescriptor, path);
+    return {
+      fileDescriptor,
+      summary: summaryFromInspection(path, inspection)
+    };
+  } catch (error) {
+    if (fileDescriptor !== null) closeSync(fileDescriptor);
+    throw error;
+  }
+}
+
+function summaryFromInspection(
+  path: string,
+  inspection: ReturnType<typeof inspectOpenDatabaseBackup>
+): ManagedBackupSummary {
+  const recordCounts = { ...inspection.manifest.recordCounts };
+  return {
+    id: backupIdForFileName(basename(path)),
+    fileName: basename(path),
+    path: inspection.sourcePath,
+    createdAt: inspection.manifest.createdAt,
+    applicationVersion: inspection.manifest.applicationVersion,
+    schemaVersion: inspection.manifest.schemaVersion,
+    sizeBytes: inspection.sizeBytes,
+    payloadBytes: inspection.manifest.payloadBytes,
+    payloadSha256: inspection.manifest.payloadSha256,
+    totalRecords: Object.values(recordCounts).reduce(
+      (total, count) => total + count,
+      0
+    ),
+    recordCounts,
+    status: "verified"
+  };
+}
+
+function resolveVerifiedBackup(
+  backupId: string,
+  context: BackupContext
+): ManagedBackupSummary & {
+  createdAt: string;
+  payloadSha256: string;
+} {
+  const path = resolveManagedBackupPath(backupId, context);
+  try {
+    const summary = verifiedSummary(path);
+    if (!summary.createdAt || !summary.payloadSha256) {
+      throw new Error("Backup metadata is incomplete.");
+    }
+    return summary as ManagedBackupSummary & {
+      createdAt: string;
+      payloadSha256: string;
+    };
+  } catch {
+    throw new BackupManagementError(
+      "The selected backup is corrupt or incompatible and cannot be restored.",
+      "CORRUPT_BACKUP",
+      422,
+      "backupId"
+    );
+  }
+}
+
+function resolveManagedBackupPath(
+  backupId: string,
+  context: BackupContext
+) {
+  if (!isValidBackupId(backupId)) {
+    throw new BackupManagementError(
+      "The backup identifier is invalid.",
+      "VALIDATION_ERROR",
+      400,
+      "backupId"
+    );
+  }
+  if (!context.directoryExists) {
+    throw new BackupManagementError(
+      "The selected backup could not be found.",
+      "NOT_FOUND",
+      404,
+      "backupId"
+    );
+  }
+  const entry = readdirSync(context.directory, { withFileTypes: true }).find(
+    (candidate) =>
+      candidate.isFile() &&
+      BACKUP_FILE_PATTERN.test(candidate.name) &&
+      backupIdForFileName(candidate.name) === backupId
+  );
+  if (!entry) {
+    throw new BackupManagementError(
+      "The selected backup could not be found.",
+      "NOT_FOUND",
+      404,
+      "backupId"
+    );
+  }
+  return join(context.directory, entry.name);
+}
+
+function backupIdForFileName(fileName: string) {
+  return createHash("sha256")
+    .update(`dayflow-managed-backup:${fileName}`)
+    .digest("base64url");
+}
+
+function sortTimestamp(backup: ManagedBackupSummary) {
+  if (backup.createdAt) {
+    const created = Date.parse(backup.createdAt);
+    if (Number.isFinite(created)) return created;
+  }
+  try {
+    const stats = lstatSync(backup.path);
+    return stats.isSymbolicLink() ? 0 : stats.mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
+function readPendingRestore(path: string): PendingRestore {
+  const value = readManagedJson(path);
+  if (
+    !isObject(value) ||
+    value.version !== METADATA_VERSION ||
+    value.status !== "pending_restart" ||
+    !isValidBackupId(value.backupId) ||
+    typeof value.fileName !== "string" ||
+    !BACKUP_FILE_PATTERN.test(value.fileName) ||
+    typeof value.expectedPayloadSha256 !== "string" ||
+    !/^[a-f0-9]{64}$/.test(value.expectedPayloadSha256) ||
+    typeof value.scheduledAt !== "string" ||
+    !Number.isFinite(Date.parse(value.scheduledAt)) ||
+    (value.safetyBackupPath !== undefined &&
+      typeof value.safetyBackupPath !== "string")
+  ) {
+    throw new Error("Pending restore metadata is invalid.");
+  }
+  return {
+    version: METADATA_VERSION,
+    status: "pending_restart",
+    backupId: value.backupId,
+    fileName: value.fileName,
+    expectedPayloadSha256: value.expectedPayloadSha256,
+    scheduledAt: value.scheduledAt,
+    ...(value.safetyBackupPath
+      ? { safetyBackupPath: value.safetyBackupPath }
+      : {})
+  };
+}
+
+function readMetadataForDisplay(path: string, failureMessage: string) {
+  if (!pathEntryExists(path)) return null;
+  try {
+    const value = readManagedJson(path);
+    return isObject(value)
+      ? value
+      : { status: "failed", error: failureMessage };
+  } catch {
+    return { status: "failed", error: failureMessage };
+  }
+}
+
+function fallbackPendingRestore(): PendingRestore {
+  return {
+    version: METADATA_VERSION,
+    status: "pending_restart",
+    backupId: "unknown",
+    fileName: "Unknown backup",
+    expectedPayloadSha256: "",
+    scheduledAt: new Date().toISOString()
+  };
+}
+
+function failedRestoreStatus(
+  pending: PendingRestore,
+  error: string,
+  safetyBackupPath: string | null
+): RestoreStatus {
+  return {
+    version: METADATA_VERSION,
+    status: "failed",
+    backupId: pending.backupId,
+    fileName: pending.fileName,
+    requestedAt: pending.scheduledAt,
+    completedAt: new Date().toISOString(),
+    safetyBackupPath,
+    error: boundPersistedError(error)
+  };
+}
+
+async function acquireRestoreOwnership(
+  directory: string
+): Promise<RestoreOwner> {
+  const ownerPath = join(directory, OWNER_FILE);
+  const deadline = Date.now() + RESTORE_OWNER_WAIT_MS;
+
+  for (;;) {
+    const owner: RestoreOwner = {
+      version: METADATA_VERSION,
+      token: randomUUID(),
+      pid: process.pid,
+      startedAt: new Date().toISOString()
+    };
+    let descriptor: number | null = null;
+    try {
+      descriptor = openSync(ownerPath, "wx", 0o600);
+      writeFileSync(
+        descriptor,
+        `${JSON.stringify(owner, null, 2)}\n`,
+        "utf8"
+      );
+      fsyncSync(descriptor);
+      closeSync(descriptor);
+      descriptor = null;
+      syncDirectory(directory);
+      return owner;
+    } catch (error) {
+      if (descriptor !== null) closeSync(descriptor);
+      if (errorCode(error) !== "EEXIST") throw error;
+    }
+
+    const ownerState = inspectRestoreOwner(ownerPath);
+    if (ownerState === "stale") {
+      quarantineStaleRestoreOwner(ownerPath, directory);
+      continue;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(
+        "Timed out waiting for another Dayflow process to finish startup restore coordination."
+      );
+    }
+    await delay(RESTORE_OWNER_POLL_MS);
+  }
+}
+
+function inspectRestoreOwner(path: string): "active" | "stale" {
+  let stats: ReturnType<typeof lstatSync>;
+  try {
+    stats = lstatSync(path);
+  } catch (error) {
+    return errorCode(error) === "ENOENT" ? "stale" : "active";
+  }
+  if (stats.isSymbolicLink() || !stats.isFile()) return "stale";
+  const age = Date.now() - stats.mtimeMs;
+  if (age > RESTORE_OWNER_STALE_MS) return "stale";
+
+  try {
+    const value = readManagedJson(path);
+    if (
+      !isObject(value) ||
+      value.version !== METADATA_VERSION ||
+      typeof value.token !== "string" ||
+      !/^[a-f0-9-]{36}$/i.test(value.token) ||
+      !Number.isSafeInteger(value.pid) ||
+      Number(value.pid) <= 0 ||
+      typeof value.startedAt !== "string" ||
+      !Number.isFinite(Date.parse(value.startedAt))
+    ) {
+      return age < 2_000 ? "active" : "stale";
+    }
+    if (
+      Date.now() - Date.parse(value.startedAt) >
+      RESTORE_OWNER_STALE_MS
+    ) {
+      return "stale";
+    }
+    return processIsAlive(Number(value.pid)) ? "active" : "stale";
+  } catch {
+    return age < 2_000 ? "active" : "stale";
+  }
+}
+
+function quarantineStaleRestoreOwner(path: string, directory: string) {
+  const quarantinePath = join(
+    directory,
+    `.${OWNER_FILE}.${process.pid}.${randomUUID()}.stale`
+  );
+  try {
+    renameSync(path, quarantinePath);
+    syncDirectory(directory);
+    rmSync(quarantinePath, { force: true });
+    syncDirectory(directory);
+  } catch (error) {
+    if (errorCode(error) !== "ENOENT") throw error;
+  }
+}
+
+function releaseRestoreOwnership(
+  directory: string,
+  owner: RestoreOwner
+) {
+  const ownerPath = join(directory, OWNER_FILE);
+  try {
+    const current = readManagedJson(ownerPath);
+    if (
+      isObject(current) &&
+      current.token === owner.token &&
+      current.pid === owner.pid
+    ) {
+      rmSync(ownerPath, { force: true });
+      syncDirectory(directory);
+    }
+  } catch (error) {
+    if (errorCode(error) !== "ENOENT") {
+      console.error(
+        "[Dayflow restore] Could not release startup restore ownership.",
+        error
+      );
+    }
+  }
+}
+
+function processIsAlive(pid: number) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return errorCode(error) === "EPERM";
+  }
+}
+
+function readRestoreStatus(path: string): RestoreStatus | null {
+  if (!pathEntryExists(path)) return null;
+  try {
+    const value = readManagedJson(path);
+    if (
+      !isObject(value) ||
+      value.version !== METADATA_VERSION ||
+      (value.status !== "succeeded" && value.status !== "failed") ||
+      typeof value.backupId !== "string" ||
+      typeof value.fileName !== "string" ||
+      typeof value.requestedAt !== "string" ||
+      !Number.isFinite(Date.parse(value.requestedAt)) ||
+      typeof value.completedAt !== "string" ||
+      !Number.isFinite(Date.parse(value.completedAt)) ||
+      (value.safetyBackupPath !== null &&
+        typeof value.safetyBackupPath !== "string")
+    ) {
+      return null;
+    }
+    return value as RestoreStatus;
+  } catch {
+    return null;
+  }
+}
+
+function restoreStatusMatches(
+  status: RestoreStatus,
+  pending: PendingRestore
+) {
+  return (
+    status.backupId === pending.backupId &&
+    status.fileName === pending.fileName &&
+    status.requestedAt === pending.scheduledAt
+  );
+}
+
+function clearRestoreMarkers(directory: string) {
+  rmSync(join(directory, APPLYING_FILE), { force: true });
+  rmSync(join(directory, PENDING_FILE), { force: true });
+  syncDirectory(directory);
+}
+
+function verifiedSafetyBackupPath(
+  candidate: string | undefined,
+  directory: string
+) {
+  if (!candidate) return null;
+  const resolvedCandidate = resolve(candidate);
+  if (
+    dirname(resolvedCandidate) !== resolve(directory) ||
+    !BACKUP_FILE_PATTERN.test(basename(resolvedCandidate))
+  ) {
+    return null;
+  }
+  try {
+    const opened = openVerifiedManagedBackup(resolvedCandidate);
+    closeSync(opened.fileDescriptor);
+    return resolvedCandidate;
+  } catch {
+    return null;
+  }
+}
+
+function persistedRestoreError(error: unknown, hasSafetyBackup: boolean) {
+  const diagnostic = messageFrom(error).toLowerCase();
+  if (
+    diagnostic.includes("was replaced, but final durability") ||
+    diagnostic.includes("release the restore lock cleanly")
+  ) {
+    return hasSafetyBackup
+      ? "The database may have been replaced, but final durability could not be confirmed. Stop Dayflow and recover from the verified safety backup if the active data cannot be opened."
+      : "The database may have been replaced, but final durability could not be confirmed. Stop Dayflow and verify the active data before continuing.";
+  }
+  if (
+    diagnostic.includes("checksum") ||
+    diagnostic.includes("corrupt") ||
+    diagnostic.includes("truncated") ||
+    diagnostic.includes("manifest")
+  ) {
+    return hasSafetyBackup
+      ? "The selected backup is corrupt or failed integrity validation and was not restored. A verified safety backup of the prior data is available."
+      : "The selected backup is corrupt or failed integrity validation and was not restored.";
+  }
+  if (
+    diagnostic.includes("changed after approval") ||
+    diagnostic.includes("changed before startup") ||
+    diagnostic.includes("active database changed")
+  ) {
+    return hasSafetyBackup
+      ? "The active database or selected backup changed during restore, so replacement was stopped. A verified safety backup is available."
+      : "The active database or selected backup changed during restore, so replacement was stopped.";
+  }
+  if (
+    diagnostic.includes("exclusive access") ||
+    diagnostic.includes("sidecar") ||
+    diagnostic.includes("busy") ||
+    diagnostic.includes("locked")
+  ) {
+    return hasSafetyBackup
+      ? "Dayflow could not obtain exclusive database access, so restore was stopped. A verified safety backup is available."
+      : "Dayflow could not obtain exclusive database access, so restore was stopped.";
+  }
+  if (
+    diagnostic.includes("schema") ||
+    diagnostic.includes("migration") ||
+    diagnostic.includes("foreign-key") ||
+    diagnostic.includes("integrity")
+  ) {
+    return hasSafetyBackup
+      ? "The backup is not compatible with this Dayflow release and was not restored. A verified safety backup is available."
+      : "The backup is not compatible with this Dayflow release and was not restored.";
+  }
+  return hasSafetyBackup
+    ? "The restore could not be completed. Verify the active data before recovering from the verified safety backup. Technical details were written to the Dayflow server log."
+    : "The restore could not be completed. The active data should be verified before another restore is scheduled. Technical details were written to the Dayflow server log.";
+}
+
+function boundPersistedError(message: string) {
+  const normalized = message.replace(/\s+/g, " ").trim();
+  if (normalized.length <= MAX_PERSISTED_ERROR_LENGTH) return normalized;
+  return `${normalized.slice(0, MAX_PERSISTED_ERROR_LENGTH - 1)}…`;
+}
+
+function readManagedJson(path: string): unknown {
+  const descriptor = openSync(
+    path,
+    fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW
+  );
+  try {
+    const stats = fstatSync(descriptor);
+    if (!stats.isFile() || stats.size > MAX_METADATA_BYTES) {
+      throw new Error("Managed backup metadata is not a safe regular file.");
+    }
+    return JSON.parse(readFileSync(descriptor, "utf8")) as unknown;
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
+function pathEntryExists(path: string) {
+  try {
+    lstatSync(path);
+    return true;
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") return false;
+    throw error;
+  }
+}
+
+function assertRestoreEnabled(environment: NodeJS.ProcessEnv) {
+  if (environment.DAYFLOW_DISABLE_RESTORE === "1") {
+    throw new BackupManagementError(
+      "Restore scheduling is disabled in this Dayflow process.",
+      "RESTORE_DISABLED",
+      503
+    );
+  }
+}
+
+function writeJsonAtomically(path: string, value: unknown) {
+  const directory = dirname(path);
+  const temporaryPath = join(
+    directory,
+    `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`
+  );
+  let descriptor: number | null = null;
+  try {
+    descriptor = openSync(temporaryPath, "wx", 0o600);
+    writeFileSync(descriptor, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+    fsyncSync(descriptor);
+    closeSync(descriptor);
+    descriptor = null;
+    renameSync(temporaryPath, path);
+    syncDirectory(directory);
+  } finally {
+    if (descriptor !== null) closeSync(descriptor);
+    rmSync(temporaryPath, { force: true });
+  }
+}
+
+function syncDirectory(path: string) {
+  const descriptor = openSync(path, "r");
+  try {
+    fsyncSync(descriptor);
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
+function withOperation<T>(operation: () => T): T {
+  if (operationInProgress) {
+    throw new BackupManagementError(
+      "Another backup operation is already running.",
+      "CONFLICT",
+      409
+    );
+  }
+  operationInProgress = true;
+  try {
+    return operation();
+  } finally {
+    operationInProgress = false;
+  }
+}
+
+async function withAsyncOperation<T>(operation: () => Promise<T>) {
+  if (operationInProgress) {
+    throw new BackupManagementError(
+      "Another backup operation is already running.",
+      "CONFLICT",
+      409
+    );
+  }
+  operationInProgress = true;
+  try {
+    return await operation();
+  } finally {
+    operationInProgress = false;
+  }
+}
+
+function messageFrom(error: unknown) {
+  return error instanceof Error && error.message
+    ? error.message
+    : "The restore could not be completed.";
+}
+
+function errorCode(error: unknown) {
+  return isObject(error) && typeof error.code === "string"
+    ? error.code
+    : undefined;
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}

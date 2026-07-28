@@ -178,3 +178,13 @@ CREATE TABLE IF NOT EXISTS "TaskScheduleChange" (
 );
 
 CREATE INDEX IF NOT EXISTS "TaskScheduleChange_taskId_createdAt_idx" ON "TaskScheduleChange" ("taskId", "createdAt");
+
+CREATE TABLE IF NOT EXISTS "MutationReceipt" (
+  "id" TEXT NOT NULL PRIMARY KEY,
+  "kind" TEXT NOT NULL,
+  "requestHash" TEXT NOT NULL,
+  "responseJson" TEXT NOT NULL,
+  "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS "MutationReceipt_createdAt_idx" ON "MutationReceipt" ("createdAt");

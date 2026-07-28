@@ -1,78 +1,80 @@
+import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import {
+  IdempotentMutationError,
+  parseMutationId,
+  runIdempotentCreate
+} from "@/lib/idempotent-mutations";
+import {
+  ProjectMutationRequestError,
+  parseProjectCreateMutation,
+  readProjectMutationBody
+} from "@/lib/project-mutations";
 import { getProjectDetail, listProjectSummaries } from "@/lib/projects";
-import { parseLocalDate } from "@/lib/dates";
 
 export async function GET() {
   return NextResponse.json(await listProjectSummaries());
 }
 
 export async function POST(request: NextRequest) {
-  const body = await request.json();
-  const name = String(body.name ?? "").trim();
+  try {
+    const body = await readProjectMutationBody(request);
+    const mutationId = parseMutationId(
+      request.headers.get("X-Dayflow-Mutation-Id")
+    );
+    const input = parseProjectCreateMutation(body);
 
-  if (!name) {
-    return NextResponse.json({ error: "Project name is required." }, { status: 400 });
+    const detail = await runIdempotentCreate({
+      mutationId,
+      kind: "project.create",
+      payload: body,
+      create: async (transaction) => {
+        const project = await transaction.project.create({
+          data: input
+        });
+        const createdDetail = await getProjectDetail(project.id, transaction);
+        if (!createdDetail) {
+          throw new Error("Created Project could not be read back.");
+        }
+        return createdDetail;
+      }
+    });
+
+    return NextResponse.json(detail, { status: 201 });
+  } catch (error) {
+    return projectCreateErrorResponse(error);
   }
+}
 
-  const weeklyMinutesBudget = optionalPositiveInteger(body.weeklyMinutesBudget);
-  if (weeklyMinutesBudget === undefined) {
+function projectCreateErrorResponse(error: unknown) {
+  if (error instanceof IdempotentMutationError) {
     return NextResponse.json(
-      { error: "Weekly effort budget must be a positive number of minutes." },
-      { status: 400 }
+      { error: error.message, code: error.code },
+      { status: error.status }
     );
   }
-  const targetDuration = optionalTargetDuration(
-    body.targetDurationValue,
-    body.targetDurationUnit
+  if (error instanceof ProjectMutationRequestError) {
+    return NextResponse.json(
+      { error: error.message, code: error.code, field: error.field },
+      { status: error.status }
+    );
+  }
+  if (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === "P2003"
+  ) {
+    return NextResponse.json(
+      {
+        error: "A related record changed before the Project could be created.",
+        code: "CONFLICT"
+      },
+      { status: 409 }
+    );
+  }
+
+  console.error("Project creation failed.", error);
+  return NextResponse.json(
+    { error: "Project could not be created.", code: "INTERNAL_ERROR" },
+    { status: 500 }
   );
-  if (targetDuration === undefined) {
-    return NextResponse.json(
-      { error: "Target duration needs a positive whole number of days or weeks." },
-      { status: 400 }
-    );
-  }
-
-  const project = await prisma.project.create({
-    data: {
-      name,
-      desiredOutcome: String(body.desiredOutcome ?? "").trim(),
-      targetDate: optionalDate(body.targetDate),
-      targetDurationValue: targetDuration?.value ?? null,
-      targetDurationUnit: targetDuration?.unit ?? null,
-      weeklyMinutesBudget
-    }
-  });
-
-  return NextResponse.json(await getProjectDetail(project.id), { status: 201 });
-}
-
-function optionalPositiveInteger(value: unknown) {
-  if (value === null || value === undefined || value === "") return null;
-  const number = Number(value);
-  if (!Number.isFinite(number) || number <= 0) return undefined;
-  return Math.round(number);
-}
-
-function optionalDate(value: unknown) {
-  return value ? parseLocalDate(value) : null;
-}
-
-function optionalTargetDuration(value: unknown, unit: unknown) {
-  if (
-    (value === null || value === undefined || value === "") &&
-    (unit === null || unit === undefined || unit === "")
-  ) {
-    return null;
-  }
-  const number = Number(value);
-  const normalizedUnit = String(unit ?? "").toUpperCase();
-  if (
-    !Number.isInteger(number) ||
-    number <= 0 ||
-    (normalizedUnit !== "DAYS" && normalizedUnit !== "WEEKS")
-  ) {
-    return undefined;
-  }
-  return { value: number, unit: normalizedUnit as "DAYS" | "WEEKS" };
 }

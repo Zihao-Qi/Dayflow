@@ -76,6 +76,7 @@ without reseeding personal data.
 
 ```bash
 npm run test:unit
+npm run test:backup
 npm run test:migrations
 npm run typecheck
 npm run build
@@ -106,6 +107,74 @@ The local database and `.env` file are intentionally excluded from Git. This
 keeps personal tasks, notes, diary entries, and machine-specific configuration
 out of the repository. `.env.example` contains the safe configuration template
 needed for a new local setup.
+
+Dayflow resolves the active SQLite database from `DATABASE_URL` (or from
+`DATABASE_URL` in `.env`) and prints its absolute path before backup or restore
+work. It never guesses a database when that setting is missing.
+
+Create a complete backup with:
+
+```bash
+npm run db:backup
+```
+
+By default, the command writes a timestamped `.dayflow-backup` artifact in a
+`backups` directory next to the active database. To choose a destination:
+
+```bash
+npm run db:backup -- --output /path/to/dayflow.dayflow-backup
+```
+
+The artifact contains a consistent SQLite snapshot and a versioned manifest
+with its creation time, schema migration version, per-table record counts,
+payload size, and checksum. It is written to a temporary file, validated, and
+atomically renamed only when complete. Backup creation reads a snapshot and
+does not mutate application records.
+
+The same recovery path is available from **Data & backups** in Dayflow. The
+dialog creates backups in the managed `backups` directory, verifies their
+checksums before offering restore, shows schema and record-count details, and
+provides a download link for keeping a copy elsewhere.
+
+For safety, the UI does not replace SQLite while the running app has database
+connections open. After an explicit `RESTORE` confirmation it schedules the
+verified artifact for the next Dayflow startup. Restart Dayflow to apply it;
+startup first revalidates the selected checksum. If that pre-replacement check
+fails, the active database remains in place and no safety copy is needed. For a
+valid artifact, startup creates a separate safety backup of the latest active
+database before atomic replacement. A failure before replacement leaves the
+active database unchanged. If the process stops or final durability
+confirmation fails after replacement has begun, verify the active data and use
+the reported safety backup if recovery is needed. The outcome is reported in
+the dialog after startup.
+
+Restore replaces the current dataset. Stop the Dayflow development server
+first, then run:
+
+```bash
+npm run db:restore -- --from /path/to/dayflow.dayflow-backup --confirm-replace
+```
+
+When an active database exists, restore first creates and reports a separate
+safety backup. If the working database was deleted, restore reports that no
+safety copy was needed and atomically recreates it. The command validates the
+supplied artifact and all record counts, checks SQLite integrity,
+relationships, the exact current schema, and migration checksums, restores into
+a temporary database, runs checked-in migrations there, and only then installs
+the result. If validation or migration fails, an existing active database is
+left in place and its safety backup is retained. Restore v1 replaces data; it
+does not merge datasets.
+
+The backup and migration commands require the `sqlite3` command-line tool.
+`npm run dev` binds to `127.0.0.1` so the local data controls are not exposed
+to the network by default.
+
+The Tools menu also exposes `/api/agent-export`, a versioned JSON export for
+analysis and external agents. Unlike the dashboard bootstrap payload, this
+export is not windowed: it includes every Task, schedule change, Project,
+Phase, Focus Session, Note, Diary entry, Material, Time Block, and Activity.
+It is supplemental and is not a restore format; use `db:backup` and
+`db:restore` for lossless recovery.
 
 ## Project Notes
 

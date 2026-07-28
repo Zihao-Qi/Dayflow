@@ -1,60 +1,96 @@
+import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
-import { parseLocalDate, startOfLocalDay } from "@/lib/dates";
+import {
+  IdempotentMutationError,
+  parseMutationId,
+  runIdempotentCreate
+} from "@/lib/idempotent-mutations";
 import { ProjectRuleError, validateProjectPlacement } from "@/lib/projects";
+import {
+  TaskMutationValidationError,
+  parseTaskCreateMutation,
+  readTaskMutationBody,
+  taskProjectRuleErrorDetails
+} from "@/lib/task-mutations";
 
 export async function POST(request: NextRequest) {
-  const body = await request.json();
-  const date =
-    "date" in body
-      ? body.date
-        ? parseLocalDate(body.date)
-        : null
-      : startOfLocalDay();
-  const projectId = String(body.projectId ?? "").trim() || null;
-  const phaseId = String(body.phaseId ?? "").trim() || null;
-  const status = body.status ?? "TODO";
-
-  if ("date" in body && body.date && !date) {
-    return NextResponse.json({ error: "Scheduled date is invalid." }, { status: 400 });
-  }
-
   try {
-    await validateProjectPlacement(projectId, phaseId, { allowCompleted: status === "DONE" });
+    const body = await readTaskMutationBody(request);
+    const mutationId = parseMutationId(
+      request.headers.get("X-Dayflow-Mutation-Id")
+    );
+    const input = parseTaskCreateMutation(body);
+
+    const task = await runIdempotentCreate({
+      mutationId,
+      kind: "task.create",
+      payload: body,
+      create: async (transaction) => {
+        await validateProjectPlacement(
+          input.projectId,
+          input.phaseId,
+          { allowCompleted: input.status === "DONE" },
+          transaction
+        );
+        const maxTask = await transaction.task.findFirst({
+          where: { date: input.date },
+          orderBy: { sortOrder: "desc" }
+        });
+        return transaction.task.create({
+          data: {
+            ...input,
+            sortOrder: (maxTask?.sortOrder ?? 0) + 1
+          }
+        });
+      }
+    });
+
+    return NextResponse.json(task, { status: 201 });
   } catch (error) {
-    if (error instanceof ProjectRuleError) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
-    }
-    throw error;
+    return taskMutationErrorResponse(error);
   }
-
-  const maxTask = await prisma.task.findFirst({
-    where: { date },
-    orderBy: { sortOrder: "desc" }
-  });
-
-  const task = await prisma.task.create({
-    data: {
-      title: String(body.title ?? "").trim() || "Untitled task",
-      date,
-      priority: body.priority ?? "MEDIUM",
-      status,
-      urgentScore: clampScore(body.urgentScore ?? 2),
-      importanceScore: clampScore(body.importanceScore ?? 3),
-      deadline: body.deadline ? parseLocalDate(body.deadline) : null,
-      estimateMinutes: Number(body.estimateMinutes ?? 30),
-      sortOrder: (maxTask?.sortOrder ?? 0) + 1,
-      projectId,
-      phaseId,
-      completedAt: status === "DONE" ? new Date() : null
-    }
-  });
-
-  return NextResponse.json(task);
 }
 
-function clampScore(value: unknown) {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return 2;
-  return Math.min(5, Math.max(1, Math.round(number)));
+function taskMutationErrorResponse(error: unknown) {
+  if (error instanceof IdempotentMutationError) {
+    return NextResponse.json(
+      { error: error.message, code: error.code },
+      { status: error.status }
+    );
+  }
+  if (error instanceof TaskMutationValidationError) {
+    return NextResponse.json(
+      { error: error.message, code: error.code, field: error.field },
+      { status: 400 }
+    );
+  }
+  if (error instanceof ProjectRuleError) {
+    const relationshipError = taskProjectRuleErrorDetails(error.message);
+    return NextResponse.json(
+      {
+        error: error.message,
+        code: relationshipError.code,
+        field: relationshipError.field
+      },
+      { status: relationshipError.status }
+    );
+  }
+  if (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === "P2003"
+  ) {
+    return NextResponse.json(
+      {
+        error: "The selected task relationship is no longer available.",
+        code: "CONFLICT"
+      },
+      { status: 409 }
+    );
+  }
+
+  console.error("Task creation failed.", error);
+  return NextResponse.json(
+    { error: "Task could not be created.", code: "INTERNAL_ERROR" },
+    { status: 500 }
+  );
 }

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { rmSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 
@@ -8,9 +8,14 @@ const prismaCliPath = join(repositoryRoot, "node_modules", "prisma", "build", "i
 
 export const testDatabasePath = join(tmpdir(), "dayflow-playwright.db");
 export const testDatabaseUrl = `file:${testDatabasePath.split(sep).join("/")}`;
+export const testBackupDirectory = join(
+  tmpdir(),
+  "dayflow-playwright-backups"
+);
 
 const resetSql = [
   "PRAGMA foreign_keys = OFF;",
+  'DELETE FROM "MutationReceipt";',
   'DELETE FROM "TaskScheduleChange";',
   'DELETE FROM "FocusSession";',
   'DELETE FROM "ActivityEntry";',
@@ -37,12 +42,46 @@ function runPrismaDbExecute(args: string[], input?: string) {
 }
 
 export function prepareTestDatabase() {
+  resetTestBackupDirectory();
   rmSync(testDatabasePath, { force: true });
   runPrismaDbExecute(["--file", "prisma/init.sql"]);
 }
 
 export function resetTestDatabase() {
+  resetTestBackupDirectory();
   runPrismaDbExecute(["--stdin"], resetSql);
+}
+
+function resetTestBackupDirectory() {
+  const expectedDirectory = join(tmpdir(), "dayflow-playwright-backups");
+  if (testBackupDirectory !== expectedDirectory) {
+    throw new Error("Refusing to remove an unexpected browser-test backup path.");
+  }
+  rmSync(testBackupDirectory, { recursive: true, force: true });
+  mkdirSync(testBackupDirectory, { recursive: true, mode: 0o700 });
+}
+
+export function seedJournalHistory(count = 105) {
+  const baseTimestamp = Date.UTC(2026, 0, 1, 12);
+  const statements: string[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const suffix = String(index).padStart(3, "0");
+    const timestamp = baseTimestamp + index * 1_000;
+    statements.push(
+      `INSERT INTO "Note"
+       ("id", "content", "tags", "date", "createdAt", "updatedAt")
+       VALUES
+       ('journal-note-${suffix}', 'History note ${suffix}', '[]',
+        ${baseTimestamp}, ${timestamp}, ${timestamp});`,
+      `INSERT INTO "Material"
+       ("id", "title", "url", "type", "notes", "createdAt", "updatedAt")
+       VALUES
+       ('journal-material-${suffix}', 'History reference ${suffix}',
+        'https://example.com/history/${suffix}', 'website', '',
+        ${timestamp}, ${timestamp});`
+    );
+  }
+  runPrismaDbExecute(["--stdin"], statements.join("\n"));
 }
 
 export function setFocusSessionElapsedMinutes(id: string, minutes: number) {

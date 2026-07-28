@@ -1,99 +1,141 @@
+import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { parseLocalDate } from "@/lib/dates";
 import {
   compactFocusQueue,
   consumeFocusQueueTask
 } from "@/lib/focus-queue";
 import { ProjectRuleError, validateProjectPlacement } from "@/lib/projects";
+import {
+  TaskMutationValidationError,
+  parseTaskPatchMutation,
+  parseTaskPathId,
+  readTaskMutationBody,
+  taskProjectRuleErrorDetails,
+  validateTaskPatchMutation
+} from "@/lib/task-mutations";
 
 type Params = { params: Promise<{ id: string }> };
 
 export async function PATCH(request: NextRequest, { params }: Params) {
-  const { id } = await params;
-  const body = await request.json();
-  const data: Record<string, unknown> = {};
-  const current = await prisma.task.findUnique({
-    where: { id },
-    select: { date: true, projectId: true, phaseId: true, status: true }
-  });
-
-  if (!current) {
-    return NextResponse.json({ error: "Task not found." }, { status: 404 });
-  }
-
-  for (const key of ["title", "priority", "status", "estimateMinutes", "actualMinutes", "sortOrder"]) {
-    if (key in body) data[key] = body[key];
-  }
-
-  if ("urgentScore" in body) data.urgentScore = clampScore(body.urgentScore);
-  if ("importanceScore" in body) data.importanceScore = clampScore(body.importanceScore);
-  if (body.status === "DONE") data.completedAt = new Date();
-  if (body.status && body.status !== "DONE") data.completedAt = null;
-  if ("date" in body) {
-    const date = body.date ? parseLocalDate(body.date) : null;
-    if (body.date && !date) {
-      return NextResponse.json({ error: "Scheduled date is invalid." }, { status: 400 });
-    }
-    data.date = date;
-  }
-  if ("deadline" in body) data.deadline = body.deadline ? parseLocalDate(body.deadline) : null;
-  const projectId =
-    "projectId" in body ? String(body.projectId ?? "").trim() || null : current.projectId;
-  const phaseId =
-    "phaseId" in body
-      ? String(body.phaseId ?? "").trim() || null
-      : projectId === current.projectId
-        ? current.phaseId
-        : null;
-  const status = body.status ?? current.status;
-
+  const { id: rawId } = await params;
   try {
-    await validateProjectPlacement(projectId, phaseId, { allowCompleted: status === "DONE" });
-  } catch (error) {
-    if (error instanceof ProjectRuleError) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
-    }
-    throw error;
-  }
-
-  if ("projectId" in body || projectId !== current.projectId) data.projectId = projectId;
-  if ("phaseId" in body || phaseId !== current.phaseId) data.phaseId = phaseId;
-
-  const nextDate = "date" in data ? (data.date as Date | null) : current.date;
-  const dateChanged = current.date?.getTime() !== nextDate?.getTime();
-
-  const task = await prisma.$transaction(async (transaction) => {
-    const updated = await transaction.task.update({ where: { id }, data });
-    if (body.status === "DONE") {
-      await consumeFocusQueueTask(transaction, id);
-    }
-    if (dateChanged) {
-      await transaction.taskScheduleChange.create({
-        data: {
-          taskId: id,
-          previousDate: current.date,
-          nextDate,
-          source: String(body.scheduleSource ?? "manual")
-        }
+    const id = parseTaskPathId(rawId);
+    const body = await readTaskMutationBody(request);
+    const mutationTime = new Date();
+    validateTaskPatchMutation(body, mutationTime);
+    const task = await prisma.$transaction(async (transaction) => {
+      const current = await transaction.task.findUnique({
+        where: { id },
+        select: { date: true, projectId: true, phaseId: true, status: true }
       });
-    }
-    return updated;
-  });
-  return NextResponse.json(task);
+      if (!current) return null;
+
+      const input = parseTaskPatchMutation(body, current, mutationTime);
+      await validateProjectPlacement(
+        input.projectId,
+        input.phaseId,
+        { allowCompleted: input.status === "DONE" },
+        transaction
+      );
+      const nextDate = Object.prototype.hasOwnProperty.call(input.data, "date")
+        ? (input.data.date ?? null)
+        : current.date;
+      const dateChanged = current.date?.getTime() !== nextDate?.getTime();
+
+      await transaction.task.update({ where: { id }, data: input.data });
+      if (input.requestedStatus === "DONE") {
+        await consumeFocusQueueTask(transaction, id);
+      }
+      if (dateChanged) {
+        await transaction.taskScheduleChange.create({
+          data: {
+            taskId: id,
+            previousDate: current.date,
+            nextDate,
+            source: input.scheduleSource
+          }
+        });
+      }
+      return transaction.task.findUniqueOrThrow({ where: { id } });
+    });
+    if (!task) return taskNotFoundResponse();
+    return NextResponse.json(task);
+  } catch (error) {
+    return taskMutationErrorResponse(error, "save");
+  }
 }
 
 export async function DELETE(_request: NextRequest, { params }: Params) {
-  const { id } = await params;
-  await prisma.$transaction(async (transaction) => {
-    await transaction.task.delete({ where: { id } });
-    await compactFocusQueue(transaction);
-  });
-  return NextResponse.json({ ok: true });
+  const { id: rawId } = await params;
+  try {
+    const id = parseTaskPathId(rawId);
+    await prisma.$transaction(async (transaction) => {
+      await transaction.task.delete({ where: { id } });
+      await compactFocusQueue(transaction);
+    });
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    return taskMutationErrorResponse(error, "delete");
+  }
 }
 
-function clampScore(value: unknown) {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return 2;
-  return Math.min(5, Math.max(1, Math.round(number)));
+function taskNotFoundResponse() {
+  return NextResponse.json(
+    { error: "Task not found.", code: "NOT_FOUND" },
+    { status: 404 }
+  );
+}
+
+function taskMutationErrorResponse(
+  error: unknown,
+  action: "save" | "delete"
+) {
+  if (error instanceof TaskMutationValidationError) {
+    return NextResponse.json(
+      { error: error.message, code: error.code, field: error.field },
+      { status: 400 }
+    );
+  }
+  if (error instanceof ProjectRuleError) {
+    const relationshipError = taskProjectRuleErrorDetails(error.message);
+    return NextResponse.json(
+      {
+        error: error.message,
+        code: relationshipError.code,
+        field: relationshipError.field
+      },
+      { status: relationshipError.status }
+    );
+  }
+  if (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === "P2025"
+  ) {
+    return taskNotFoundResponse();
+  }
+  if (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === "P2003"
+  ) {
+    return NextResponse.json(
+      {
+        error: "A related record changed before the task could be saved.",
+        code: "CONFLICT"
+      },
+      { status: 409 }
+    );
+  }
+
+  console.error(`Task ${action} failed.`, error);
+  return NextResponse.json(
+    {
+      error:
+        action === "delete"
+          ? "Task could not be deleted."
+          : "Task could not be saved.",
+      code: "INTERNAL_ERROR"
+    },
+    { status: 500 }
+  );
 }

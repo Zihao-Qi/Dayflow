@@ -1,54 +1,79 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   addToFocusQueue,
+  FocusQueueConflictError,
   FocusQueueError,
   FocusQueueNotFoundError,
-  parseQueuePlacement,
   removeFromFocusQueue,
   reorderFocusQueue
 } from "@/lib/focus-queue";
+import {
+  WorkflowMutationRequestError,
+  parseFocusQueueAddMutation,
+  parseFocusQueueRemoveMutation,
+  parseFocusQueueReorderMutation,
+  readWorkflowMutationBody
+} from "@/lib/workflow-mutations";
 
 export async function POST(request: NextRequest) {
-  const body = await request.json();
-  const taskId = String(body.taskId ?? "").trim();
-  if (!taskId) {
-    return NextResponse.json({ error: "Choose a task to queue." }, { status: 400 });
-  }
-  return respond(() =>
-    addToFocusQueue(taskId, parseQueuePlacement(body.placement))
-  );
+  return respond(async () => {
+    const body = await readWorkflowMutationBody(request);
+    const input = parseFocusQueueAddMutation(body);
+    return addToFocusQueue(input.taskId, input.placement);
+  }, "save");
 }
 
 export async function PATCH(request: NextRequest) {
-  const body = await request.json();
-  const ids = Array.isArray(body.ids)
-    ? body.ids.map((id: unknown) => String(id))
-    : [];
-  const expectedIds = Array.isArray(body.expectedIds)
-    ? body.expectedIds.map((id: unknown) => String(id))
-    : [];
-  return respond(() => reorderFocusQueue(ids, expectedIds));
+  return respond(async () => {
+    const body = await readWorkflowMutationBody(request);
+    const input = parseFocusQueueReorderMutation(body);
+    return reorderFocusQueue(input.ids, input.expectedIds);
+  }, "reorder");
 }
 
 export async function DELETE(request: NextRequest) {
-  const body = await request.json();
-  const taskId = String(body.taskId ?? "").trim();
-  if (!taskId) {
-    return NextResponse.json({ error: "Choose a queued task." }, { status: 400 });
-  }
-  return respond(() => removeFromFocusQueue(taskId));
+  return respond(async () => {
+    const body = await readWorkflowMutationBody(request);
+    const input = parseFocusQueueRemoveMutation(body);
+    return removeFromFocusQueue(input.taskId);
+  }, "remove");
 }
 
-async function respond(action: () => Promise<unknown>) {
+async function respond(
+  action: () => Promise<unknown>,
+  operation: "save" | "reorder" | "remove"
+) {
   try {
     return NextResponse.json({ tasks: await action() });
   } catch (error) {
+    if (error instanceof WorkflowMutationRequestError) {
+      return NextResponse.json(
+        { error: error.message, code: error.code, field: error.field },
+        { status: 400 }
+      );
+    }
     if (error instanceof FocusQueueNotFoundError) {
-      return NextResponse.json({ error: error.message }, { status: 404 });
+      return NextResponse.json(
+        { error: error.message, code: "NOT_FOUND", field: "taskId" },
+        { status: 404 }
+      );
+    }
+    if (error instanceof FocusQueueConflictError) {
+      return NextResponse.json(
+        { error: error.message, code: "CONFLICT" },
+        { status: 409 }
+      );
     }
     if (error instanceof FocusQueueError) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
+      return NextResponse.json(
+        { error: error.message, code: "VALIDATION_ERROR" },
+        { status: 400 }
+      );
     }
-    throw error;
+    console.error(`Focus queue ${operation} failed.`, error);
+    return NextResponse.json(
+      { error: "Focus queue could not be saved.", code: "INTERNAL_ERROR" },
+      { status: 500 }
+    );
   }
 }

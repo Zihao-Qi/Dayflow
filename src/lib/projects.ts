@@ -45,8 +45,9 @@ const projectRead = {
   }
 };
 
-export async function listProjectSummaries() {
-  const reviewPeriod = reviewPeriodRange();
+export async function listProjectSummaries(
+  reviewPeriod = reviewPeriodRange()
+) {
   const projects = await prisma.project.findMany({
     orderBy: [{ status: "asc" }, { updatedAt: "desc" }],
     include: {

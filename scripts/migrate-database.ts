@@ -67,7 +67,28 @@ function baselineKnownSchema(path: string) {
          EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'Task'),
          EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'ActivityEntry'),
          (SELECT COUNT(*) FROM pragma_table_info('MutationReceipt')
-          WHERE name IN ('id', 'kind', 'requestHash', 'responseJson')) = 4;`
+          WHERE name IN ('id', 'kind', 'requestHash', 'responseJson')) = 4,
+         (
+           (SELECT COUNT(*) FROM pragma_table_info('Review')
+            WHERE name IN (
+              'id', 'periodStart', 'periodEnd', 'narrative',
+              'nextPeriodIntention', 'createdAt', 'updatedAt'
+            )) = 7
+           AND EXISTS(
+             SELECT 1
+             FROM pragma_index_list('Review')
+             WHERE name = 'Review_periodStart_periodEnd_key'
+               AND "unique" = 1
+           )
+           AND (
+             SELECT group_concat(name, '|')
+             FROM (
+               SELECT name
+               FROM pragma_index_info('Review_periodStart_periodEnd_key')
+               ORDER BY seqno
+             )
+           ) = 'periodStart|periodEnd'
+         );`
     ],
     { encoding: "utf8" }
   ).trim();
@@ -82,7 +103,8 @@ function baselineKnownSchema(path: string) {
     hasAttributedProjectId,
     hasTask,
     hasActivityEntry,
-    hasMutationReceipt
+    hasMutationReceipt,
+    hasCompleteReview
   ] = result.split("|").map((value) => value === "1");
   if (hasMigrationHistory) return;
   if (!hasProject && hasTask) {
@@ -138,6 +160,14 @@ function baselineKnownSchema(path: string) {
       "resolve",
       "--applied",
       "20260728000000_mutation_receipts"
+    ]);
+  }
+  if (hasCompleteReview) {
+    runPrisma([
+      "migrate",
+      "resolve",
+      "--applied",
+      "20260728010000_weekly_reviews"
     ]);
   }
 }

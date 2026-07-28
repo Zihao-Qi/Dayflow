@@ -21,7 +21,8 @@ const seededSetupDatabase = join(temporaryDirectory, "seeded-setup.db");
 try {
   runMigration(freshDatabase);
   assert.equal(query(freshDatabase, "PRAGMA integrity_check;"), "ok");
-  assert.equal(appliedMigrationCount(freshDatabase), "4");
+  assert.equal(appliedMigrationCount(freshDatabase), "5");
+  assertReviewSchema(freshDatabase);
 
   execFileSync("sqlite3", [legacyDatabase], {
     input: readFileSync(
@@ -268,7 +269,8 @@ try {
 
   runMigration(legacyDatabase);
   assert.equal(query(legacyDatabase, "PRAGMA integrity_check;"), "ok");
-  assert.equal(appliedMigrationCount(legacyDatabase), "4");
+  assert.equal(appliedMigrationCount(legacyDatabase), "5");
+  assertReviewSchema(legacyDatabase);
   assert.equal(
     query(
       legacyDatabase,
@@ -359,6 +361,8 @@ try {
   );
 
   runMigration(legacyDatabase);
+  assert.equal(appliedMigrationCount(legacyDatabase), "5");
+  assertReviewSchema(legacyDatabase);
   assert.equal(
     query(
       legacyDatabase,
@@ -373,7 +377,8 @@ try {
   });
   runMigration(currentSetupDatabase);
   assert.equal(query(currentSetupDatabase, "PRAGMA integrity_check;"), "ok");
-  assert.equal(appliedMigrationCount(currentSetupDatabase), "4");
+  assert.equal(appliedMigrationCount(currentSetupDatabase), "5");
+  assertReviewSchema(currentSetupDatabase);
 
   execFileSync("sqlite3", [preProjectDatabase], {
     input: `
@@ -434,7 +439,8 @@ try {
     `
   });
   runMigration(preProjectDatabase);
-  assert.equal(appliedMigrationCount(preProjectDatabase), "4");
+  assert.equal(appliedMigrationCount(preProjectDatabase), "5");
+  assertReviewSchema(preProjectDatabase);
   assert.equal(
     query(
       preProjectDatabase,
@@ -471,7 +477,8 @@ try {
      );`
   ]);
   runMigration(earliestDatabase);
-  assert.equal(appliedMigrationCount(earliestDatabase), "4");
+  assert.equal(appliedMigrationCount(earliestDatabase), "5");
+  assertReviewSchema(earliestDatabase);
   assert.equal(
     query(
       earliestDatabase,
@@ -501,7 +508,8 @@ try {
      );`
   ]);
   runMigration(projectEraDatabase);
-  assert.equal(appliedMigrationCount(projectEraDatabase), "4");
+  assert.equal(appliedMigrationCount(projectEraDatabase), "5");
+  assertReviewSchema(projectEraDatabase);
   assert.equal(
     query(
       projectEraDatabase,
@@ -532,7 +540,8 @@ try {
     input: historicalSchema("501aa95")
   });
   runMigration(focusEraDatabase);
-  assert.equal(appliedMigrationCount(focusEraDatabase), "4");
+  assert.equal(appliedMigrationCount(focusEraDatabase), "5");
+  assertReviewSchema(focusEraDatabase);
   assert.equal(
     query(
       focusEraDatabase,
@@ -611,6 +620,51 @@ function appliedMigrationCount(databasePath: string) {
     databasePath,
     `SELECT COUNT(*) FROM "_prisma_migrations"
      WHERE "finished_at" IS NOT NULL;`
+  );
+}
+
+function assertReviewSchema(databasePath: string) {
+  assert.equal(
+    query(
+      databasePath,
+      `SELECT COUNT(*)
+       FROM pragma_table_info('Review')
+       WHERE name IN (
+         'id', 'periodStart', 'periodEnd', 'narrative',
+         'nextPeriodIntention', 'createdAt', 'updatedAt'
+       );`
+    ),
+    "7"
+  );
+  assert.equal(
+    query(
+      databasePath,
+      `SELECT "unique" || '|' || "partial"
+       FROM pragma_index_list('Review')
+       WHERE name = 'Review_periodStart_periodEnd_key';`
+    ),
+    "1|0"
+  );
+  assert.equal(
+    query(
+      databasePath,
+      `SELECT group_concat(name, '|')
+       FROM (
+         SELECT name
+         FROM pragma_index_info('Review_periodStart_periodEnd_key')
+         ORDER BY seqno
+       );`
+    ),
+    "periodStart|periodEnd"
+  );
+  assert.equal(
+    query(
+      databasePath,
+      `SELECT COUNT(*)
+       FROM pragma_index_list('Review')
+       WHERE name = 'Review_periodEnd_idx';`
+    ),
+    "0"
   );
 }
 

@@ -238,3 +238,13 @@ model TaskScheduleChange {
 
   @@index([taskId, createdAt])
 }
+
+model MutationReceipt {
+  id           String   @id
+  kind         String
+  requestHash  String
+  responseJson String
+  createdAt    DateTime @default(now())
+
+  @@index([createdAt])
+}

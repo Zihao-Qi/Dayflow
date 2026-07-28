@@ -1,48 +1,41 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { parseLocalDate, startOfLocalDay } from "@/lib/dates";
+import {
+  EvidenceMutationRequestError,
+  parseDiaryUpsertMutation,
+  readEvidenceMutationBody
+} from "@/lib/evidence-mutations";
 
 export async function PUT(request: NextRequest) {
-  const body = await request.json();
-  const date = body.date ? parseLocalDate(body.date) : startOfLocalDay();
-  if (!date) {
-    return NextResponse.json(
-      { error: "Diary date must be a valid calendar date." },
-      { status: 400 }
+  try {
+    const body = await readEvidenceMutationBody(request);
+    const input = parseDiaryUpsertMutation(body);
+    const diary = await prisma.$transaction((transaction) =>
+      transaction.diaryEntry.upsert({
+        where: { date: input.date },
+        create: input,
+        update: {
+          content: input.content,
+          reflection: input.reflection,
+          mood: input.mood,
+          energy: input.energy
+        }
+      })
     );
-  }
-  const mood = parseRating(body.mood, "Mood");
-  if (typeof mood !== "number") return mood;
-  const energy = parseRating(body.energy, "Energy");
-  if (typeof energy !== "number") return energy;
 
-  const diary = await prisma.diaryEntry.upsert({
-    where: { date },
-    create: {
-      date,
-      content: body.content ?? "",
-      reflection: body.reflection ?? "",
-      mood,
-      energy
-    },
-    update: {
-      content: body.content ?? "",
-      reflection: body.reflection ?? "",
-      mood,
-      energy
+    return NextResponse.json({ ...diary, persisted: true });
+  } catch (error) {
+    if (error instanceof EvidenceMutationRequestError) {
+      return NextResponse.json(
+        { error: error.message, code: error.code, field: error.field },
+        { status: 400 }
+      );
     }
-  });
 
-  return NextResponse.json({ ...diary, persisted: true });
-}
-
-function parseRating(value: unknown, label: string) {
-  const rating = Number(value ?? 3);
-  if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+    console.error("Diary save failed.", error);
     return NextResponse.json(
-      { error: `${label} must be a whole number from 1 to 5.` },
-      { status: 400 }
+      { error: "Diary could not be saved.", code: "INTERNAL_ERROR" },
+      { status: 500 }
     );
   }
-  return rating;
 }

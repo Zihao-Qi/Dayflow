@@ -1,4 +1,9 @@
-import { ProjectDurationUnit, ProjectStatus, TaskStatus } from "@prisma/client";
+import {
+  Prisma,
+  ProjectDurationUnit,
+  ProjectStatus,
+  TaskStatus
+} from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { calculateProjectMetrics } from "@/lib/project-domain";
 import { reviewPeriodRange } from "@/lib/dates";
@@ -65,9 +70,12 @@ export async function listProjectSummaries() {
   return projects.map((project) => summarizeProject(project, reviewPeriod));
 }
 
-export async function getProjectDetail(id: string) {
+export async function getProjectDetail(
+  id: string,
+  client: Pick<Prisma.TransactionClient, "project"> = prisma
+) {
   const reviewPeriod = reviewPeriodRange();
-  const project = await prisma.project.findUnique({
+  const project = await client.project.findUnique({
     where: { id },
     include: projectRead
   });
@@ -102,7 +110,8 @@ export async function getProjectDetail(id: string) {
 export async function validateProjectPlacement(
   projectId: string | null,
   phaseId: string | null,
-  options: { allowCompleted?: boolean } = {}
+  options: { allowCompleted?: boolean } = {},
+  client: Pick<Prisma.TransactionClient, "project" | "projectPhase"> = prisma
 ) {
   if (!projectId && phaseId) {
     throw new ProjectRuleError("A task cannot have a phase without a project.");
@@ -110,7 +119,7 @@ export async function validateProjectPlacement(
 
   if (!projectId) return;
 
-  const project = await prisma.project.findUnique({
+  const project = await client.project.findUnique({
     where: { id: projectId },
     select: { id: true, status: true }
   });
@@ -121,11 +130,14 @@ export async function validateProjectPlacement(
 
   if (!phaseId) return;
 
-  const phase = await prisma.projectPhase.findUnique({
+  const phase = await client.projectPhase.findUnique({
     where: { id: phaseId },
     select: { projectId: true }
   });
-  if (!phase || phase.projectId !== projectId) {
+  if (!phase) {
+    throw new ProjectRuleError("The selected phase could not be found.");
+  }
+  if (phase.projectId !== projectId) {
     throw new ProjectRuleError("The selected phase does not belong to this project.");
   }
 }

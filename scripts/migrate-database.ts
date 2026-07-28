@@ -65,7 +65,9 @@ function baselineKnownSchema(path: string) {
          EXISTS(SELECT 1 FROM pragma_table_info('ActivityEntry') WHERE name = 'focusSessionId'),
          EXISTS(SELECT 1 FROM pragma_table_info('ActivityEntry') WHERE name = 'attributedProjectId'),
          EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'Task'),
-         EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'ActivityEntry');`
+         EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'ActivityEntry'),
+         (SELECT COUNT(*) FROM pragma_table_info('MutationReceipt')
+          WHERE name IN ('id', 'kind', 'requestHash', 'responseJson')) = 4;`
     ],
     { encoding: "utf8" }
   ).trim();
@@ -79,7 +81,8 @@ function baselineKnownSchema(path: string) {
     hasFocusSessionId,
     hasAttributedProjectId,
     hasTask,
-    hasActivityEntry
+    hasActivityEntry,
+    hasMutationReceipt
   ] = result.split("|").map((value) => value === "1");
   if (hasMigrationHistory) return;
   if (!hasProject && hasTask) {
@@ -127,6 +130,14 @@ function baselineKnownSchema(path: string) {
       "resolve",
       "--applied",
       "20260727010000_activity_attribution_snapshot"
+    ]);
+  }
+  if (hasMutationReceipt) {
+    runPrisma([
+      "migrate",
+      "resolve",
+      "--applied",
+      "20260728000000_mutation_receipts"
     ]);
   }
 }

@@ -1,11 +1,16 @@
+import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import {
+  ProjectMutationRequestError,
+  parseProjectPathId,
+  parseProjectPatchMutation,
+  readProjectMutationBody
+} from "@/lib/project-mutations";
+import {
   deleteProjectSafely,
-  getProjectDetail,
-  parseProjectStatus
+  getProjectDetail
 } from "@/lib/projects";
-import { parseLocalDate } from "@/lib/dates";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -19,130 +24,124 @@ export async function GET(_request: NextRequest, { params }: Params) {
 }
 
 export async function PATCH(request: NextRequest, { params }: Params) {
-  const { id } = await params;
-  const body = await request.json();
-  const data: {
-    name?: string;
-    desiredOutcome?: string;
-    targetDate?: Date | null;
-    targetDurationValue?: number | null;
-    targetDurationUnit?: "DAYS" | "WEEKS" | null;
-    weeklyMinutesBudget?: number | null;
-    status?: "ACTIVE" | "PAUSED" | "COMPLETED" | "ARCHIVED";
-  } = {};
-
-  if ("name" in body) {
-    const name = String(body.name ?? "").trim();
-    if (!name) {
-      return NextResponse.json({ error: "Project name is required." }, { status: 400 });
-    }
-    data.name = name;
-  }
-  if ("desiredOutcome" in body) {
-    data.desiredOutcome = String(body.desiredOutcome ?? "").trim();
-  }
-  if ("targetDate" in body) {
-    data.targetDate = body.targetDate ? validDate(body.targetDate) : null;
-    if (body.targetDate && !data.targetDate) {
-      return NextResponse.json({ error: "Target date is invalid." }, { status: 400 });
-    }
-  }
-  if ("weeklyMinutesBudget" in body) {
-    const budget = optionalPositiveInteger(body.weeklyMinutesBudget);
-    if (budget === undefined) {
-      return NextResponse.json(
-        { error: "Weekly effort budget must be a positive number of minutes." },
-        { status: 400 }
-      );
-    }
-    data.weeklyMinutesBudget = budget;
-  }
-  if ("targetDurationValue" in body || "targetDurationUnit" in body) {
-    const duration = optionalTargetDuration(
-      body.targetDurationValue,
-      body.targetDurationUnit
-    );
-    if (duration === undefined) {
-      return NextResponse.json(
-        { error: "Target duration needs a positive whole number of days or weeks." },
-        { status: 400 }
-      );
-    }
-    data.targetDurationValue = duration?.value ?? null;
-    data.targetDurationUnit = duration?.unit ?? null;
-  }
-  if ("status" in body) {
-    const status = parseProjectStatus(body.status);
-    if (!status) {
-      return NextResponse.json({ error: "Project status is invalid." }, { status: 400 });
-    }
-    if (status === "COMPLETED" && !body.confirm) {
-      const unfinished = await prisma.task.count({
-        where: { projectId: id, status: { not: "DONE" } }
+  const { id: rawId } = await params;
+  try {
+    const id = parseProjectPathId(rawId, "id", "Project");
+    const body = await readProjectMutationBody(request);
+    const input = parseProjectPatchMutation(body);
+    const result = await prisma.$transaction(async (transaction) => {
+      const existing = await transaction.project.findUnique({
+        where: { id },
+        select: { id: true }
       });
-      if (unfinished) {
-        return NextResponse.json(
-          { error: "Confirm completion while unfinished tasks remain.", requiresConfirmation: true },
-          { status: 409 }
-        );
+      if (!existing) return { kind: "not-found" as const };
+
+      if (input.data.status === "COMPLETED" && !input.confirmCompletion) {
+        const unfinished = await transaction.task.count({
+          where: { projectId: id, status: { not: "DONE" } }
+        });
+        if (unfinished) {
+          return { kind: "confirmation-required" as const };
+        }
       }
+
+      await transaction.project.update({ where: { id }, data: input.data });
+      const detail = await getProjectDetail(id, transaction);
+      return detail
+        ? { kind: "saved" as const, detail }
+        : { kind: "not-found" as const };
+    });
+    if (result.kind === "not-found") return projectNotFoundResponse();
+    if (result.kind === "confirmation-required") {
+      return NextResponse.json(
+        {
+          error: "Confirm completion while unfinished tasks remain.",
+          code: "CONFLICT",
+          field: "status",
+          requiresConfirmation: true
+        },
+        { status: 409 }
+      );
     }
-    data.status = status;
+    return NextResponse.json(result.detail);
+  } catch (error) {
+    return projectMutationErrorResponse(error);
   }
-
-  const existing = await prisma.project.findUnique({ where: { id }, select: { id: true } });
-  if (!existing) {
-    return NextResponse.json({ error: "Project not found." }, { status: 404 });
-  }
-
-  await prisma.project.update({ where: { id }, data });
-  return NextResponse.json(await getProjectDetail(id));
 }
 
 export async function DELETE(request: NextRequest, { params }: Params) {
-  const { id } = await params;
-  if (request.nextUrl.searchParams.get("confirm") !== "true") {
+  const { id: rawId } = await params;
+  try {
+    const id = parseProjectPathId(rawId, "id", "Project");
+    if (request.nextUrl.searchParams.get("confirm") !== "true") {
+      return NextResponse.json(
+        {
+          error: "Project deletion requires confirmation.",
+          code: "VALIDATION_ERROR",
+          field: "confirm"
+        },
+        { status: 400 }
+      );
+    }
+
+    const existing = await prisma.project.findUnique({
+      where: { id },
+      select: { id: true }
+    });
+    if (!existing) return projectNotFoundResponse();
+
+    await deleteProjectSafely(id);
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    return projectMutationErrorResponse(error, "delete");
+  }
+}
+
+function projectNotFoundResponse() {
+  return NextResponse.json(
+    { error: "Project not found.", code: "NOT_FOUND" },
+    { status: 404 }
+  );
+}
+
+function projectMutationErrorResponse(
+  error: unknown,
+  action: "save" | "delete" = "save"
+) {
+  if (error instanceof ProjectMutationRequestError) {
     return NextResponse.json(
-      { error: "Project deletion requires confirmation." },
-      { status: 400 }
+      { error: error.message, code: error.code, field: error.field },
+      { status: error.status }
+    );
+  }
+  if (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === "P2025"
+  ) {
+    return projectNotFoundResponse();
+  }
+  if (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === "P2003"
+  ) {
+    return NextResponse.json(
+      {
+        error: "A related record changed before the Project could be saved.",
+        code: "CONFLICT"
+      },
+      { status: 409 }
     );
   }
 
-  const existing = await prisma.project.findUnique({ where: { id }, select: { id: true } });
-  if (!existing) {
-    return NextResponse.json({ error: "Project not found." }, { status: 404 });
-  }
-
-  await deleteProjectSafely(id);
-  return NextResponse.json({ ok: true });
-}
-
-function optionalPositiveInteger(value: unknown) {
-  if (value === null || value === undefined || value === "") return null;
-  const number = Number(value);
-  if (!Number.isFinite(number) || number <= 0) return undefined;
-  return Math.round(number);
-}
-
-function validDate(value: unknown) {
-  return parseLocalDate(value);
-}
-
-function optionalTargetDuration(value: unknown, unit: unknown) {
-  if (
-    (value === null || value === undefined || value === "") &&
-    (unit === null || unit === undefined || unit === "")
-  ) {
-    return null;
-  }
-  const number = Number(value);
-  const normalizedUnit = String(unit ?? "").toUpperCase();
-  if (
-    !Number.isInteger(number) ||
-    number <= 0 ||
-    (normalizedUnit !== "DAYS" && normalizedUnit !== "WEEKS")
-  ) {
-    return undefined;
-  }
-  return { value: number, unit: normalizedUnit as "DAYS" | "WEEKS" };
+  console.error(`Project ${action} failed.`, error);
+  return NextResponse.json(
+    {
+      error:
+        action === "delete"
+          ? "Project could not be deleted."
+          : "Project could not be saved.",
+      code: "INTERNAL_ERROR"
+    },
+    { status: 500 }
+  );
 }

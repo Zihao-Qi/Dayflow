@@ -149,7 +149,7 @@ test("Focus Session start idempotency", async (context) => {
   );
 
   await context.test(
-    "different simultaneous starts still preserve the one-active-session rule",
+    "different simultaneous starts resolve as one created session and conflicts for every other request",
     async () => {
       await prisma.mutationReceipt.deleteMany();
       await prisma.focusSession.deleteMany();
@@ -159,13 +159,17 @@ test("Focus Session start idempotency", async (context) => {
         label: "One active focus"
       };
 
-      const [left, right] = await Promise.all([
-        POST(focusStartRequest("focus-start-left", payload)),
-        POST(focusStartRequest("focus-start-right", payload))
-      ]);
-      assert.deepEqual(
-        [left.status, right.status].sort((a, b) => a - b),
-        [201, 409]
+      const responseCount = 9;
+      const responses = await Promise.all(
+        Array.from({ length: responseCount }, (_, index) =>
+          POST(focusStartRequest(`focus-start-${index}`, payload))
+        )
+      );
+      const statuses = responses.map((response) => response.status);
+      assert.equal(statuses.filter((status) => status === 201).length, 1);
+      assert.equal(
+        statuses.filter((status) => status === 409).length,
+        responseCount - 1
       );
       assert.equal(await prisma.focusSession.count(), 1);
       assert.equal(await prisma.mutationReceipt.count(), 1);

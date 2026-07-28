@@ -74,6 +74,20 @@ without reseeding personal data.
 
 ## Checks
 
+Run the same complete reliability gate used by CI:
+
+```bash
+npm run check
+```
+
+The command generates the Prisma client, checks types, and runs the unit,
+backup/restore, migration, production-build, and Chromium browser gates. It
+requires the `sqlite3` command-line tool and a one-time local browser install
+with `npm run test:e2e:install`. Every destructive database scenario uses a
+disposable database outside the normal local data path.
+
+Individual gates remain available:
+
 ```bash
 npm run test:unit
 npm run test:backup

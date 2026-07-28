@@ -18,6 +18,13 @@ import {
   readWorkflowMutationBody
 } from "@/lib/workflow-mutations";
 
+// SQLite allows one writer at a time. Queue local starts so competing Prisma
+// transactions reach the active-session guard without timing out; the unique
+// activeKey remains the database-level invariant across processes.
+const globalForFocusSessionStart = globalThis as typeof globalThis & {
+  dayflowFocusSessionStartQueue?: Promise<void>;
+};
+
 export async function GET() {
   try {
     return NextResponse.json(await getFocusSnapshot());
@@ -37,18 +44,20 @@ export async function POST(request: NextRequest) {
       request.headers.get("X-Dayflow-Mutation-Id")
     );
     const input = parseFocusSessionStartMutation(body);
-    const result = await runIdempotentCreate({
-      mutationId,
-      kind: "focus-session.start",
-      payload: input,
-      create: async (transaction) => {
-        const session = await startFocusSession(input, transaction);
-        return {
-          session,
-          snapshot: await getFocusSnapshot(transaction)
-        };
-      }
-    });
+    const result = await serializeFocusSessionStart(() =>
+      runIdempotentCreate({
+        mutationId,
+        kind: "focus-session.start",
+        payload: input,
+        create: async (transaction) => {
+          const session = await startFocusSession(input, transaction);
+          return {
+            session,
+            snapshot: await getFocusSnapshot(transaction)
+          };
+        }
+      })
+    );
     return NextResponse.json(result, { status: 201 });
   } catch (error) {
     if (error instanceof IdempotentMutationError) {
@@ -100,4 +109,16 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+function serializeFocusSessionStart<T>(operation: () => Promise<T>) {
+  const previous =
+    globalForFocusSessionStart.dayflowFocusSessionStartQueue ??
+    Promise.resolve();
+  const result = previous.then(operation);
+  globalForFocusSessionStart.dayflowFocusSessionStartQueue = result.then(
+    () => undefined,
+    () => undefined
+  );
+  return result;
 }

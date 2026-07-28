@@ -771,7 +771,7 @@ test("keeps the original payload and mutation ID when a UI retry crosses midnigh
   expect(created.status()).toBe(201);
   const task = (await created.json()) as { id: string };
   await page.clock.install({
-    time: new Date(`${today}T23:59:58`)
+    time: new Date(`${today}T23:00:00`)
   });
   await openDashboard(page);
   await openTimeline(page);
@@ -844,6 +844,7 @@ test("keeps the original payload and mutation ID when a UI retry crosses midnigh
       }
     });
   });
+  await page.clock.pauseAt(new Date(`${today}T23:59:58`));
   await page.clock.fastForward(3_000);
   await expect.poll(() => midnightRefreshes).toBeGreaterThan(0);
   await expect(

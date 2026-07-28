@@ -82,6 +82,18 @@ CREATE TABLE IF NOT EXISTS "DiaryEntry" (
 
 CREATE UNIQUE INDEX IF NOT EXISTS "DiaryEntry_date_key" ON "DiaryEntry" ("date");
 
+CREATE TABLE IF NOT EXISTS "Review" (
+  "id" TEXT NOT NULL PRIMARY KEY,
+  "periodStart" DATETIME NOT NULL,
+  "periodEnd" DATETIME NOT NULL,
+  "narrative" TEXT NOT NULL DEFAULT '',
+  "nextPeriodIntention" TEXT NOT NULL DEFAULT '',
+  "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" DATETIME NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS "Review_periodStart_periodEnd_key" ON "Review" ("periodStart", "periodEnd");
+
 CREATE TABLE IF NOT EXISTS "Material" (
   "id" TEXT NOT NULL PRIMARY KEY,
   "title" TEXT NOT NULL,

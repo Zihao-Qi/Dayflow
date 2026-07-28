@@ -2,15 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis
-} from "recharts";
-import {
   BookOpen,
   CalendarDays,
   Check,
@@ -53,10 +44,15 @@ import {
   focusRemainingSeconds,
   formatFocusClock
 } from "@/lib/focus-domain";
+import { millisecondsUntilNextLocalDay } from "@/lib/dates";
 import {
   formatInvestedMinutes,
   ProjectSummary
 } from "@/lib/project-domain";
+import {
+  REVIEW_INTENTION_MAX_LENGTH,
+  REVIEW_NARRATIVE_MAX_LENGTH
+} from "@/lib/review-domain";
 import type { QueuePlacement } from "@/lib/focus-queue";
 
 type TaskStatus = "TODO" | "IN_PROGRESS" | "DONE";
@@ -121,6 +117,15 @@ type Diary = {
   persisted: boolean;
 };
 
+type Review = {
+  id: string | null;
+  periodStart: string;
+  periodEnd: string;
+  narrative: string;
+  nextPeriodIntention: string;
+  persisted: boolean;
+};
+
 type Material = {
   id: string;
   title: string;
@@ -164,13 +169,21 @@ type DayStat = {
 };
 
 type ReviewSummary = {
+  recordedMinutes: number;
   focusedMinutes: number;
-  completedSessions: number;
-  cancelledSessions: number;
+  categoryMinutes: Array<{
+    category: string;
+    minutes: number;
+  }>;
+  completedTaskCount: number;
+  noteCount: number;
+  materialCount: number;
+  diaryDayCount: number;
+  averageMood: number | null;
+  averageEnergy: number | null;
+  movedProjectCount: number;
   pendingEnrichmentSessions: number;
   pendingEnrichmentMinutes: number;
-  longestMinutes: number;
-  longestStartedAt: string | null;
 };
 
 type Bootstrap = {
@@ -184,6 +197,7 @@ type Bootstrap = {
   projects: ProjectSummary[];
   unfinishedTasks: Task[];
   stats: DayStat[];
+  review: Review;
   reviewSummary: ReviewSummary;
 };
 
@@ -221,6 +235,29 @@ function diariesEqual(left: Diary, right: Diary) {
     left.reflection === right.reflection &&
     left.mood === right.mood &&
     left.energy === right.energy
+  );
+}
+
+function reviewsEqual(left: Review, right: Review) {
+  return (
+    left.periodStart === right.periodStart &&
+    left.periodEnd === right.periodEnd &&
+    left.narrative === right.narrative &&
+    left.nextPeriodIntention === right.nextPeriodIntention
+  );
+}
+
+function normalizeReview(review: Review): Review {
+  return {
+    ...review,
+    narrative: review.narrative.trim(),
+    nextPeriodIntention: review.nextPeriodIntention.trim()
+  };
+}
+
+function hasReviewContent(review: Review) {
+  return Boolean(
+    review.narrative.trim() || review.nextPeriodIntention.trim()
   );
 }
 
@@ -306,6 +343,22 @@ function isPersistedDiaryResponse(value: unknown): value is Diary & {
     Number.isInteger(diary.mood) &&
     Number.isInteger(diary.energy) &&
     diary.persisted === true
+  );
+}
+
+function isPersistedReviewResponse(value: unknown): value is Review & {
+  id: string;
+  persisted: true;
+} {
+  if (!value || typeof value !== "object") return false;
+  const review = value as Partial<Review>;
+  return (
+    typeof review.id === "string" &&
+    typeof review.periodStart === "string" &&
+    typeof review.periodEnd === "string" &&
+    typeof review.narrative === "string" &&
+    typeof review.nextPeriodIntention === "string" &&
+    review.persisted === true
   );
 }
 
@@ -431,6 +484,7 @@ export function Dashboard() {
   const [appError, setAppError] = useState("");
   const taskSaveWasInError = useRef(false);
   const diarySaveWasInError = useRef(false);
+  const reviewSaveWasInError = useRef(false);
   const taskCreateWasInError = useRef(false);
   const noteCreateWasInError = useRef(false);
   const materialCreateWasInError = useRef(false);
@@ -443,9 +497,34 @@ export function Dashboard() {
   const materialHistoryRequest = useRef(false);
 
   useEffect(() => {
+    let dayRefreshTimer: number | null = null;
+    let disposed = false;
+
+    function scheduleDayRefresh() {
+      dayRefreshTimer = window.setTimeout(() => {
+        void refresh()
+          .catch(() => {
+            if (disposed) return;
+            setAppError(
+              "Dayflow could not refresh for the new day. Reload to try again."
+            );
+            setAppAnnouncement("The new day could not be loaded.");
+          })
+          .finally(() => {
+            if (!disposed) scheduleDayRefresh();
+          });
+      }, millisecondsUntilNextLocalDay() + 100);
+    }
+
     setActivityTime(formatTimeInput(new Date()));
     setFirstRunSeen(window.localStorage.getItem("dayflow-first-run-seen") === "1");
     void refresh();
+    scheduleDayRefresh();
+
+    return () => {
+      disposed = true;
+      if (dayRefreshTimer !== null) window.clearTimeout(dayRefreshTimer);
+    };
   }, []);
 
   useEffect(() => {
@@ -1262,6 +1341,76 @@ export function Dashboard() {
     );
   }
 
+  async function saveReview(review: Review) {
+    const payload = {
+      periodStart: review.periodStart,
+      periodEnd: review.periodEnd,
+      narrative: review.narrative.trim(),
+      nextPeriodIntention: review.nextPeriodIntention.trim()
+    };
+    try {
+      const response = await fetch("/api/review", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const result = await response.json().catch(() => null);
+      if (
+        response.status === 409 &&
+        result &&
+        typeof result === "object" &&
+        (result as { code?: unknown }).code === "REVIEW_PERIOD_CHANGED"
+      ) {
+        try {
+          await refresh();
+          setAppAnnouncement(
+            "The Review Period changed. A fresh Review is ready."
+          );
+          setAppError("");
+          return true;
+        } catch {
+          setAppError(
+            "The Review Period changed, but Dayflow could not load it. Reload to continue."
+          );
+          setAppAnnouncement("The new Review Period could not be loaded.");
+          return false;
+        }
+      }
+      if (
+        !response.ok ||
+        !isPersistedReviewResponse(result) ||
+        result.periodStart !== payload.periodStart ||
+        result.periodEnd !== payload.periodEnd ||
+        result.narrative !== payload.narrative ||
+        result.nextPeriodIntention !== payload.nextPeriodIntention
+      ) {
+        return false;
+      }
+      setData((current) =>
+        current ? { ...current, review: result } : current
+      );
+      await refreshAfterConfirmedMutation();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function reportReviewSaveFailure() {
+    reviewSaveWasInError.current = true;
+    setAppAnnouncement("Review was not saved.");
+    setAppError(
+      "Couldn’t save the review. Your writing is still here — retry."
+    );
+  }
+
+  function reportReviewSaveRecovery() {
+    if (!reviewSaveWasInError.current) return;
+    reviewSaveWasInError.current = false;
+    setAppAnnouncement("Saved.");
+    setAppError("");
+  }
+
   async function addActivity() {
     if (activitySaving) return;
     const minutes = Number(activityDuration);
@@ -1595,15 +1744,13 @@ export function Dashboard() {
 
         {screen === "review" && (
           <ReviewPage
-            today={data.today}
-            stats={data.stats}
+            key={`${data.review.periodStart}:${data.review.periodEnd}`}
             projects={data.projects}
-            diary={data.diary}
+            review={data.review}
             summary={data.reviewSummary}
-            onDiaryChange={setDiaryValue}
-            onSaveDiary={saveDiary}
-            onSaveError={reportDiarySaveFailure}
-            onSaveRecovered={reportDiarySaveRecovery}
+            onSaveReview={saveReview}
+            onSaveError={reportReviewSaveFailure}
+            onSaveRecovered={reportReviewSaveRecovery}
             onOpenProject={openProject}
           />
         )}
@@ -3630,249 +3777,323 @@ function JournalPage({
 }
 
 function ReviewPage({
-  today,
-  stats,
   projects,
-  diary,
+  review,
   summary,
-  onDiaryChange,
-  onSaveDiary,
+  onSaveReview,
   onSaveError,
   onSaveRecovered,
   onOpenProject
 }: {
-  today: string;
-  stats: DayStat[];
   projects: ProjectSummary[];
-  diary: Diary;
+  review: Review;
   summary: ReviewSummary;
-  onDiaryChange: <K extends keyof Diary>(key: K, value: Diary[K]) => void;
-  onSaveDiary: (diary: Diary) => Promise<boolean>;
+  onSaveReview: (review: Review) => Promise<boolean>;
   onSaveError: () => void;
   onSaveRecovered: () => void;
   onOpenProject: (id: string) => void;
 }) {
-  const reflectionSave = useSaveState<Diary>({
-    value: diary,
-    save: onSaveDiary,
-    isEqual: diariesEqual,
+  const reviewSave = useSaveState<Review>({
+    value: review,
+    save: onSaveReview,
+    normalize: normalizeReview,
+    isEqual: reviewsEqual,
+    isValid: hasReviewContent,
     onFinalError: onSaveError,
     onRecovered: onSaveRecovered
   });
-  const chartData = stats.map((stat) => ({
-    ...stat,
-    label: new Date(`${stat.day}T00:00:00`).toLocaleDateString("en-US", {
-      weekday: "short"
-    })
-  }));
-  const taskDone = stats.reduce((sum, stat) => sum + stat.completed, 0);
-  const taskTotal = stats.reduce((sum, stat) => sum + stat.total, 0);
-  const todayEvidence =
-    stats.find((stat) => stat.day === today.slice(0, 10)) ?? null;
-  const longestWhen = summary.longestStartedAt
-    ? formatBlockMoment(summary.longestStartedAt)
-    : "No completed focus block yet";
-  const moved = projects
-    .filter((project) => project.movedDuringReviewPeriod)
-    .slice(0, 4);
-  const recordedDays = chartData.filter((stat) => stat.actualHours > 0);
-  const isFirstWeek = recordedDays.length === 1 && summary.focusedMinutes > 0;
-  const sessionNote = [
-    summary.pendingEnrichmentSessions
-      ? `${summary.pendingEnrichmentSessions} awaiting optional details`
-      : null,
-    summary.cancelledSessions
-      ? `${summary.cancelledSessions} cancelled`
-      : null
-  ]
-    .filter(Boolean)
-    .join(" · ") || "All sessions recorded";
+  const moved = projects.filter(
+    (project) => project.movedDuringReviewPeriod
+  );
+  const categories = summary.categoryMinutes.filter(
+    (item) => item.minutes > 0
+  );
+  const hasDraft = hasReviewContent(reviewSave.draft);
+  const diaryAverageNote =
+    summary.diaryDayCount === 0
+      ? "no saved Diary days"
+      : `across ${summary.diaryDayCount} saved Diary ${
+          summary.diaryDayCount === 1 ? "day" : "days"
+        }`;
+
   return (
     <div className="review-page page-stack">
       <PageHeader
-        eyebrow={`Seven days ending ${formatShortDate(today)}`}
+        eyebrow={`Seven days ending ${formatReviewPeriodEnd(review.periodEnd)}`}
         title="Review"
-        actions={
-          <span className="review-focus-pill">
-            {formatMinutes(summary.focusedMinutes)} focused this review period
-          </span>
-        }
       />
-      <section
-        className="review-diary-evidence"
-        aria-label="Today’s diary evidence"
-      >
-        <span>
-          Mood ·{" "}
-          {todayEvidence?.mood === null || todayEvidence?.mood === undefined
-            ? "Not recorded"
-            : `${todayEvidence.mood}/5`}
-        </span>
-        <span>
-          Energy ·{" "}
-          {todayEvidence?.energy === null || todayEvidence?.energy === undefined
-            ? "Not recorded"
-            : `${todayEvidence.energy}/5`}
-        </span>
-      </section>
+
+      <dl className="review-metrics" aria-label="Review period totals">
+        <ReviewMetric
+          label="Recorded"
+          value={formatMinutes(summary.recordedMinutes)}
+          note="Activity time"
+        />
+        <ReviewMetric
+          label="Focused"
+          value={formatMinutes(summary.focusedMinutes)}
+          note="Focus-origin Activity"
+        />
+        <ReviewMetric
+          label="Tasks done"
+          value={String(summary.completedTaskCount)}
+          note={
+            summary.completedTaskCount === 1
+              ? "task completed"
+              : "tasks completed"
+          }
+        />
+        <ReviewMetric
+          label="Diary days"
+          value={`${summary.diaryDayCount}/7`}
+          note="intentionally saved"
+        />
+      </dl>
+
+      <div className="review-evidence-grid">
+        <section
+          className="panel review-evidence-panel"
+          aria-labelledby="review-evidence-heading"
+        >
+          <div className="review-panel-heading">
+            <div>
+              <span className="eyebrow">Supporting evidence</span>
+              <h2 id="review-evidence-heading">Evidence captured</h2>
+            </div>
+          </div>
+          <dl className="review-evidence-counts">
+            <ReviewMetric
+              label="Notes"
+              value={String(summary.noteCount)}
+              note={summary.noteCount === 1 ? "note captured" : "notes captured"}
+            />
+            <ReviewMetric
+              label="References"
+              value={String(summary.materialCount)}
+              note={
+                summary.materialCount === 1
+                  ? "reference saved"
+                  : "references saved"
+              }
+            />
+            <ReviewMetric
+              label="Projects"
+              value={String(summary.movedProjectCount)}
+              note="moved forward"
+            />
+            <ReviewMetric
+              label="Average mood"
+              value={formatDiaryAverage(summary.averageMood)}
+              note={diaryAverageNote}
+            />
+            <ReviewMetric
+              label="Average energy"
+              value={formatDiaryAverage(summary.averageEnergy)}
+              note={diaryAverageNote}
+            />
+          </dl>
+          <p className="review-missing-evidence-note">
+            Mood and energy average only saved Diary days. Missing days stay
+            missing.
+          </p>
+        </section>
+
+        <section
+          className="panel review-category-panel"
+          aria-labelledby="review-category-heading"
+        >
+          <div className="review-panel-heading">
+            <div>
+              <span className="eyebrow">Activity distribution</span>
+              <h2 id="review-category-heading">Where the time went</h2>
+            </div>
+            <strong>{formatMinutes(summary.recordedMinutes)}</strong>
+          </div>
+          {categories.length ? (
+            <ul
+              className="review-category-list"
+              aria-label="Activity time by category"
+            >
+              {categories.map((item) => {
+                const percentage = Math.round(
+                  (item.minutes / Math.max(summary.recordedMinutes, 1)) * 100
+                );
+                return (
+                  <li key={item.category}>
+                    <div className="review-category-copy">
+                      <span>{item.category}</span>
+                      <strong>{formatMinutes(item.minutes)}</strong>
+                      <small>{percentage}%</small>
+                    </div>
+                    <div className="review-category-track" aria-hidden="true">
+                      <i
+                        style={{
+                          width: `${Math.max(0, Math.min(percentage, 100))}%`
+                        }}
+                      />
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <p className="review-empty-copy">
+              No Activity time was recorded in this review period.
+            </p>
+          )}
+        </section>
+      </div>
+
       {summary.pendingEnrichmentSessions > 0 && (
         <p className="review-pending-note" role="status">
           <Check size={14} />
           <span>
-            <strong>{formatMinutes(summary.pendingEnrichmentMinutes)} is already counted.</strong>{" "}
-            {summary.pendingEnrichmentSessions === 1 ? "This session" : "These sessions"} can
-            receive optional notes and categories later.
+            <strong>
+              {formatMinutes(summary.pendingEnrichmentMinutes)} is already
+              counted.
+            </strong>{" "}
+            {summary.pendingEnrichmentSessions === 1
+              ? "This session"
+              : "These sessions"}{" "}
+            can receive optional notes and categories later.
           </span>
         </p>
       )}
-      {isFirstWeek ? (
-        <>
-          <div className="review-metrics review-first-week-metrics">
-            <ReviewMetric
-              label="Recorded"
-              value={formatMinutes(summary.focusedMinutes)}
-              note="today, the only day with records"
-            />
-            <ReviewMetric
-              label="Vs last week"
-              value="—"
-              note="needs a second week"
-            />
-            <ReviewMetric
-              label="Completed"
-              value={String(taskDone)}
-              note={taskDone === 1 ? "task" : "tasks"}
-            />
+
+      <section
+        className="panel moved-projects"
+        aria-labelledby="review-projects-heading"
+      >
+        <div className="review-panel-heading">
+          <div>
+            <span className="eyebrow">Outcomes in motion</span>
+            <h2 id="review-projects-heading">Projects moved forward</h2>
           </div>
-          <section className="panel review-charts-panel review-first-week-chart">
-            <span>Planned vs recorded</span>
-            <div className="review-first-week-plot">
-              <ResponsiveContainer width="100%" height={250}>
-                <BarChart data={chartData}>
-                  <CartesianGrid stroke="#eee8de" vertical={false} />
-                  <XAxis dataKey="label" tickLine={false} axisLine={false} />
-                  <YAxis width={25} />
-                  <Tooltip />
-                  <Bar dataKey="plannedHours" fill="#d4c6aa" radius={[5, 5, 0, 0]} />
-                  <Bar dataKey="actualHours" fill="#637a5c" radius={[5, 5, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-              <p>
-                One day of records. The axes stay so the shape of the week is visible
-                as it fills — three more days and the week-over-week comparison appears.
-              </p>
-            </div>
-            <small>
-              {recordedDays[0]?.label ?? "One day"} only · the other days have no recorded time
-            </small>
-          </section>
-        </>
-      ) : (
-        <>
-          <div className="review-metrics">
-            <ReviewMetric
-              label="Focused"
-              value={formatMinutes(summary.focusedMinutes)}
-              note="Protected focus time"
-            />
-            <ReviewMetric
-              label="Sessions"
-              value={String(summary.completedSessions)}
-              note={sessionNote}
-            />
-            <ReviewMetric
-              label="Tasks done"
-              value={String(taskDone)}
-              note={`of ${taskTotal} planned`}
-            />
-            <ReviewMetric
-              label="Longest block"
-              value={`${summary.longestMinutes}m`}
-              note={longestWhen}
-            />
-          </div>
-          <section className="panel review-charts-panel">
-            <h2>Recorded time</h2>
-            <div className="review-charts">
-              <div>
-                <span>Recorded hours per day</span>
-                <ResponsiveContainer width="100%" height={190}>
-                  <BarChart data={chartData}>
-                    <CartesianGrid stroke="#eee8de" vertical={false} />
-                    <XAxis dataKey="label" tickLine={false} axisLine={false} />
-                    <YAxis width={25} />
-                    <Tooltip />
-                    <Bar dataKey="actualHours" fill="#637a5c" radius={[5, 5, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-              <div>
-                <span>Planned vs recorded</span>
-                <ResponsiveContainer width="100%" height={190}>
-                  <BarChart data={chartData}>
-                    <CartesianGrid stroke="#eee8de" vertical={false} />
-                    <XAxis dataKey="label" tickLine={false} axisLine={false} />
-                    <YAxis width={25} />
-                    <Tooltip />
-                    <Bar dataKey="plannedHours" fill="#d4c6aa" radius={[5, 5, 0, 0]} />
-                    <Bar dataKey="actualHours" fill="#637a5c" radius={[5, 5, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-          </section>
-        </>
-      )}
-      <div className="review-lower">
-        <section className="panel moved-projects">
-          <h2>Projects moved forward</h2>
+          <strong>{summary.movedProjectCount}</strong>
+        </div>
+        <div className="review-project-list">
           {moved.map((project) => (
-            <button key={project.id} onClick={() => onOpenProject(project.id)}>
+            <button
+              key={project.id}
+              type="button"
+              onClick={() => onOpenProject(project.id)}
+            >
               <strong>{project.name}</strong>
-              <div className="meter">
+              <div className="meter" aria-hidden="true">
                 <i style={{ width: `${project.progressPercent ?? 0}%` }} />
               </div>
               <small>
                 {project.completedTaskCount}/{project.taskCount} tasks ·{" "}
-                {formatInvestedMinutes(project.reviewPeriodInvestedMinutes)} invested
-                this review period
+                {formatInvestedMinutes(
+                  project.reviewPeriodInvestedMinutes
+                )}{" "}
+                invested this review period
               </small>
             </button>
           ))}
           {!moved.length && (
-            <p>No project movement recorded this review period.</p>
+            <p>No project movement was recorded in this review period.</p>
           )}
-        </section>
-        <section className="panel reflection-card">
-          <div className="reflection-heading">
-            <h2>Reflection</h2>
+        </div>
+      </section>
+
+      <section
+        className="panel review-editor-card"
+        aria-labelledby="review-editor-heading"
+      >
+        <div className="review-editor-heading">
+          <div>
+            <span className="eyebrow">Saved separately from Journal</span>
+            <h2 id="review-editor-heading">Your review</h2>
+          </div>
+          <div
+            className="review-save-state"
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+          >
             <SaveStateChip
-              state={reflectionSave.state}
-              onRetry={() => void reflectionSave.flush(true)}
+              state={reviewSave.state}
+              onRetry={() => void reviewSave.flush(true)}
             />
           </div>
-          <textarea
-            value={reflectionSave.draft.reflection}
-            onChange={(event) => {
-              const value = event.target.value;
-              reflectionSave.setDraft({
-                ...reflectionSave.draft,
-                reflection: value
-              });
-              onDiaryChange("reflection", value);
-            }}
-            placeholder="What worked, and what deserves protection next week?"
-            {...reflectionSave.inputProps}
-          />
-          <button
-            className="primary-button"
-            onClick={() => void reflectionSave.flush(true)}
-          >
-            <Save size={14} />
-            Save reflection
-          </button>
-        </section>
-      </div>
+        </div>
+        <p className="review-editor-intro">
+          Interpret the evidence without changing it. This writing belongs to
+          this exact seven-day period, not today&apos;s Diary.
+        </p>
+        <form
+          className="review-editor-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void reviewSave.flush(true);
+          }}
+        >
+          <div className="review-writing-fields">
+            <label htmlFor="review-narrative">
+              <span>Looking back</span>
+              <strong>What moved forward?</strong>
+              <textarea
+                id="review-narrative"
+                aria-label="What moved forward?"
+                value={reviewSave.draft.narrative}
+                maxLength={REVIEW_NARRATIVE_MAX_LENGTH}
+                aria-describedby="review-narrative-help"
+                onChange={(event) =>
+                  reviewSave.setDraft({
+                    ...reviewSave.draft,
+                    narrative: event.target.value
+                  })
+                }
+                {...reviewSave.inputProps}
+              />
+              <small id="review-narrative-help">
+                A short account grounded in the evidence above ·{" "}
+                {reviewSave.draft.narrative.length.toLocaleString()}/
+                {REVIEW_NARRATIVE_MAX_LENGTH.toLocaleString()}
+              </small>
+            </label>
+            <label htmlFor="review-intention">
+              <span>Looking ahead</span>
+              <strong>What deserves protection next?</strong>
+              <textarea
+                id="review-intention"
+                aria-label="What deserves protection next?"
+                value={reviewSave.draft.nextPeriodIntention}
+                maxLength={REVIEW_INTENTION_MAX_LENGTH}
+                aria-describedby="review-intention-help"
+                onChange={(event) =>
+                  reviewSave.setDraft({
+                    ...reviewSave.draft,
+                    nextPeriodIntention: event.target.value
+                  })
+                }
+                {...reviewSave.inputProps}
+              />
+              <small id="review-intention-help">
+                One intention for the next seven days ·{" "}
+                {reviewSave.draft.nextPeriodIntention.length.toLocaleString()}/
+                {REVIEW_INTENTION_MAX_LENGTH.toLocaleString()}
+              </small>
+            </label>
+          </div>
+          <div className="review-editor-actions">
+            <p>
+              {hasDraft
+                ? "Changes also save after a short pause, on blur, or with ⌘/Ctrl+Enter."
+                : "Write in at least one field to save this Review."}
+            </p>
+            <button
+              type="submit"
+              className="primary-button"
+              disabled={!hasDraft || reviewSave.state === "saving"}
+            >
+              <Save size={14} />
+              {reviewSave.state === "saving" ? "Saving…" : "Save review"}
+            </button>
+          </div>
+        </form>
+      </section>
     </div>
   );
 }
@@ -4385,9 +4606,11 @@ function ReviewMetric({
 }) {
   return (
     <div>
-      <span>{label}</span>
-      <strong>{value}</strong>
-      <small>{note}</small>
+      <dt>{label}</dt>
+      <dd>
+        <strong>{value}</strong>
+        <small>{note}</small>
+      </dd>
     </div>
   );
 }
@@ -4665,6 +4888,19 @@ function formatShortDate(value: string) {
   });
 }
 
+function formatReviewPeriodEnd(periodEnd: string) {
+  const lastMoment = new Date(new Date(periodEnd).getTime() - 1);
+  return lastMoment.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric"
+  });
+}
+
+function formatDiaryAverage(value: number | null) {
+  if (value === null) return "Not recorded";
+  return `${Number.isInteger(value) ? value : value.toFixed(1)}/5`;
+}
+
 function formatBacklogDue(value: string | null, today: string) {
   if (!value) return "—";
   const days = Math.ceil(
@@ -4679,17 +4915,6 @@ function formatActivityTime(value: string) {
     hour: "numeric",
     minute: "2-digit"
   });
-}
-
-function formatBlockMoment(value: string) {
-  const date = new Date(value);
-  const part =
-    date.getHours() < 12
-      ? "morning"
-      : date.getHours() < 17
-        ? "afternoon"
-        : "evening";
-  return `${date.toLocaleDateString("en-US", { weekday: "long" })} ${part}`;
 }
 
 function formatClockTime(value: Date) {

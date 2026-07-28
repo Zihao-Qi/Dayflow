@@ -96,6 +96,15 @@ const CURRENT_TABLE_COLUMNS: Record<string, string[]> = {
     "createdAt",
     "updatedAt"
   ],
+  Review: [
+    "id",
+    "periodStart",
+    "periodEnd",
+    "narrative",
+    "nextPeriodIntention",
+    "createdAt",
+    "updatedAt"
+  ],
   Material: [
     "id",
     "title",

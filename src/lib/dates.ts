@@ -66,3 +66,10 @@ export function reviewPeriodRange(input = new Date()) {
     end: addDays(today, 1)
   };
 }
+
+export function millisecondsUntilNextLocalDay(input = new Date()) {
+  return Math.max(
+    0,
+    addDays(startOfLocalDay(input), 1).getTime() - input.getTime()
+  );
+}

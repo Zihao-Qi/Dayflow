@@ -10,6 +10,7 @@ export async function GET() {
     scheduleChanges,
     notes,
     diaryEntries,
+    reviews,
     materials,
     timeBlocks,
     activities
@@ -21,6 +22,7 @@ export async function GET() {
     prisma.taskScheduleChange.findMany({ orderBy: { createdAt: "desc" } }),
     prisma.note.findMany({ orderBy: { createdAt: "desc" } }),
     prisma.diaryEntry.findMany({ orderBy: { date: "desc" } }),
+    prisma.review.findMany({ orderBy: { periodStart: "desc" } }),
     prisma.material.findMany({ orderBy: { createdAt: "desc" } }),
     prisma.timeBlock.findMany({ orderBy: { date: "asc" } }),
     prisma.activityEntry.findMany({ orderBy: { startedAt: "asc" } })
@@ -32,7 +34,7 @@ export async function GET() {
     exportVersion: 1,
     exportedAt: new Date().toISOString(),
     purpose: "Complete local-first productivity data for analysis and external agents.",
-    schemaVersion: 5,
+    schemaVersion: 6,
     projects,
     phases,
     focusSessions,
@@ -40,6 +42,7 @@ export async function GET() {
     scheduleChanges,
     notes: notes.map((note) => ({ ...note, tags: parseTags(note.tags) })),
     diaryEntries,
+    reviews,
     materials,
     timeBlocks,
     activities

@@ -7,6 +7,7 @@ import {
   startOfLocalDay
 } from "@/lib/dates";
 import { listProjectSummaries } from "@/lib/projects";
+import { buildReviewSummary } from "@/lib/review-domain";
 
 export async function GET() {
   const today = startOfLocalDay();
@@ -26,8 +27,11 @@ export async function GET() {
     weekTasks,
     diaries,
     weekActivities,
-    weekFocusSessions,
-    projects
+    completedTasks,
+    reviewNotes,
+    reviewMaterials,
+    projects,
+    savedReview
   ] =
     await Promise.all([
       prisma.task.findMany({
@@ -65,23 +69,36 @@ export async function GET() {
       }),
       prisma.activityEntry.findMany({
         where: { startedAt: { gte: weekStart, lt: reviewEnd } },
-        orderBy: { startedAt: "asc" }
-      }),
-      prisma.focusSession.findMany({
-        where: {
-          kind: "FOCUS",
-          completedAt: { gte: weekStart, lt: reviewEnd },
-          status: { in: ["COMPLETED", "CANCELED"] }
-        },
-        select: {
-          status: true,
-          actualMinutes: true,
-          startedAt: true,
-          completedAt: true,
-          needsEnrichment: true
+        orderBy: { startedAt: "asc" },
+        include: {
+          focusSession: {
+            select: {
+              needsEnrichment: true
+            }
+          }
         }
       }),
-      listProjectSummaries()
+      prisma.task.findMany({
+        where: { completedAt: { gte: weekStart, lt: reviewEnd } },
+        select: { id: true }
+      }),
+      prisma.note.findMany({
+        where: { date: { gte: weekStart, lt: reviewEnd } },
+        select: { id: true }
+      }),
+      prisma.material.findMany({
+        where: { createdAt: { gte: weekStart, lt: reviewEnd } },
+        select: { id: true }
+      }),
+      listProjectSummaries(reviewPeriod),
+      prisma.review.findUnique({
+        where: {
+          periodStart_periodEnd: {
+            periodStart: weekStart,
+            periodEnd: reviewEnd
+          }
+        }
+      })
     ]);
 
   const diaryEntry = diary
@@ -101,10 +118,28 @@ export async function GET() {
     weekActivities,
     weekStart
   );
-  const reviewSummary = buildReviewSummary(
-    weekFocusSessions,
-    weekActivities
-  );
+  const reviewSummary = {
+    ...buildReviewSummary({
+      activities: weekActivities,
+      completedTasks,
+      notes: reviewNotes,
+      materials: reviewMaterials,
+      diaries
+    }),
+    movedProjectCount: projects.filter(
+      (project) => project.movedDuringReviewPeriod
+    ).length
+  };
+  const review = savedReview
+    ? { ...savedReview, persisted: true }
+    : {
+        id: null,
+        periodStart: weekStart,
+        periodEnd: reviewEnd,
+        narrative: "",
+        nextPeriodIntention: "",
+        persisted: false
+      };
 
   return NextResponse.json({
     today: start.toISOString(),
@@ -119,6 +154,7 @@ export async function GET() {
       (task) => task.date && task.date < today && task.status !== "DONE"
     ),
     stats,
+    review,
     reviewSummary
   });
 }
@@ -183,45 +219,6 @@ function buildStats(
       energy: diary?.energy ?? null
     };
   });
-}
-
-function buildReviewSummary(
-  sessions: Array<{
-    status: string;
-    actualMinutes: number;
-    startedAt: Date;
-    needsEnrichment: boolean;
-  }>,
-  activities: Array<{
-    origin: string;
-    durationMinutes: number;
-  }>
-) {
-  const completed = sessions.filter((session) => session.status === "COMPLETED");
-  const pendingEnrichment = completed.filter(
-    (session) => session.needsEnrichment
-  );
-  const longest =
-    [...completed].sort((a, b) => b.actualMinutes - a.actualMinutes)[0] ?? null;
-  return {
-    focusedMinutes: activities
-      .filter((activity) => activity.origin === "FOCUS")
-      .reduce(
-      (sum, activity) => sum + activity.durationMinutes,
-      0
-    ),
-    completedSessions: completed.length,
-    cancelledSessions: sessions.filter(
-      (session) => session.status === "CANCELED"
-    ).length,
-    pendingEnrichmentSessions: pendingEnrichment.length,
-    pendingEnrichmentMinutes: pendingEnrichment.reduce(
-      (sum, session) => sum + session.actualMinutes,
-      0
-    ),
-    longestMinutes: longest?.actualMinutes ?? 0,
-    longestStartedAt: longest?.startedAt ?? null
-  };
 }
 
 function roundHours(minutes: number) {

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   addDays,
+  millisecondsUntilNextLocalDay,
   parseLocalDate,
   reviewPeriodRange,
   sameDayRange
@@ -69,6 +70,20 @@ test("Review Period is seven local calendar days ending today", () => {
   assert.equal(period.end.getDate(), 11);
   assert.equal(period.start.getHours(), 0);
   assert.equal(period.end.getHours(), 0);
+});
+
+test("next-day refresh delay follows local midnight across daylight saving", () => {
+  const springStart = new Date(2026, 2, 8, 0, 0, 0);
+  const fallStart = new Date(2026, 10, 1, 0, 0, 0);
+
+  assert.equal(
+    millisecondsUntilNextLocalDay(springStart) / 3_600_000,
+    23
+  );
+  assert.equal(
+    millisecondsUntilNextLocalDay(fallStart) / 3_600_000,
+    25
+  );
 });
 
 test("local date parsing rejects impossible calendar dates", () => {

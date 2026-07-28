@@ -60,6 +60,14 @@ _Avoid_: Plan Progress, estimate
 The seven local calendar days ending today, used for period-bound Review evidence.
 _Avoid_: Calendar week, all time
 
+**Review**:
+A deliberately saved narrative and next-period intention for one Review Period. It interprets Evidence without copying or replacing it.
+_Avoid_: Diary reflection, Review Summary
+
+**Review Summary**:
+The live, derived account of Evidence within a Review Period. It is not itself a saved Review.
+_Avoid_: Review, snapshot, weekly report
+
 **Review-Period Invested Time**:
 The duration of activities attributed to a Project within the Review Period.
 _Avoid_: Invested Time, weekly budget

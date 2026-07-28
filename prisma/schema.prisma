@@ -143,6 +143,18 @@ model DiaryEntry {
   updatedAt  DateTime @updatedAt
 }
 
+model Review {
+  id                    String   @id @default(cuid())
+  periodStart           DateTime
+  periodEnd             DateTime
+  narrative             String   @default("")
+  nextPeriodIntention   String   @default("")
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@unique([periodStart, periodEnd])
+}
+
 model Material {
   id        String   @id @default(cuid())
   title     String

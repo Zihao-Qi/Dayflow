@@ -24,6 +24,7 @@ async function main() {
     return;
   }
 
+  await prisma.review.deleteMany();
   await prisma.taskScheduleChange.deleteMany();
   await prisma.focusSession.deleteMany();
   await prisma.activityEntry.deleteMany();
@@ -247,6 +248,7 @@ async function hasExistingData() {
     prisma.task.count(),
     prisma.note.count(),
     prisma.diaryEntry.count(),
+    prisma.review.count(),
     prisma.material.count(),
     prisma.timeBlock.count(),
     prisma.activityEntry.count(),

@@ -66,6 +66,7 @@ test(
       assert.match(backup.stdout, /Schema version: 20\d{12}_[a-z0-9_]+/);
       assert.match(backup.stdout, /Task: 1/);
       assert.match(backup.stdout, /FocusSession: 1/);
+      assert.match(backup.stdout, /Review: 1/);
 
       rmSync(activeDatabase);
 
@@ -96,6 +97,15 @@ test(
           `SELECT title FROM "Task" WHERE id = 'fixture-task';`
         ),
         "Round-trip every relationship"
+      );
+      assert.equal(
+        queryValue(
+          activeDatabase,
+          `SELECT narrative || '|' || nextPeriodIntention
+             FROM "Review"
+            WHERE id = 'fixture-review';`
+        ),
+        "The recovery path held.|Protect the next reliability pass."
       );
       assert.equal(
         queryValue(activeDatabase, "PRAGMA integrity_check;"),
@@ -250,6 +260,14 @@ function insertCompleteFixture(databasePath: string) {
      ) VALUES (
        'fixture-diary', 1785000000000, 'A durable day', 'Recovery works',
        4, 4, 1785000000000, 1785000000000
+     );
+     INSERT INTO "Review" (
+       "id", "periodStart", "periodEnd", "narrative",
+       "nextPeriodIntention", "createdAt", "updatedAt"
+     ) VALUES (
+       'fixture-review', 1785000000000, 1785604800000,
+       'The recovery path held.', 'Protect the next reliability pass.',
+       1785604800000, 1785604800000
      );
      INSERT INTO "Material" (
        "id", "title", "url", "type", "notes", "taskId", "noteId",

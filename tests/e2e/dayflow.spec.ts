@@ -1660,8 +1660,11 @@ test("counts completed focus immediately while completion details remain optiona
   ).toHaveLength(1);
 
   await page.getByRole("button", { name: "Review", exact: true }).click();
+  const focusedMetric = page
+    .locator(".review-metrics > div")
+    .filter({ hasText: "Focused" });
   await expect(
-    page.getByText("3m focused this review period", { exact: true })
+    focusedMetric.getByText("3m", { exact: true })
   ).toBeVisible();
   await expect(page.getByText("3m is already counted.", { exact: true })).toBeVisible();
 
@@ -1887,8 +1890,26 @@ test("loading Dayflow keeps missing Diary evidence unpersisted", async ({ page }
 
   await openDashboard(page);
   await page.getByRole("button", { name: "Review", exact: true }).click();
-  await expect(page.getByText("Mood · Not recorded", { exact: true })).toBeVisible();
-  await expect(page.getByText("Energy · Not recorded", { exact: true })).toBeVisible();
+  const diaryDays = page
+    .locator(".review-metrics > div")
+    .filter({ hasText: "Diary days" });
+  await expect(diaryDays.getByText("0/7", { exact: true })).toBeVisible();
+  const reviewEvidence = page.getByRole("region", {
+    name: "Evidence captured",
+    exact: true
+  });
+  const averageMood = reviewEvidence
+    .locator(".review-evidence-counts > div")
+    .filter({ hasText: "Average mood" });
+  const averageEnergy = reviewEvidence
+    .locator(".review-evidence-counts > div")
+    .filter({ hasText: "Average energy" });
+  await expect(
+    averageMood.getByText("Not recorded", { exact: true })
+  ).toBeVisible();
+  await expect(
+    averageEnergy.getByText("Not recorded", { exact: true })
+  ).toBeVisible();
 });
 
 test("separates all-time and Review-Period Project Invested Time", async ({
@@ -2605,16 +2626,60 @@ test("supports the redesigned Journal and Review destinations", async ({ page })
 
   await page.getByRole("button", { name: "Review", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Review", exact: true })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Recorded time" })).toBeVisible();
-  await expect(page.getByText("Planned vs recorded", { exact: true })).toBeVisible();
-  const reflection = page.getByPlaceholder(
-    "What worked, and what deserves protection next week?"
-  );
-  await reflection.fill("Protect the quiet feedback loop.");
-  await reflection.press("Meta+Enter");
   await expect(
-    page.locator(".reflection-heading").getByText("Saved", { exact: true })
+    page.getByRole("heading", { name: "Evidence captured", exact: true })
   ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Where the time went", exact: true })
+  ).toBeVisible();
+  const narrative = page.getByLabel("What moved forward?", { exact: true });
+  const intention = page.getByLabel("What deserves protection next?", {
+    exact: true
+  });
+  await narrative.fill("The quiet feedback loop kept the work moving.");
+  await intention.fill("Protect one uninterrupted review block.");
+  const saveReview = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/review") &&
+      response.request().method() === "PUT"
+  );
+  await intention.press("Control+Enter");
+  expect((await saveReview).ok()).toBe(true);
+  await expect(
+    page.locator(".review-editor-heading").getByText("Saved", { exact: true })
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: /^Today/ }).click();
+  await page.getByRole("button", { name: "Review", exact: true }).click();
+  await expect(narrative).toHaveValue(
+    "The quiet feedback loop kept the work moving."
+  );
+  await expect(intention).toHaveValue(
+    "Protect one uninterrupted review block."
+  );
+
+  const bootstrap = await page.request.get("/api/bootstrap");
+  const saved = (await bootstrap.json()) as {
+    diary: { content: string };
+    review: { narrative: string; nextPeriodIntention: string };
+  };
+  expect(saved.diary.content).toBe("The save state belongs beside the writing.");
+  expect(saved.review).toEqual(
+    expect.objectContaining({
+      narrative: "The quiet feedback loop kept the work moving.",
+      nextPeriodIntention: "Protect one uninterrupted review block."
+    })
+  );
+
+  await page.reload();
+  await expect(page.getByRole("heading", { name: /blocks? left$/ })).toBeVisible();
+  await page.getByRole("button", { name: "Review", exact: true }).click();
+  await expect(
+    page.getByLabel("What moved forward?", { exact: true })
+  ).toHaveValue("The quiet feedback loop kept the work moving.");
+  await expect(
+    page.getByLabel("What deserves protection next?", { exact: true })
+  ).toHaveValue("Protect one uninterrupted review block.");
 });
 
 test("reaches complete Note and Material history through stable pagination", async ({

@@ -24,7 +24,8 @@ lucide-react. The app runs locally without accounts or hosted services.
 - Log views for scheduled work and recorded daily activity, plus Backlog
   arrangements for Quadrant, Project, Due, and sufficiently wide Figure views.
 - Journal workspace for diary entries, quick notes, and saved references.
-- Review workspace for reflection and seven-day progress patterns.
+- Review workspace for seven-day evidence summaries, Project movement, and a
+  period-bound narrative and next-period intention.
 - Project attribution for activities, notes, and saved references.
 - Global Capture menu for jumping directly to a task, activity, note, or reference.
 - Deadline-aware urgency that increases as a due date approaches.
@@ -33,6 +34,7 @@ lucide-react. The app runs locally without accounts or hosted services.
 Product and corrective specifications:
 
 - [Evidence Integrity v1](./docs/specs/EVIDENCE_INTEGRITY_V1.md)
+- [Weekly Evidence Review v1](./docs/specs/WEEKLY_EVIDENCE_REVIEW_V1.md)
 - [Local Data Reliability v1](./docs/specs/LOCAL_DATA_RELIABILITY_V1.md)
 - [Six-destination workspace decision](./docs/adr/0001-six-destination-workspace.md)
 
@@ -186,7 +188,8 @@ to the network by default.
 The Tools menu also exposes `/api/agent-export`, a versioned JSON export for
 analysis and external agents. Unlike the dashboard bootstrap payload, this
 export is not windowed: it includes every Task, schedule change, Project,
-Phase, Focus Session, Note, Diary entry, Material, Time Block, and Activity.
+Phase, Focus Session, Note, Diary entry, Review, Material, Time Block, and
+Activity.
 It is supplemental and is not a restore format; use `db:backup` and
 `db:restore` for lossless recovery.
 

@@ -244,11 +244,13 @@ test("starts a fresh Review when the local day changes", async ({ page }) => {
   });
   expect(savedResponse.ok()).toBe(true);
 
-  const bootstrapLoads = await shiftBootstrapAfterFirstLoad(page);
+  const bootstrapPeriod = await controlBootstrapPeriodShift(page);
 
+  const loadingTime = new Date(current.today);
+  loadingTime.setHours(23, 55, 0, 0);
   const lateToday = new Date(current.today);
   lateToday.setHours(23, 59, 59, 0);
-  await page.clock.install({ time: lateToday });
+  await page.clock.install({ time: loadingTime });
   await openReview(page);
 
   const narrative = page.getByLabel("What moved forward?");
@@ -258,18 +260,23 @@ test("starts a fresh Review when the local day changes", async ({ page }) => {
   const periodLabel = page.getByText(/^Seven days ending /);
   const endingBefore = await periodLabel.textContent();
 
+  const loadsBeforeRollover = bootstrapPeriod.loadCount();
+  bootstrapPeriod.armShift();
+  await page.clock.pauseAt(lateToday);
   await page.clock.runFor(1_500);
 
+  await expect
+    .poll(bootstrapPeriod.loadCount)
+    .toBeGreaterThan(loadsBeforeRollover);
   await expect(narrative).toHaveValue("");
   await expect(intention).toHaveValue("");
   await expect(periodLabel).not.toHaveText(endingBefore ?? "");
-  expect(bootstrapLoads()).toBeGreaterThanOrEqual(2);
 });
 
 test("loads the fresh Review after a stale-period save response", async ({
   page
 }) => {
-  const bootstrapLoads = await shiftBootstrapAfterFirstLoad(page);
+  const bootstrapPeriod = await controlBootstrapPeriodShift(page);
   let saveAttempts = 0;
   await page.route("**/api/review", async (route) => {
     if (route.request().method() !== "PUT") {
@@ -293,8 +300,13 @@ test("loads the fresh Review after a stale-period save response", async ({
   const narrative = page.getByLabel("What moved forward?");
   const intention = page.getByLabel("What deserves protection next?");
   await narrative.fill("Do not carry this draft into a different period.");
+  const loadsBeforeSave = bootstrapPeriod.loadCount();
+  bootstrapPeriod.armShift();
   await page.getByRole("button", { name: "Save review", exact: true }).click();
 
+  await expect
+    .poll(bootstrapPeriod.loadCount)
+    .toBeGreaterThan(loadsBeforeSave);
   await expect(narrative).toHaveValue("");
   await expect(intention).toHaveValue("");
   await expect(periodLabel).not.toHaveText(endingBefore ?? "");
@@ -305,7 +317,6 @@ test("loads the fresh Review after a stale-period save response", async ({
     )
   ).toBeVisible();
   expect(saveAttempts).toBe(1);
-  expect(bootstrapLoads()).toBeGreaterThanOrEqual(2);
 });
 
 test("keeps the Review editor usable without horizontal overflow", async ({
@@ -351,9 +362,11 @@ function shiftLocalDay(value: string) {
   return shifted.toISOString();
 }
 
-async function shiftBootstrapAfterFirstLoad(page: Page) {
+async function controlBootstrapPeriodShift(page: Page) {
   let bootstrapLoads = 0;
+  let shiftPeriod = false;
   await page.route("**/api/bootstrap", async (route) => {
+    const shouldShift = shiftPeriod;
     const response = await route.fetch();
     const payload = (await response.json()) as Record<string, unknown> & {
       review: Record<string, unknown> & {
@@ -362,7 +375,7 @@ async function shiftBootstrapAfterFirstLoad(page: Page) {
       };
     };
     bootstrapLoads += 1;
-    if (bootstrapLoads > 1) {
+    if (shouldShift) {
       payload.today = shiftLocalDay(payload.today as string);
       payload.review = {
         id: null,
@@ -375,5 +388,10 @@ async function shiftBootstrapAfterFirstLoad(page: Page) {
     }
     await route.fulfill({ response, json: payload });
   });
-  return () => bootstrapLoads;
+  return {
+    armShift: () => {
+      shiftPeriod = true;
+    },
+    loadCount: () => bootstrapLoads
+  };
 }

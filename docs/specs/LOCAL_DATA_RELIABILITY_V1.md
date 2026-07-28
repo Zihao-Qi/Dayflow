@@ -1,6 +1,6 @@
 # Local Data Reliability v1
 
-Status: Proposed
+Status: Implemented
 Date: July 27, 2026
 Scope: Corrective release before further feature expansion
 
@@ -195,6 +195,12 @@ Restore is deliberately conservative:
 7. Keep the safety backup available and report its location.
 
 Restore v1 replaces the current dataset; it does not attempt an ambiguous merge.
+Failures detected before replacement leave the active database unchanged. If
+the process stops or final durability confirmation fails after atomic
+replacement has begun, the active database may already contain the restored
+data; Dayflow reports that uncertainty and retains any safety backup that was
+actually created. A safety-backup path is not presented as recoverable unless
+the artifact exists.
 
 ## Export Contract
 
@@ -260,3 +266,39 @@ This specification is complete when:
 - backup and restore pass a destructive disposable round-trip test;
 - the README documents upgrade, backup, and restore commands;
 - no automated test can address the user's active database.
+
+## Implementation Record
+
+Implemented July 27, 2026.
+
+- Task, Activity, Note, Material, Project, Phase, and Focus Session creates use
+  stable client mutation identifiers backed by transactional durable receipts.
+  Diary uses its unique local date as a natural idempotency key.
+- Create forms retain drafts until a validated canonical response arrives,
+  distinguish persistence from a later refresh failure, and expose retry and
+  recovery state.
+- Shared parsers enforce bounded text, path identifiers, dates, enums, numeric
+  values, URLs, and relationship consistency with typed 400, 404, and 409
+  responses. Unit contract coverage exercises every mutating route.
+- Notes and References expose stable cursor pagination, snapshot-consistent
+  totals, loading/retry/end states, and complete histories larger than 100
+  records.
+- The versioned JSON agent export is complete rather than dashboard-windowed.
+- Checked-in migrations cover every current schema change and are tested from
+  all supported prior schema fixtures.
+- `db:backup` writes an atomic, checksummed SQLite snapshot artifact.
+  `db:restore` validates checksums, record counts, relationships, the exact
+  application schema, and migration checksums before replacement; it restores a
+  deleted working database or retains a safety backup when replacing one.
+- A local **Data & backups** dialog creates, downloads, and inspects managed
+  artifacts. Restore selection requires explicit confirmation and is applied
+  during the next Dayflow startup, before the first Prisma request opens
+  SQLite; the selected checksum is revalidated and any safety backup actually
+  created before replacement is retained and reported.
+- Disposable integration coverage exercises deleted-database recovery,
+  existing-database replacement, staged-checksum changes, interrupted applying
+  state, real Next startup restoration, and corrupt-artifact rejection.
+  Browser tests cover managed backup creation and download, confirmation,
+  cancellation, and scheduling failure alongside draft preservation,
+  malformed-success rejection, idempotent replay, and complete Journal
+  pagination without touching the active database or enabling live restore.

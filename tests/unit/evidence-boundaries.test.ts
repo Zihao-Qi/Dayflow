@@ -9,33 +9,40 @@ import {
 import {
   focusElapsedSeconds,
   focusRemainingSeconds,
+  isFocusSnapshot,
+  isFocusStartResponse,
   type FocusSessionRecord
 } from "../../src/lib/focus-domain";
 
 test("Focus elapsed time excludes persisted pauses", () => {
-  const session: FocusSessionRecord = {
-    id: "focus-boundary",
-    kind: "FOCUS",
-    plannedMinutes: 10,
-    actualMinutes: 0,
-    label: "Boundary calculation",
-    startedAt: "2026-07-27T10:00:00-05:00",
+  const session = focusSessionFixture({
     pausedAt: "2026-07-27T10:10:00-05:00",
     accumulatedPauseSeconds: 120,
-    status: "PAUSED",
-    completedAt: null,
-    needsEnrichment: false,
-    enrichedAt: null,
-    completionNote: null,
-    completionCategory: null,
-    taskId: null,
-    projectId: null,
-    task: null,
-    project: null
-  };
+    status: "PAUSED"
+  });
 
   assert.equal(focusElapsedSeconds(session), 480);
   assert.equal(focusRemainingSeconds(session), 120);
+});
+
+test("Focus client contracts reject malformed successful start payloads", () => {
+  const session = focusSessionFixture();
+  const snapshot = {
+    active: session,
+    pendingCompletion: null,
+    today: { completedSessions: 0, focusedMinutes: 0 }
+  };
+
+  assert.equal(isFocusSnapshot(snapshot), true);
+  assert.equal(isFocusStartResponse({ session, snapshot }), true);
+  assert.equal(isFocusStartResponse({ snapshot: {} }), false);
+  assert.equal(
+    isFocusStartResponse({
+      session,
+      snapshot: { ...snapshot, active: { ...session, id: "different" } }
+    }),
+    false
+  );
 });
 
 test("local-day ranges retain calendar boundaries across daylight saving", () => {
@@ -73,3 +80,29 @@ test("local date parsing rejects impossible calendar dates", () => {
   assert.equal(parseLocalDate("not-a-date"), null);
   assert.equal(parseLocalDate("2026-02-28")?.getDate(), 28);
 });
+
+function focusSessionFixture(
+  overrides: Partial<FocusSessionRecord> = {}
+): FocusSessionRecord {
+  return {
+    id: "focus-boundary",
+    kind: "FOCUS",
+    plannedMinutes: 10,
+    actualMinutes: 0,
+    label: "Boundary calculation",
+    startedAt: "2026-07-27T10:00:00-05:00",
+    pausedAt: null,
+    accumulatedPauseSeconds: 0,
+    status: "RUNNING",
+    completedAt: null,
+    needsEnrichment: false,
+    enrichedAt: null,
+    completionNote: null,
+    completionCategory: null,
+    taskId: null,
+    projectId: null,
+    task: null,
+    project: null,
+    ...overrides
+  };
+}

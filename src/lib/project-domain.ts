@@ -25,6 +25,8 @@ export type ProjectSummary = ProjectMetrics & {
   phaseCount: number;
   backlogCount: number;
   investedMinutes: number;
+  reviewPeriodInvestedMinutes: number;
+  movedDuringReviewPeriod: boolean;
   nextTaskId: string | null;
   nextTaskTitle: string | null;
   nextTaskEstimateMinutes: number | null;

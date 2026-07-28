@@ -8537,6 +8537,19 @@ html[data-layout-mode="phone"] {
   font-weight: 500;
 }
 
+.review-diary-evidence {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
 .review-pending-note {
   display: flex;
   align-items: center;

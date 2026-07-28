@@ -10,11 +10,16 @@
     "test:e2e:prepare": "node --import tsx scripts/prepare-e2e-db.ts",
     "test:e2e:server": "next dev -H 127.0.0.1 -p 3100",
     "test:e2e": "npm run test:e2e:prepare && playwright test",
+    "test:unit": "TZ=America/Chicago node --import tsx --test tests/unit/**/*.test.ts",
+    "test:migrations": "tsx scripts/test-migrations.ts",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",
-    "db:init": "sqlite3 prisma/dev.db \".read prisma/init.sql\"",
+    "evidence:reconcile": "tsx scripts/reconcile-evidence.ts",
+    "db:migrate": "tsx scripts/migrate-database.ts",
+    "db:init": "prisma migrate deploy",
     "prisma:seed": "tsx prisma/seed.ts",
-    "db:setup": "npm run db:init && npm run prisma:seed"
+    "db:setup": "npm run db:migrate && npm run prisma:seed",
+    "db:reset-demo": "DAYFLOW_SEED_RESET=1 npm run prisma:seed"
   },
   "dependencies": {
     "@prisma/client": "6.19.3",

@@ -1,6 +1,4 @@
-PRAGMA foreign_keys = ON;
-
-CREATE TABLE IF NOT EXISTS "Project" (
+CREATE TABLE "Project" (
   "id" TEXT NOT NULL PRIMARY KEY,
   "name" TEXT NOT NULL,
   "desiredOutcome" TEXT NOT NULL DEFAULT '',
@@ -13,9 +11,9 @@ CREATE TABLE IF NOT EXISTS "Project" (
   "updatedAt" DATETIME NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS "Project_status_idx" ON "Project" ("status");
+CREATE INDEX "Project_status_idx" ON "Project" ("status");
 
-CREATE TABLE IF NOT EXISTS "ProjectPhase" (
+CREATE TABLE "ProjectPhase" (
   "id" TEXT NOT NULL PRIMARY KEY,
   "projectId" TEXT NOT NULL,
   "name" TEXT NOT NULL,
@@ -25,9 +23,9 @@ CREATE TABLE IF NOT EXISTS "ProjectPhase" (
   CONSTRAINT "ProjectPhase_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project" ("id") ON DELETE CASCADE ON UPDATE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS "ProjectPhase_projectId_sortOrder_idx" ON "ProjectPhase" ("projectId", "sortOrder");
+CREATE INDEX "ProjectPhase_projectId_sortOrder_idx" ON "ProjectPhase" ("projectId", "sortOrder");
 
-CREATE TABLE IF NOT EXISTS "Task" (
+CREATE TABLE "Task" (
   "id" TEXT NOT NULL PRIMARY KEY,
   "title" TEXT NOT NULL,
   "date" DATETIME,
@@ -49,12 +47,12 @@ CREATE TABLE IF NOT EXISTS "Task" (
   CONSTRAINT "Task_phaseId_fkey" FOREIGN KEY ("phaseId") REFERENCES "ProjectPhase" ("id") ON DELETE SET NULL ON UPDATE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS "Task_date_idx" ON "Task" ("date");
-CREATE INDEX IF NOT EXISTS "Task_focusQueuePosition_idx" ON "Task" ("focusQueuePosition");
-CREATE INDEX IF NOT EXISTS "Task_projectId_idx" ON "Task" ("projectId");
-CREATE INDEX IF NOT EXISTS "Task_phaseId_idx" ON "Task" ("phaseId");
+CREATE INDEX "Task_date_idx" ON "Task" ("date");
+CREATE INDEX "Task_focusQueuePosition_idx" ON "Task" ("focusQueuePosition");
+CREATE INDEX "Task_projectId_idx" ON "Task" ("projectId");
+CREATE INDEX "Task_phaseId_idx" ON "Task" ("phaseId");
 
-CREATE TABLE IF NOT EXISTS "Note" (
+CREATE TABLE "Note" (
   "id" TEXT NOT NULL PRIMARY KEY,
   "content" TEXT NOT NULL,
   "tags" TEXT NOT NULL DEFAULT '[]',
@@ -67,9 +65,9 @@ CREATE TABLE IF NOT EXISTS "Note" (
   CONSTRAINT "Note_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project" ("id") ON DELETE SET NULL ON UPDATE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS "Note_projectId_idx" ON "Note" ("projectId");
+CREATE INDEX "Note_projectId_idx" ON "Note" ("projectId");
 
-CREATE TABLE IF NOT EXISTS "DiaryEntry" (
+CREATE TABLE "DiaryEntry" (
   "id" TEXT NOT NULL PRIMARY KEY,
   "date" DATETIME NOT NULL,
   "content" TEXT NOT NULL DEFAULT '',
@@ -80,9 +78,9 @@ CREATE TABLE IF NOT EXISTS "DiaryEntry" (
   "updatedAt" DATETIME NOT NULL
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS "DiaryEntry_date_key" ON "DiaryEntry" ("date");
+CREATE UNIQUE INDEX "DiaryEntry_date_key" ON "DiaryEntry" ("date");
 
-CREATE TABLE IF NOT EXISTS "Material" (
+CREATE TABLE "Material" (
   "id" TEXT NOT NULL PRIMARY KEY,
   "title" TEXT NOT NULL,
   "url" TEXT NOT NULL,
@@ -98,9 +96,9 @@ CREATE TABLE IF NOT EXISTS "Material" (
   CONSTRAINT "Material_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project" ("id") ON DELETE SET NULL ON UPDATE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS "Material_projectId_idx" ON "Material" ("projectId");
+CREATE INDEX "Material_projectId_idx" ON "Material" ("projectId");
 
-CREATE TABLE IF NOT EXISTS "TimeBlock" (
+CREATE TABLE "TimeBlock" (
   "id" TEXT NOT NULL PRIMARY KEY,
   "date" DATETIME NOT NULL,
   "startTime" TEXT NOT NULL,
@@ -112,34 +110,26 @@ CREATE TABLE IF NOT EXISTS "TimeBlock" (
   CONSTRAINT "TimeBlock_taskId_fkey" FOREIGN KEY ("taskId") REFERENCES "Task" ("id") ON DELETE SET NULL ON UPDATE CASCADE
 );
 
-CREATE TABLE IF NOT EXISTS "ActivityEntry" (
+CREATE TABLE "ActivityEntry" (
   "id" TEXT NOT NULL PRIMARY KEY,
   "startedAt" DATETIME NOT NULL,
   "durationMinutes" INTEGER NOT NULL,
   "category" TEXT NOT NULL,
   "note" TEXT NOT NULL,
-  "origin" TEXT NOT NULL DEFAULT 'MANUAL',
   "taskId" TEXT,
   "projectId" TEXT,
-  "attributedProjectId" TEXT,
-  "focusSessionId" TEXT,
   "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "updatedAt" DATETIME NOT NULL,
   CONSTRAINT "ActivityEntry_taskId_fkey" FOREIGN KEY ("taskId") REFERENCES "Task" ("id") ON DELETE SET NULL ON UPDATE CASCADE,
-  CONSTRAINT "ActivityEntry_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project" ("id") ON DELETE SET NULL ON UPDATE CASCADE,
-  CONSTRAINT "ActivityEntry_attributedProjectId_fkey" FOREIGN KEY ("attributedProjectId") REFERENCES "Project" ("id") ON DELETE SET NULL ON UPDATE CASCADE,
-  CONSTRAINT "ActivityEntry_focusSessionId_fkey" FOREIGN KEY ("focusSessionId") REFERENCES "FocusSession" ("id") ON DELETE SET NULL ON UPDATE CASCADE
+  CONSTRAINT "ActivityEntry_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project" ("id") ON DELETE SET NULL ON UPDATE CASCADE
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS "ActivityEntry_focusSessionId_key" ON "ActivityEntry" ("focusSessionId");
-CREATE INDEX IF NOT EXISTS "ActivityEntry_startedAt_idx" ON "ActivityEntry" ("startedAt");
-CREATE INDEX IF NOT EXISTS "ActivityEntry_taskId_idx" ON "ActivityEntry" ("taskId");
-CREATE INDEX IF NOT EXISTS "ActivityEntry_projectId_idx" ON "ActivityEntry" ("projectId");
-CREATE INDEX IF NOT EXISTS "ActivityEntry_attributedProjectId_idx" ON "ActivityEntry" ("attributedProjectId");
+CREATE INDEX "ActivityEntry_startedAt_idx" ON "ActivityEntry" ("startedAt");
+CREATE INDEX "ActivityEntry_taskId_idx" ON "ActivityEntry" ("taskId");
+CREATE INDEX "ActivityEntry_projectId_idx" ON "ActivityEntry" ("projectId");
 
-CREATE TABLE IF NOT EXISTS "FocusSession" (
+CREATE TABLE "FocusSession" (
   "id" TEXT NOT NULL PRIMARY KEY,
-  "activeKey" INTEGER,
   "kind" TEXT NOT NULL DEFAULT 'FOCUS',
   "plannedMinutes" INTEGER NOT NULL,
   "actualMinutes" INTEGER NOT NULL DEFAULT 0,
@@ -161,13 +151,12 @@ CREATE TABLE IF NOT EXISTS "FocusSession" (
   CONSTRAINT "FocusSession_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project" ("id") ON DELETE SET NULL ON UPDATE CASCADE
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS "FocusSession_activeKey_key" ON "FocusSession" ("activeKey");
-CREATE INDEX IF NOT EXISTS "FocusSession_status_idx" ON "FocusSession" ("status");
-CREATE INDEX IF NOT EXISTS "FocusSession_completedAt_idx" ON "FocusSession" ("completedAt");
-CREATE INDEX IF NOT EXISTS "FocusSession_taskId_idx" ON "FocusSession" ("taskId");
-CREATE INDEX IF NOT EXISTS "FocusSession_projectId_idx" ON "FocusSession" ("projectId");
+CREATE INDEX "FocusSession_status_idx" ON "FocusSession" ("status");
+CREATE INDEX "FocusSession_completedAt_idx" ON "FocusSession" ("completedAt");
+CREATE INDEX "FocusSession_taskId_idx" ON "FocusSession" ("taskId");
+CREATE INDEX "FocusSession_projectId_idx" ON "FocusSession" ("projectId");
 
-CREATE TABLE IF NOT EXISTS "TaskScheduleChange" (
+CREATE TABLE "TaskScheduleChange" (
   "id" TEXT NOT NULL PRIMARY KEY,
   "taskId" TEXT NOT NULL,
   "previousDate" DATETIME,
@@ -177,4 +166,4 @@ CREATE TABLE IF NOT EXISTS "TaskScheduleChange" (
   CONSTRAINT "TaskScheduleChange_taskId_fkey" FOREIGN KEY ("taskId") REFERENCES "Task" ("id") ON DELETE CASCADE ON UPDATE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS "TaskScheduleChange_taskId_createdAt_idx" ON "TaskScheduleChange" ("taskId", "createdAt");
+CREATE INDEX "TaskScheduleChange_taskId_createdAt_idx" ON "TaskScheduleChange" ("taskId", "createdAt");

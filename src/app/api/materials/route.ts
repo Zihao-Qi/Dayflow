@@ -1,17 +1,36 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import {
+  EvidenceAttributionError,
+  resolveTaskProjectAttribution
+} from "@/lib/evidence-attribution";
 
 export async function POST(request: NextRequest) {
   const body = await request.json();
-  const projectId = String(body.projectId ?? "").trim() || null;
-  if (projectId) {
-    const project = await prisma.project.findUnique({
-      where: { id: projectId },
+  const noteId = String(body.noteId ?? "").trim() || null;
+  if (noteId) {
+    const note = await prisma.note.findUnique({
+      where: { id: noteId },
       select: { id: true }
     });
-    if (!project) {
-      return NextResponse.json({ error: "The linked project could not be found." }, { status: 400 });
+    if (!note) {
+      return NextResponse.json(
+        { error: "The selected Note no longer exists." },
+        { status: 400 }
+      );
     }
+  }
+  let attribution;
+  try {
+    attribution = await resolveTaskProjectAttribution(
+      body.taskId,
+      body.projectId
+    );
+  } catch (error) {
+    if (error instanceof EvidenceAttributionError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    throw error;
   }
 
   const material = await prisma.material.create({
@@ -20,9 +39,9 @@ export async function POST(request: NextRequest) {
       url: String(body.url ?? "").trim(),
       type: body.type ?? inferType(body.url),
       notes: body.notes ?? "",
-      taskId: body.taskId || null,
-      noteId: body.noteId || null,
-      projectId
+      taskId: attribution.taskId,
+      noteId,
+      projectId: attribution.projectId
     }
   });
 

@@ -187,6 +187,11 @@ export function FocusRail({
     previousLiveSessionId.current = liveSessionId;
   }, [active?.id, orderedTasks, pendingCompletion?.id]);
   const duration = preset === "custom" ? Number(customMinutes) : Number(preset);
+  const retryNextLabel = focus.retryNext
+    ? focus.retryNext.kind === "BREAK"
+      ? `Retry ${focus.retryNext.plannedMinutes}m break`
+      : `Retry ${focus.retryNext.label || "next focus"}`
+    : "";
   const queuedTasks = useMemo(
     () =>
       [...queuedTaskInput]
@@ -404,6 +409,15 @@ export function FocusRail({
         ) : (
           <section className="rail-card focus-idle-card">
             <span className="eyebrow">Start a block</span>
+            {focus.retryNext && (
+              <button
+                className="secondary-button"
+                disabled={busy}
+                onClick={() => void focus.retryNextStart()}
+              >
+                {retryNextLabel}
+              </button>
+            )}
             <div className="focus-presets" aria-label="Focus duration">
               <button
                 className={preset === "25" ? "active" : ""}
@@ -910,7 +924,7 @@ function CompletionFocusCard({
               label: nextEntry.task.title
             }
         : null;
-    const saved = await focus.recordCompletion({
+    const saved = await focus.enrichCompletion({
       note,
       category,
       taskCompleted,

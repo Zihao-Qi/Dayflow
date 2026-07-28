@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  FocusSessionConflictError,
   FocusSessionError,
   getFocusSnapshot,
   transitionFocusSession
@@ -19,7 +20,10 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     });
   } catch (error) {
     if (error instanceof FocusSessionError) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
+      return NextResponse.json(
+        { error: error.message },
+        { status: error instanceof FocusSessionConflictError ? 409 : 400 }
+      );
     }
     throw error;
   }

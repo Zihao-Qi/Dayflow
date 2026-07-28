@@ -620,6 +620,109 @@ test("rejects invalid and stale focus queue writes", async ({ page }) => {
   expect(stale.status()).toBe(400);
 });
 
+test("rejects invalid evidence dates, times, durations, and Focus kinds", async ({
+  page
+}) => {
+  const invalidKind = await page.request.post("/api/focus-session", {
+    data: {
+      kind: "SPRINT",
+      plannedMinutes: 25,
+      label: "Invalid kind"
+    }
+  });
+  expect(invalidKind.status()).toBe(400);
+
+  const invalidDuration = await page.request.post("/api/focus-session", {
+    data: {
+      kind: "FOCUS",
+      plannedMinutes: 2.5,
+      label: "Fractional duration"
+    }
+  });
+  expect(invalidDuration.status()).toBe(400);
+
+  for (const data of [
+    {
+      date: "not-a-date",
+      durationMinutes: 20,
+      note: "Invalid date",
+      category: "Deep Work"
+    },
+    {
+      date: "2026-02-30",
+      durationMinutes: 20,
+      note: "Impossible date",
+      category: "Deep Work"
+    },
+    {
+      date: "2026-02-30T10:00:00Z",
+      durationMinutes: 20,
+      note: "Impossible ISO date",
+      category: "Deep Work"
+    },
+    {
+      date: "02/30/2026",
+      durationMinutes: 20,
+      note: "Unsupported ambiguous date",
+      category: "Deep Work"
+    },
+    {
+      startTime: "29:72",
+      durationMinutes: 20,
+      note: "Invalid time",
+      category: "Deep Work"
+    },
+    {
+      durationMinutes: 2.5,
+      note: "Invalid fractional duration",
+      category: "Deep Work"
+    }
+  ]) {
+    const response = await page.request.post("/api/activities", { data });
+    expect(response.status()).toBe(400);
+    expect(await response.json()).toEqual({
+      error: expect.any(String)
+    });
+  }
+
+  const invalidNoteDate = await page.request.post("/api/notes", {
+    data: {
+      content: "Invalid note date",
+      date: "not-a-date"
+    }
+  });
+  expect(invalidNoteDate.status()).toBe(400);
+
+  const invalidDiaryDate = await page.request.put("/api/diary", {
+    data: {
+      date: "not-a-date",
+      content: "Invalid diary date",
+      mood: 3,
+      energy: 3
+    }
+  });
+  expect(invalidDiaryDate.status()).toBe(400);
+
+  const invalidDiaryRating = await page.request.put("/api/diary", {
+    data: {
+      date: "2026-07-27",
+      content: "Invalid diary rating",
+      mood: 6,
+      energy: 3
+    }
+  });
+  expect(invalidDiaryRating.status()).toBe(400);
+
+  const missingMaterialNote = await page.request.post("/api/materials", {
+    data: {
+      title: "Missing linked note",
+      url: "https://example.com/missing-note",
+      noteId: "missing-note"
+    }
+  });
+  expect(missingMaterialNote.status()).toBe(400);
+});
+
 test("offers queue actions during a taskless live focus session", async ({
   page
 }) => {
@@ -644,6 +747,113 @@ test("offers queue actions during a taskless live focus session", async ({
       exact: true
     })
   ).toBeVisible();
+});
+
+test("allows exactly one active Focus Session across concurrent starts", async ({
+  page
+}) => {
+  const attempts = await Promise.all(
+    Array.from({ length: 8 }, (_, index) =>
+      page.request.post("/api/focus-session", {
+        data: {
+          kind: "FOCUS",
+          plannedMinutes: 25,
+          label: `Concurrent focus ${index + 1}`
+        }
+      })
+    )
+  );
+  const statuses = attempts.map((response) => response.status()).sort();
+  expect(statuses.filter((status) => status === 201)).toHaveLength(1);
+  expect(statuses.filter((status) => status === 409)).toHaveLength(7);
+
+  const snapshot = await page.request.get("/api/focus-session");
+  expect(snapshot.ok()).toBe(true);
+  const focus = (await snapshot.json()) as {
+    active: { id: string } | null;
+  };
+  expect(focus.active).not.toBeNull();
+});
+
+test("allows only one terminal Focus transition when Complete and Cancel race", async ({
+  page
+}) => {
+  const start = await page.request.post("/api/focus-session", {
+    data: {
+      kind: "FOCUS",
+      plannedMinutes: 25,
+      label: "Terminal transition race"
+    }
+  });
+  expect(start.ok()).toBe(true);
+  const { session } = (await start.json()) as { session: { id: string } };
+  setFocusSessionElapsedMinutes(session.id, 3);
+
+  const [complete, cancel] = await Promise.all([
+    page.request.patch(`/api/focus-session/${session.id}`, {
+      data: { action: "complete" }
+    }),
+    page.request.patch(`/api/focus-session/${session.id}`, {
+      data: { action: "cancel" }
+    })
+  ]);
+  expect([complete.status(), cancel.status()].sort()).toEqual([200, 409]);
+
+  const bootstrap = await page.request.get("/api/bootstrap");
+  const evidence = (await bootstrap.json()) as {
+    activities: Array<{ focusSessionId: string | null }>;
+  };
+  const focusActivities = evidence.activities.filter(
+    (activity) => activity.focusSessionId === session.id
+  );
+  expect(focusActivities).toHaveLength(complete.ok() ? 1 : 0);
+});
+
+test("returns one persisted result for simultaneous completion requests", async ({
+  page
+}) => {
+  const start = await page.request.post("/api/focus-session", {
+    data: {
+      kind: "FOCUS",
+      plannedMinutes: 25,
+      label: "Concurrent completion"
+    }
+  });
+  const { session } = (await start.json()) as { session: { id: string } };
+  setFocusSessionElapsedMinutes(session.id, 3);
+
+  const completions = await Promise.all([
+    page.request.patch(`/api/focus-session/${session.id}`, {
+      data: { action: "complete" }
+    }),
+    page.request.patch(`/api/focus-session/${session.id}`, {
+      data: { action: "complete" }
+    })
+  ]);
+  expect(completions.map((response) => response.status())).toEqual([200, 200]);
+  const results = (await Promise.all(
+    completions.map((response) => response.json())
+  )) as Array<{
+    completedSession: {
+      id: string;
+      actualMinutes: number;
+      completedAt: string;
+      activity: { id: string };
+    };
+  }>;
+  expect(results[0].completedSession).toEqual(results[1].completedSession);
+  expect(results[0].completedSession.activity.id).toEqual(expect.any(String));
+
+  const evidence = (await (
+    await page.request.get("/api/bootstrap")
+  ).json()) as {
+    activities: Array<{ focusSessionId: string | null }>;
+  };
+  expect(
+    evidence.activities.filter(
+      (activity) => activity.focusSessionId === session.id
+    )
+  ).toHaveLength(1);
 });
 
 test("counts completed focus immediately while completion details remain optional", async ({
@@ -674,8 +884,46 @@ test("counts completed focus immediately while completion details remain optiona
     rail.getByRole("button", { name: "Finish without details" })
   ).toBeEnabled();
 
+  const firstBootstrap = await page.request.get("/api/bootstrap");
+  expect(firstBootstrap.ok()).toBe(true);
+  const firstEvidence = (await firstBootstrap.json()) as {
+    activities: Array<{
+      durationMinutes: number;
+      focusSessionId: string | null;
+      origin: string;
+    }>;
+  };
+  expect(
+    firstEvidence.activities.filter(
+      (activity) => activity.focusSessionId === session.id
+    )
+  ).toEqual([
+    expect.objectContaining({
+      durationMinutes: 3,
+      focusSessionId: session.id,
+      origin: "FOCUS"
+    })
+  ]);
+
+  const repeatedCompletion = await page.request.patch(
+    `/api/focus-session/${session.id}`,
+    { data: { action: "complete" } }
+  );
+  expect(repeatedCompletion.ok()).toBe(true);
+  const repeatedBootstrap = await page.request.get("/api/bootstrap");
+  const repeatedEvidence = (await repeatedBootstrap.json()) as {
+    activities: Array<{ focusSessionId: string | null }>;
+  };
+  expect(
+    repeatedEvidence.activities.filter(
+      (activity) => activity.focusSessionId === session.id
+    )
+  ).toHaveLength(1);
+
   await page.getByRole("button", { name: "Review", exact: true }).click();
-  await expect(page.getByText("3m focused this week", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("3m focused this review period", { exact: true })
+  ).toBeVisible();
   await expect(page.getByText("3m is already counted.", { exact: true })).toBeVisible();
 
   const strip = page.getByRole("complementary", { name: "Completed focus session" });
@@ -690,6 +938,362 @@ test("counts completed focus immediately while completion details remain optiona
   const captured = completionRail.locator(".captured-list");
   await expect(captured.getByText("Count focus before details", { exact: true })).toBeVisible();
   await expect(captured.getByText("3m · Deep Work", { exact: true })).toBeVisible();
+});
+
+test("protects generated Focus Activity evidence from deletion", async ({ page }) => {
+  const start = await page.request.post("/api/focus-session", {
+    data: {
+      kind: "FOCUS",
+      plannedMinutes: 25,
+      label: "Protected evidence"
+    }
+  });
+  const { session } = (await start.json()) as { session: { id: string } };
+  setFocusSessionElapsedMinutes(session.id, 3);
+  expect(
+    (
+      await page.request.patch(`/api/focus-session/${session.id}`, {
+        data: { action: "complete" }
+      })
+    ).ok()
+  ).toBe(true);
+
+  const before = (await (
+    await page.request.get("/api/bootstrap")
+  ).json()) as {
+    activities: Array<{ id: string; focusSessionId: string | null }>;
+  };
+  const activity = before.activities.find(
+    (entry) => entry.focusSessionId === session.id
+  );
+  expect(activity).toBeTruthy();
+
+  const deletion = await page.request.delete(`/api/activities/${activity?.id}`);
+  expect(deletion.status()).toBe(409);
+  expect(await deletion.json()).toEqual({
+    error: "Focus evidence cannot be deleted."
+  });
+
+  const after = (await (
+    await page.request.get("/api/bootstrap")
+  ).json()) as {
+    activities: Array<{ focusSessionId: string | null }>;
+  };
+  expect(
+    after.activities.filter((entry) => entry.focusSessionId === session.id)
+  ).toHaveLength(1);
+});
+
+test("keeps completed evidence committed when the next Focus start fails", async ({
+  page
+}) => {
+  await openDashboard(page);
+  const start = await page.request.post("/api/focus-session", {
+    data: {
+      kind: "FOCUS",
+      plannedMinutes: 25,
+      label: "Commit before next"
+    }
+  });
+  expect(start.ok()).toBe(true);
+  const { session } = (await start.json()) as { session: { id: string } };
+  setFocusSessionElapsedMinutes(session.id, 3);
+  await page.reload();
+
+  const rail = page.getByRole("complementary", { name: "Focus rail" });
+  await rail.getByRole("button", { name: "Finish", exact: true }).click();
+  await expect(rail.getByRole("heading", { name: "3m counted" })).toBeVisible();
+
+  let failedNextStart = false;
+  await page.route("**/api/focus-session", async (route) => {
+    if (route.request().method() === "POST" && !failedNextStart) {
+      failedNextStart = true;
+      await route.fulfill({
+        status: 500,
+        json: { error: "The next queue item could not be started." }
+      });
+      return;
+    }
+    await route.continue();
+  });
+  const record = page.waitForResponse(
+    (response) =>
+      response.url().includes(`/api/focus-session/${session.id}`) &&
+      response.request().method() === "PATCH"
+  );
+  await rail
+    .getByRole("button", { name: "Continue to a 5m break" })
+    .click();
+  const recordResponse = await record;
+  expect(recordResponse.ok()).toBe(true);
+  const recordResult = (await recordResponse.json()) as {
+    activity: {
+      focusSessionId: string;
+      durationMinutes: number;
+    };
+  };
+  expect(recordResult.activity).toEqual(
+    expect.objectContaining({
+      focusSessionId: session.id,
+      durationMinutes: 3
+    })
+  );
+
+  await expect(rail.getByText("Start a block", { exact: true })).toBeVisible();
+  await expect(
+    rail.getByText("The next queue item could not be started.", { exact: true })
+  ).toBeVisible();
+  const snapshot = await page.request.get("/api/focus-session");
+  const persisted = (await snapshot.json()) as {
+    active: unknown;
+    pendingCompletion: unknown;
+  };
+  expect(persisted.active).toBeNull();
+  expect(persisted.pendingCompletion).toBeNull();
+
+  const retry = rail.getByRole("button", { name: "Retry 5m break" });
+  await expect(retry).toBeVisible();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(
+    page.getByRole("button", { name: "Retry 5m break" })
+  ).toBeVisible();
+  await page.reload();
+
+  const reloadedRail = page.getByRole("complementary", {
+    name: "Focus rail"
+  });
+  const reloadedRetry = reloadedRail.getByRole("button", {
+    name: "Retry 5m break"
+  });
+  await expect(reloadedRetry).toBeVisible();
+  await reloadedRetry.click();
+  await expect(
+    reloadedRail.getByRole("heading", { name: "Break", exact: true })
+  ).toBeVisible();
+});
+
+test("adds manual and Focus Activities in actual time without double counting", async ({
+  page
+}) => {
+  await openDashboard(page);
+
+  const start = await page.request.post("/api/focus-session", {
+    data: {
+      kind: "FOCUS",
+      plannedMinutes: 25,
+      label: "Evidence calculation"
+    }
+  });
+  expect(start.ok()).toBe(true);
+  const { session } = (await start.json()) as { session: { id: string } };
+  setFocusSessionElapsedMinutes(session.id, 3);
+  const complete = await page.request.patch(`/api/focus-session/${session.id}`, {
+    data: { action: "complete" }
+  });
+  expect(complete.ok()).toBe(true);
+
+  const manual = await page.request.post("/api/activities", {
+    data: {
+      durationMinutes: 60,
+      note: "Manual evidence",
+      category: "Learning"
+    }
+  });
+  expect(manual.ok()).toBe(true);
+
+  const bootstrap = await page.request.get("/api/bootstrap");
+  expect(bootstrap.ok()).toBe(true);
+  const evidence = (await bootstrap.json()) as {
+    today: string;
+    stats: Array<{ day: string; actualHours: number }>;
+    reviewSummary: { focusedMinutes: number };
+  };
+  expect(
+    evidence.stats.find((day) => day.day === evidence.today.slice(0, 10))
+      ?.actualHours
+  ).toBe(1.1);
+  expect(evidence.reviewSummary.focusedMinutes).toBe(3);
+});
+
+test("loading Dayflow keeps missing Diary evidence unpersisted", async ({ page }) => {
+  const bootstrap = await page.request.get("/api/bootstrap");
+  expect(bootstrap.ok()).toBe(true);
+  const evidence = (await bootstrap.json()) as {
+    today: string;
+    diary: { id: string | null; persisted: boolean };
+    stats: Array<{
+      day: string;
+      mood: number | null;
+      energy: number | null;
+    }>;
+  };
+  const today = evidence.stats.find(
+    (day) => day.day === evidence.today.slice(0, 10)
+  );
+  expect(evidence.diary).toEqual(
+    expect.objectContaining({ id: null, persisted: false })
+  );
+  expect(today).toEqual(
+    expect.objectContaining({ mood: null, energy: null })
+  );
+
+  const repeated = await page.request.get("/api/bootstrap");
+  const repeatedEvidence = (await repeated.json()) as {
+    diary: { id: string | null; persisted: boolean };
+  };
+  expect(repeatedEvidence.diary).toEqual(
+    expect.objectContaining({ id: null, persisted: false })
+  );
+
+  await openDashboard(page);
+  await page.getByRole("button", { name: "Review", exact: true }).click();
+  await expect(page.getByText("Mood · Not recorded", { exact: true })).toBeVisible();
+  await expect(page.getByText("Energy · Not recorded", { exact: true })).toBeVisible();
+});
+
+test("separates all-time and Review-Period Project Invested Time", async ({
+  page
+}) => {
+  const projectResponse = await page.request.post("/api/projects", {
+    data: {
+      name: "Evidence periods",
+      weeklyMinutesBudget: 120
+    }
+  });
+  expect(projectResponse.ok()).toBe(true);
+  const project = (await projectResponse.json()) as { id: string };
+
+  const bootstrap = await page.request.get("/api/bootstrap");
+  const { today } = (await bootstrap.json()) as { today: string };
+  const older = new Date(today);
+  older.setDate(older.getDate() - 10);
+
+  const olderActivity = await page.request.post("/api/activities", {
+    data: {
+      date: older.toISOString(),
+      durationMinutes: 600,
+      note: "Older Project evidence",
+      category: "Deep Work",
+      projectId: project.id
+    }
+  });
+  expect(olderActivity.ok()).toBe(true);
+  const currentActivity = await page.request.post("/api/activities", {
+    data: {
+      date: today,
+      durationMinutes: 60,
+      note: "Current Project evidence",
+      category: "Deep Work",
+      projectId: project.id
+    }
+  });
+  expect(currentActivity.ok()).toBe(true);
+
+  const summariesResponse = await page.request.get("/api/projects");
+  const summaries = (await summariesResponse.json()) as Array<{
+    id: string;
+    investedMinutes: number;
+    reviewPeriodInvestedMinutes: number;
+    movedDuringReviewPeriod: boolean;
+  }>;
+  expect(summaries.find((summary) => summary.id === project.id)).toEqual(
+    expect.objectContaining({
+      investedMinutes: 660,
+      reviewPeriodInvestedMinutes: 60,
+      movedDuringReviewPeriod: true
+    })
+  );
+});
+
+test("keeps historical Activity attribution when a Task moves Projects", async ({
+  page
+}) => {
+  const firstProject = await page.request.post("/api/projects", {
+    data: { name: "Original evidence Project" }
+  });
+  const secondProject = await page.request.post("/api/projects", {
+    data: { name: "Future work Project" }
+  });
+  const first = (await firstProject.json()) as { id: string };
+  const second = (await secondProject.json()) as { id: string };
+  const taskResponse = await page.request.post("/api/tasks", {
+    data: {
+      title: "Move after recording",
+      date: null,
+      projectId: first.id
+    }
+  });
+  const task = (await taskResponse.json()) as { id: string };
+  const activity = await page.request.post("/api/activities", {
+    data: {
+      durationMinutes: 30,
+      note: "Evidence before the move",
+      category: "Deep Work",
+      taskId: task.id
+    }
+  });
+  expect(activity.ok()).toBe(true);
+
+  const move = await page.request.patch(`/api/tasks/${task.id}`, {
+    data: { projectId: second.id, phaseId: null }
+  });
+  expect(move.ok()).toBe(true);
+
+  const summaries = (await (
+    await page.request.get("/api/projects")
+  ).json()) as Array<{ id: string; investedMinutes: number }>;
+  expect(summaries.find((project) => project.id === first.id)?.investedMinutes).toBe(30);
+  expect(summaries.find((project) => project.id === second.id)?.investedMinutes).toBe(0);
+});
+
+test("rejects conflicting Project attribution for Notes and Materials", async ({
+  page
+}) => {
+  const firstProject = await page.request.post("/api/projects", {
+    data: { name: "First attribution" }
+  });
+  const secondProject = await page.request.post("/api/projects", {
+    data: { name: "Second attribution" }
+  });
+  expect(firstProject.ok()).toBe(true);
+  expect(secondProject.ok()).toBe(true);
+  const first = (await firstProject.json()) as { id: string };
+  const second = (await secondProject.json()) as { id: string };
+  const taskResponse = await page.request.post("/api/tasks", {
+    data: {
+      title: "Attributed task",
+      date: null,
+      projectId: first.id
+    }
+  });
+  expect(taskResponse.ok()).toBe(true);
+  const task = (await taskResponse.json()) as { id: string };
+
+  const note = await page.request.post("/api/notes", {
+    data: {
+      content: "Conflicting note",
+      taskId: task.id,
+      projectId: second.id
+    }
+  });
+  expect(note.status()).toBe(400);
+  expect(await note.json()).toEqual({
+    error: "The selected task belongs to a different project."
+  });
+
+  const material = await page.request.post("/api/materials", {
+    data: {
+      title: "Conflicting material",
+      url: "https://example.com/evidence",
+      taskId: task.id,
+      projectId: second.id
+    }
+  });
+  expect(material.status()).toBe(400);
+  expect(await material.json()).toEqual({
+    error: "The selected task belongs to a different project."
+  });
 });
 
 test("records activity through the palette and shows it in the rail", async ({ page }) => {
@@ -712,6 +1316,84 @@ test("records activity through the palette and shows it in the rail", async ({ p
   const rail = page.getByRole("complementary", { name: "Focus rail" });
   await expect(rail.getByText("Mapped the new focus flow", { exact: true })).toBeVisible();
   await expect(rail.getByText("20m · Deep Work", { exact: true })).toBeVisible();
+});
+
+test("captures direct Project evidence from Activity, Notes, and Materials", async ({
+  page
+}) => {
+  const projectResponse = await page.request.post("/api/projects", {
+    data: { name: "Direct evidence" }
+  });
+  expect(projectResponse.ok()).toBe(true);
+  const project = (await projectResponse.json()) as { id: string };
+  await openDashboard(page);
+
+  await page.getByRole("button", { name: /Search or add/ }).click();
+  await page.getByRole("button", { name: /Log an activity by hand/ }).click();
+  const activityDialog = page.getByRole("dialog", { name: "Log activity" });
+  await activityDialog
+    .getByPlaceholder("Record a small win or what moved forward.")
+    .fill("Direct Activity evidence");
+  await activityDialog.getByLabel("Project", { exact: true }).selectOption(project.id);
+  const saveActivity = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/activities") &&
+      response.request().method() === "POST"
+  );
+  await activityDialog.getByRole("button", { name: "Add activity" }).click();
+  expect((await saveActivity).ok()).toBe(true);
+
+  await page.getByRole("button", { name: "Journal", exact: true }).click();
+  await page.getByRole("button", { name: /Notes/ }).click();
+  const noteForm = page.locator(".capture-form").filter({ hasText: "New note" });
+  await noteForm
+    .getByPlaceholder("Capture a thought, decision, or reminder.")
+    .fill("Direct Note evidence");
+  await noteForm.getByLabel("Project", { exact: true }).selectOption(project.id);
+  const saveNote = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/notes") &&
+      response.request().method() === "POST"
+  );
+  await noteForm.getByRole("button", { name: "Save note" }).click();
+  expect((await saveNote).ok()).toBe(true);
+
+  await page.getByRole("button", { name: /References/ }).click();
+  const materialForm = page
+    .locator(".capture-form")
+    .filter({ hasText: "Save reference" });
+  await materialForm.getByPlaceholder("URL").fill("https://example.com/direct");
+  await materialForm
+    .getByLabel("Project", { exact: true })
+    .selectOption(project.id);
+  const saveMaterial = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/materials") &&
+      response.request().method() === "POST"
+  );
+  await materialForm.getByRole("button", { name: "Save reference" }).click();
+  expect((await saveMaterial).ok()).toBe(true);
+
+  const bootstrap = await page.request.get("/api/bootstrap");
+  const evidence = (await bootstrap.json()) as {
+    activities: Array<{ note: string; projectId: string | null }>;
+    notes: Array<{ content: string; projectId: string | null }>;
+    materials: Array<{ url: string; projectId: string | null }>;
+  };
+  expect(
+    evidence.activities.find(
+      (activity) => activity.note === "Direct Activity evidence"
+    )?.projectId
+  ).toBe(project.id);
+  expect(
+    evidence.notes.find((note) => note.content === "Direct Note evidence")
+      ?.projectId
+  ).toBe(project.id);
+  expect(
+    evidence.materials.find(
+      (material) => material.url === "https://example.com/direct"
+    )?.projectId
+  ).toBe(project.id);
 });
 
 test("uses one Backlog with Quadrant as the default and persistent task elements", async ({
@@ -1184,8 +1866,8 @@ test("supports the redesigned Journal and Review destinations", async ({ page })
 
   await page.getByRole("button", { name: "Review", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Review", exact: true })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Where the focus went" })).toBeVisible();
-  await expect(page.getByText("Planned vs focused", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Recorded time" })).toBeVisible();
+  await expect(page.getByText("Planned vs recorded", { exact: true })).toBeVisible();
   const reflection = page.getByPlaceholder(
     "What worked, and what deserves protection next week?"
   );
@@ -1193,6 +1875,73 @@ test("supports the redesigned Journal and Review destinations", async ({ page })
   await reflection.press("Meta+Enter");
   await expect(
     page.locator(".reflection-heading").getByText("Saved", { exact: true })
+  ).toBeVisible();
+});
+
+test("preserves Note and Material drafts when a write is rejected", async ({
+  page
+}) => {
+  await openDashboard(page);
+  await page.getByRole("button", { name: "Journal", exact: true }).click();
+  await page.getByRole("button", { name: /Notes/ }).click();
+
+  await page.route("**/api/notes", async (route) => {
+    if (route.request().method() === "POST") {
+      await route.fulfill({
+        status: 400,
+        json: { error: "The selected Project no longer exists." }
+      });
+      return;
+    }
+    await route.continue();
+  });
+
+  const noteForm = page.locator(".capture-form").filter({ hasText: "New note" });
+  const noteDraft = noteForm.getByPlaceholder(
+    "Capture a thought, decision, or reminder."
+  );
+  const tagsDraft = noteForm.getByPlaceholder("Tags, comma separated");
+  await noteDraft.fill("Keep this rejected note");
+  await tagsDraft.fill("reliable, draft");
+  await noteForm.getByRole("button", { name: "Save note" }).click();
+  await expect(noteDraft).toHaveValue("Keep this rejected note");
+  await expect(tagsDraft).toHaveValue("reliable, draft");
+  await expect(
+    page.getByText("The selected Project no longer exists.", { exact: true })
+  ).toBeVisible();
+  await page.unroute("**/api/notes");
+
+  await page.getByRole("button", { name: /References/ }).click();
+  await page.route("**/api/materials", async (route) => {
+    if (route.request().method() === "POST") {
+      await route.fulfill({
+        status: 400,
+        json: { error: "The selected Note no longer exists." }
+      });
+      return;
+    }
+    await route.continue();
+  });
+
+  const materialForm = page
+    .locator(".capture-form")
+    .filter({ hasText: "Save reference" });
+  const materialTitle = materialForm.getByPlaceholder("Title");
+  const materialUrl = materialForm.getByPlaceholder("URL");
+  const materialNotes = materialForm.getByPlaceholder("Why this matters");
+  await materialTitle.fill("Keep this rejected reference");
+  await materialUrl.fill("https://example.com/rejected-reference");
+  await materialNotes.fill("The form must retain all three fields.");
+  await materialForm.getByRole("button", { name: "Save reference" }).click();
+  await expect(materialTitle).toHaveValue("Keep this rejected reference");
+  await expect(materialUrl).toHaveValue(
+    "https://example.com/rejected-reference"
+  );
+  await expect(materialNotes).toHaveValue(
+    "The form must retain all three fields."
+  );
+  await expect(
+    page.getByText("The selected Note no longer exists.", { exact: true })
   ).toBeVisible();
 });
 

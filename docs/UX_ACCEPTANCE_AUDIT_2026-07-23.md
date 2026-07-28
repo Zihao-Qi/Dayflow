@@ -5,6 +5,10 @@ Scope: Today, unfinished-task handling, Focus Timer, Projects, backlog,
 evidence tracking, reload persistence, responsive behavior, and accessibility
 signals.
 
+> This audit is a historical record of the July 23 build. Its proposed
+> Plan/Projects information architecture is superseded by
+> [ADR 0001](./adr/0001-six-destination-workspace.md).
+
 ## Evidence Used
 
 - The completed live walkthrough of the Focus Timer on `localhost:3000`.

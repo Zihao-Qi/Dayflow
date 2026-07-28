@@ -19,6 +19,7 @@ export async function GET() {
 
   const [
     tasks,
+    paletteTasks,
     notes,
     diary,
     materials,
@@ -44,6 +45,18 @@ export async function GET() {
           ]
         },
         orderBy: [{ date: "asc" }, { sortOrder: "asc" }, { createdAt: "asc" }]
+      }),
+      prisma.task.findMany({
+        where: { status: { not: "DONE" } },
+        select: {
+          id: true,
+          title: true,
+          date: true,
+          estimateMinutes: true,
+          sortOrder: true,
+          focusQueuePosition: true,
+          projectId: true
+        }
       }),
       prisma.note.findMany({
         where: { date: { gte: start, lt: end } },
@@ -144,6 +157,7 @@ export async function GET() {
   return NextResponse.json({
     today: start.toISOString(),
     tasks,
+    paletteTasks,
     notes: notes.map((note) => ({ ...note, tags: safeTags(note.tags) })),
     diary: diaryEntry,
     materials,

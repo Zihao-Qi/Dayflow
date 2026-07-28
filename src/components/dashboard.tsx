@@ -8,7 +8,6 @@ import {
   ChevronDown,
   ChevronUp,
   Circle,
-  Clock3,
   DatabaseBackup,
   ExternalLink,
   FileText,
@@ -26,9 +25,9 @@ import {
   RefreshCw,
   Save,
   Sparkles,
-  Timer,
   Trash2
 } from "lucide-react";
+import { CommandPalette } from "@/components/command-palette";
 import { DataManagementDialog } from "@/components/data-management-dialog";
 import { ProjectsWorkspace } from "@/components/projects-workspace";
 import { FocusDraft, FocusRail } from "@/components/focus-timer";
@@ -49,6 +48,10 @@ import {
   formatInvestedMinutes,
   ProjectSummary
 } from "@/lib/project-domain";
+import {
+  resolvePalette,
+  type PaletteItem
+} from "@/lib/command-palette";
 import {
   REVIEW_INTENTION_MAX_LENGTH,
   REVIEW_NARRATIVE_MAX_LENGTH
@@ -96,6 +99,17 @@ type Task = {
   projectId: string | null;
   phaseId: string | null;
 };
+
+type PaletteTaskRecord = Pick<
+  Task,
+  | "id"
+  | "title"
+  | "date"
+  | "estimateMinutes"
+  | "sortOrder"
+  | "focusQueuePosition"
+  | "projectId"
+>;
 
 type Note = {
   id: string;
@@ -189,6 +203,7 @@ type ReviewSummary = {
 type Bootstrap = {
   today: string;
   tasks: Task[];
+  paletteTasks: PaletteTaskRecord[];
   notes: Note[];
   diary: Diary;
   materials: Material[];
@@ -447,6 +462,7 @@ export function Dashboard() {
   const [screen, setScreen] = useState<Screen>("today");
   const [railExpanded, setRailExpanded] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteQuery, setPaletteQuery] = useState("");
   const [journalView, setJournalView] = useState<JournalView>("daily");
   const [backlogArrange, setBacklogArrange] =
     useState<BacklogArrange>("quadrant");
@@ -495,6 +511,7 @@ export function Dashboard() {
   const activityCreateMutation = useRef<PendingMutation | null>(null);
   const noteHistoryRequest = useRef(false);
   const materialHistoryRequest = useRef(false);
+  const paletteOpener = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     let dayRefreshTimer: number | null = null;
@@ -583,7 +600,11 @@ export function Dashboard() {
     function onShortcut(event: KeyboardEvent) {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        setPaletteOpen((open) => !open);
+        if (paletteOpen) {
+          dismissCommandPalette();
+        } else {
+          openCommandPalette();
+        }
       }
       if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "f") {
         event.preventDefault();
@@ -592,11 +613,10 @@ export function Dashboard() {
           if (screen !== "today") setRailExpanded(true);
         }
       }
-      if (event.key === "Escape") setPaletteOpen(false);
     }
     window.addEventListener("keydown", onShortcut);
     return () => window.removeEventListener("keydown", onShortcut);
-  }, [focus.active, screen]);
+  }, [focus.active, paletteOpen, screen]);
 
   async function refresh() {
     const response = await fetch("/api/bootstrap", { cache: "no-store" });
@@ -757,17 +777,153 @@ export function Dashboard() {
     (sum, activity) => sum + activity.durationMinutes,
     0
   );
+  const paletteResolution = useMemo(
+    () =>
+      resolvePalette({
+        query: paletteQuery,
+        tasks: (data?.paletteTasks ?? []).map(({ id, title }) => ({ id, title })),
+        projects: (data?.projects ?? [])
+          .filter((project) => project.status === "ACTIVE")
+          .map(({ id, name }) => ({ id, name })),
+        hasActiveFocus: Boolean(focus.active ?? focus.pendingCompletion),
+        activeFocusTaskId:
+          focus.active?.taskId ?? focus.pendingCompletion?.taskId ?? null
+      }),
+    [
+      data?.paletteTasks,
+      data?.projects,
+      focus.active,
+      focus.pendingCompletion,
+      paletteQuery
+    ]
+  );
+
+  function openCommandPalette() {
+    if (
+      document.querySelector<HTMLElement>(
+        '[role="dialog"][aria-modal="true"]'
+      )
+    ) {
+      return;
+    }
+    paletteOpener.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    setMobileMoreOpen(false);
+    setPaletteQuery("");
+    setPaletteOpen(true);
+  }
+
+  function dismissCommandPalette() {
+    const opener = paletteOpener.current;
+    closeCommandPaletteForHandoff();
+    window.setTimeout(() => {
+      if (opener?.isConnected) opener.focus();
+    }, 0);
+  }
+
+  function closeCommandPaletteForHandoff() {
+    setPaletteOpen(false);
+    setPaletteQuery("");
+    paletteOpener.current = null;
+  }
+
+  function focusTaskDraft() {
+    window.setTimeout(() => {
+      const input =
+        document.getElementById("new-task") ??
+        document.getElementById("first-task");
+      input?.focus();
+    }, 0);
+  }
+
+  function applyPaletteDraft(
+    value: string | null,
+    setDraft: (value: string) => void
+  ) {
+    if (value !== null) setDraft(value);
+  }
+
+  function preparePaletteFocus(target: FocusTarget) {
+    setFocusDraft({ ...target, revision: Date.now() });
+    setRailExpanded(true);
+  }
+
+  function activatePaletteItem(item: PaletteItem) {
+    closeCommandPaletteForHandoff();
+
+    switch (item.intent.kind) {
+      case "show-focus":
+        setRailExpanded(true);
+        return;
+      case "start-focus":
+        preparePaletteFocus({ plannedMinutes: item.intent.plannedMinutes });
+        return;
+      case "focus-task": {
+        const { taskId } = item.intent;
+        const task = data?.paletteTasks.find(
+          (candidate) => candidate.id === taskId
+        );
+        if (!task) return;
+        preparePaletteFocus({
+          taskId: task.id,
+          label: task.title,
+          plannedMinutes: task.estimateMinutes || 25
+        });
+        return;
+      }
+      case "queue-task": {
+        const { taskId } = item.intent;
+        const task = data?.paletteTasks.find(
+          (candidate) => candidate.id === taskId
+        );
+        if (task) void queueTask(task, "end");
+        return;
+      }
+      case "draft-task":
+        applyPaletteDraft(item.intent.title, setNewTask);
+        navigate("today");
+        focusTaskDraft();
+        return;
+      case "draft-activity":
+        setActivityOpen(true);
+        return;
+      case "draft-note":
+        applyPaletteDraft(item.intent.content, setNewNote);
+        navigate("journal");
+        setJournalView("notes");
+        window.setTimeout(
+          () => document.getElementById("new-note")?.focus(),
+          0
+        );
+        return;
+      case "draft-reference":
+        applyPaletteDraft(item.intent.url, setMaterialUrl);
+        navigate("journal");
+        setJournalView("references");
+        window.setTimeout(
+          () => document.getElementById("material-url")?.focus(),
+          0
+        );
+        return;
+      case "open-project":
+        openProject(item.intent.projectId);
+        return;
+    }
+  }
 
   function navigate(next: Screen) {
     setScreen(next);
     setRailExpanded(false);
-    setPaletteOpen(false);
+    closeCommandPaletteForHandoff();
     setMobileMoreOpen(false);
     if (next !== "projects") setSelectedProjectId(null);
   }
 
   function openFocus(target: FocusTarget) {
     if (compactLayout && target.plannedMinutes) {
+      closeCommandPaletteForHandoff();
       void focus.start({
         kind: "FOCUS",
         plannedMinutes: target.plannedMinutes,
@@ -778,7 +934,7 @@ export function Dashboard() {
       return;
     }
     setFocusDraft({ ...target, revision: Date.now() });
-    setPaletteOpen(false);
+    closeCommandPaletteForHandoff();
     if (screen !== "today") setRailExpanded(true);
   }
 
@@ -786,6 +942,7 @@ export function Dashboard() {
     setSelectedProjectId(id);
     setScreen("projects");
     setRailExpanded(false);
+    closeCommandPaletteForHandoff();
   }
 
   function openProjectBacklog(id: string) {
@@ -878,6 +1035,7 @@ export function Dashboard() {
       }
       window.localStorage.setItem("dayflow-first-run-seen", "1");
       taskCreateMutation.current = null;
+      setNewTask((current) => (current.trim() === trimmed ? "" : current));
       setFirstRunSeen(true);
       setAppError("");
       if (taskCreateWasInError.current) {
@@ -1043,7 +1201,10 @@ export function Dashboard() {
     }
   }
 
-  async function queueTask(task: Task, placement: QueuePlacement) {
+  async function queueTask(
+    task: Pick<Task, "id" | "title">,
+    placement: QueuePlacement
+  ) {
     try {
       const response = await fetch("/api/focus-queue", {
         method: "POST",
@@ -1077,7 +1238,7 @@ export function Dashboard() {
     }
   }
 
-  async function removeQueuedTask(task: Task) {
+  async function removeQueuedTask(task: Pick<Task, "id" | "title">) {
     try {
       const response = await fetch("/api/focus-queue", {
         method: "DELETE",
@@ -1490,7 +1651,7 @@ export function Dashboard() {
   const liveFocus = focus.active ?? focus.pendingCompletion;
   const showFullRail =
     Boolean(focus.retryNext) ||
-    (phoneLayout && railExpanded && Boolean(liveFocus)) ||
+    (compactLayout && railExpanded && Boolean(liveFocus || focusDraft)) ||
     (!compactLayout &&
       (isToday ||
         (wideFocusRail && Boolean(liveFocus)) ||
@@ -1514,7 +1675,7 @@ export function Dashboard() {
           <div className="brand-mark">D</div>
           <strong>Dayflow</strong>
         </div>
-        <button className="search-trigger" onClick={() => setPaletteOpen(true)}>
+        <button className="search-trigger" onClick={openCommandPalette}>
           <Plus size={15} />
           <span>Search or add</span>
           <kbd>⌘K</kbd>
@@ -1591,7 +1752,7 @@ export function Dashboard() {
         <button
           className="mobile-capture-button"
           aria-label="Search or add"
-          onClick={() => setPaletteOpen(true)}
+          onClick={openCommandPalette}
         >
           <Plus size={19} />
           <span>Capture</span>
@@ -1599,7 +1760,9 @@ export function Dashboard() {
         {screen === "today" && firstRun && (
           <FirstRunPage
             today={data.today}
+            title={newTask}
             saving={taskCreatePending}
+            onTitleChange={setNewTask}
             onBegin={beginFirstRun}
           />
         )}
@@ -1658,7 +1821,7 @@ export function Dashboard() {
             onStartFocus={openFocus}
             onQueueTask={queueTask}
             onFocusTransition={focus.transition}
-            onOpenPalette={() => setPaletteOpen(true)}
+            onOpenPalette={openCommandPalette}
           />
         )}
 
@@ -1690,7 +1853,7 @@ export function Dashboard() {
             activeTaskId={focus.active?.taskId ?? null}
             onStartFocus={openFocus}
             onUpdateTask={updateTask}
-            onOpenPalette={() => setPaletteOpen(true)}
+            onOpenPalette={openCommandPalette}
           />
         )}
 
@@ -1780,7 +1943,7 @@ export function Dashboard() {
         </div>
       )}
 
-      {phoneLayout && railExpanded && liveFocus && (
+      {phoneLayout && railExpanded && (liveFocus || focusDraft) && (
         <button
           className="focus-sheet-backdrop"
           aria-label="Close focus sheet"
@@ -1789,7 +1952,7 @@ export function Dashboard() {
       )}
       {showFullRail && (
         <FocusRail
-          tasks={data.tasks.filter((task) => task.status !== "DONE")}
+          tasks={data.paletteTasks}
           projects={data.projects}
           today={data.today}
           draft={focusDraft}
@@ -1797,16 +1960,17 @@ export function Dashboard() {
           queuedTasks={queuedTasks}
           mode="full"
           collapsible={
-            !focus.retryNext && (phoneLayout || (!isToday && !wideFocusRail))
+            !focus.retryNext &&
+            (compactLayout || (!isToday && !wideFocusRail))
           }
           onCollapse={() => setRailExpanded(false)}
-          onOpenPalette={() => setPaletteOpen(true)}
+          onOpenPalette={openCommandPalette}
           onQueueTask={(taskId, placement) => {
-            const task = data.tasks.find((item) => item.id === taskId);
+            const task = data.paletteTasks.find((item) => item.id === taskId);
             return task ? queueTask(task, placement) : Promise.resolve(false);
           }}
           onRemoveQueuedTask={(taskId) => {
-            const task = data.tasks.find((item) => item.id === taskId);
+            const task = data.paletteTasks.find((item) => item.id === taskId);
             return task ? removeQueuedTask(task) : Promise.resolve(false);
           }}
           onReorderQueue={reorderQueue}
@@ -1816,7 +1980,7 @@ export function Dashboard() {
       )}
       {showStrip && (
         <FocusRail
-          tasks={data.tasks.filter((task) => task.status !== "DONE")}
+          tasks={data.paletteTasks}
           projects={data.projects}
           today={data.today}
           draft={focusDraft}
@@ -1831,31 +1995,11 @@ export function Dashboard() {
 
       {paletteOpen && (
         <CommandPalette
-          projects={data.projects}
-          onClose={() => setPaletteOpen(false)}
-          onStartFocus={() => {
-            openFocus({ plannedMinutes: 50 });
-            if (screen !== "today") setRailExpanded(true);
-          }}
-          onNewTask={() => {
-            navigate("today");
-            window.setTimeout(() => document.getElementById("new-task")?.focus(), 0);
-          }}
-          onLogActivity={() => {
-            setPaletteOpen(false);
-            setActivityOpen(true);
-          }}
-          onWriteNote={() => {
-            navigate("journal");
-            setJournalView("notes");
-            window.setTimeout(() => document.getElementById("new-note")?.focus(), 0);
-          }}
-          onSaveReference={() => {
-            navigate("journal");
-            setJournalView("references");
-            window.setTimeout(() => document.getElementById("material-url")?.focus(), 0);
-          }}
-          onOpenProject={openProject}
+          resolution={paletteResolution}
+          query={paletteQuery}
+          onQueryChange={setPaletteQuery}
+          onActivate={activatePaletteItem}
+          onDismiss={dismissCommandPalette}
         />
       )}
 
@@ -2663,14 +2807,17 @@ function TaskRow({
 
 function FirstRunPage({
   today,
+  title,
   saving,
+  onTitleChange,
   onBegin
 }: {
   today: string;
+  title: string;
   saving: boolean;
+  onTitleChange: (title: string) => void;
   onBegin: (title: string, startFocus: boolean) => Promise<void>;
 }) {
-  const [title, setTitle] = useState("");
   return (
     <div className="first-run-page page-stack">
       <PageHeader eyebrow={formatLongDate(today)} title="Nothing here yet" />
@@ -2683,8 +2830,9 @@ function FirstRunPage({
         <label>
           What are you working on right now?
           <input
+            id="first-task"
             value={title}
-            onChange={(event) => setTitle(event.target.value)}
+            onChange={(event) => onTitleChange(event.target.value)}
             placeholder="Name one thing"
           />
         </label>
@@ -4093,81 +4241,6 @@ function ReviewPage({
             </button>
           </div>
         </form>
-      </section>
-    </div>
-  );
-}
-
-function CommandPalette({
-  projects,
-  onClose,
-  onStartFocus,
-  onNewTask,
-  onLogActivity,
-  onWriteNote,
-  onSaveReference,
-  onOpenProject
-}: {
-  projects: ProjectSummary[];
-  onClose: () => void;
-  onStartFocus: () => void;
-  onNewTask: () => void;
-  onLogActivity: () => void;
-  onWriteNote: () => void;
-  onSaveReference: () => void;
-  onOpenProject: (id: string) => void;
-}) {
-  return (
-    <div className="palette-overlay" role="presentation" onMouseDown={onClose}>
-      <section
-        className="command-palette"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Search or add"
-        onMouseDown={(event) => event.stopPropagation()}
-      >
-        <div className="palette-input">
-          <Plus size={17} />
-          <input
-            autoFocus
-            aria-label="Search commands and tasks"
-            placeholder="Type anything — a task, a note, a URL, “focus 50”"
-          />
-          <kbd>esc</kbd>
-        </div>
-        <div className="palette-results">
-          <button className="highlighted" onClick={onStartFocus}>
-            <Timer size={16} />
-            <span>Start a 50m focus block</span>
-            <kbd>⌘⇧F</kbd>
-          </button>
-          <button onClick={onNewTask}>
-            <Check size={16} />
-            <span>New task for today</span>
-            <kbd>⌘T</kbd>
-          </button>
-          <button onClick={onLogActivity}>
-            <Clock3 size={16} />
-            <span>Log an activity by hand</span>
-            <kbd>⌘L</kbd>
-          </button>
-          <button onClick={onWriteNote}>
-            <NotebookPen size={16} />
-            <span>Write a note</span>
-            <kbd>⌘N</kbd>
-          </button>
-          <button onClick={onSaveReference}>
-            <LinkIcon size={16} />
-            <span>Save a reference</span>
-          </button>
-          {projects.length > 0 && <span className="palette-label">Jump to</span>}
-          {projects.slice(0, 3).map((project) => (
-            <button key={project.id} onClick={() => onOpenProject(project.id)}>
-              <FolderKanban size={16} />
-              <span>{project.name}</span>
-            </button>
-          ))}
-        </div>
       </section>
     </div>
   );

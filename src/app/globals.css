@@ -6600,7 +6600,10 @@ kbd {
 .palette-results {
   display: grid;
   gap: 2px;
+  max-height: min(52vh, 420px);
   padding: 8px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .palette-results > button {
@@ -6621,6 +6624,32 @@ kbd {
 .palette-results > button.highlighted,
 .palette-results > button:hover {
   background: var(--sage-soft);
+}
+
+.palette-results > button > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.palette-detail {
+  max-width: 190px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.palette-invalid {
+  padding: 12px 16px;
+  border-bottom: 1px solid #ead4ce;
+  background: #fff7f5;
+  color: #8c3933;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .palette-label {

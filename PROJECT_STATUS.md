@@ -1,6 +1,6 @@
 # Dayflow Project Status and Plan
 
-Last updated: July 27, 2026
+Last updated: July 28, 2026
 
 ## Project Goal
 
@@ -30,6 +30,10 @@ The July 27 independent review produced two corrective specifications:
 
 - `docs/specs/EVIDENCE_INTEGRITY_V1.md` — implemented July 27
 - `docs/specs/LOCAL_DATA_RELIABILITY_V1.md` — implemented July 27
+
+The global capture contract is:
+
+- `docs/specs/COMMAND_PALETTE_V1.md` — implemented July 28
 
 The canonical workspace navigation decision is:
 
@@ -232,7 +236,11 @@ Funemployment Day has a narrower and immediately understandable promise around r
 
 - Uses Today, Log, Projects, Backlog, Journal, and Review as the primary IA.
 - Removes duplicated notes, materials, diary, matrix, and chart surfaces from Today.
-- Adds a global Capture menu that routes directly to the relevant canonical form.
+- Adds a global Capture menu that searches unfinished Tasks and active Projects,
+  understands Focus, Note, and URL intents, and preserves typed text when
+  handing a draft to its canonical form.
+- Supports arrow-key selection, Enter activation, Escape focus restoration,
+  honest invalid-command states, and the same capture flow on phone layouts.
 - Moves compact density and agent export into a Tools menu for progressive disclosure.
 - Uses five mobile tabs—Today, Log, Projects, Review, and More—with Backlog and
   Journal available under More.

@@ -1,6 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  useEffect,
+  useMemo,
+  useRef,
+  useState
+} from "react";
 import {
   BookOpen,
   CalendarDays,
@@ -34,6 +40,11 @@ import { FocusDraft, FocusRail } from "@/components/focus-timer";
 import { useFocusSession } from "@/components/focus-session-provider";
 import { SaveStateChip, useSaveState } from "@/components/save-state";
 import {
+  TimeBlockDialog,
+  type TimeBlockEditorDraft,
+  type TimeBlockErrorField
+} from "@/components/time-block-dialog";
+import {
   LayoutMode,
   markDocumentResizing,
   useLayoutMode
@@ -43,7 +54,11 @@ import {
   focusRemainingSeconds,
   formatFocusClock
 } from "@/lib/focus-domain";
-import { millisecondsUntilNextLocalDay } from "@/lib/dates";
+import {
+  localDateKey,
+  millisecondsUntilNextLocalDay,
+  parseLocalDate
+} from "@/lib/dates";
 import {
   formatInvestedMinutes,
   ProjectSummary
@@ -56,6 +71,16 @@ import {
   REVIEW_INTENTION_MAX_LENGTH,
   REVIEW_NARRATIVE_MAX_LENGTH
 } from "@/lib/review-domain";
+import {
+  isTimeBlockRecord,
+  minutesToTimeBlockTime,
+  TIME_BLOCK_LAST_MINUTE,
+  TIME_BLOCK_SLOT_INTERVAL_MINUTES,
+  type TimeBlockRecord,
+  type TimeBlockTaskSummary,
+  timeBlockDurationMinutes,
+  timeBlockTimeToMinutes
+} from "@/lib/time-blocks";
 import type { QueuePlacement } from "@/lib/focus-queue";
 
 type TaskStatus = "TODO" | "IN_PROGRESS" | "DONE";
@@ -73,6 +98,13 @@ type JournalView = "daily" | "notes" | "references";
 type BacklogArrange = "figure" | "quadrant" | "project" | "due";
 type FocusTarget = Omit<FocusDraft, "revision">;
 type PendingMutation = { id: string; fingerprint: string };
+type TimeBlockEditor = {
+  id: string | null;
+  date: string;
+  originalTask: TimeBlockTaskSummary | null;
+  linkedTask: TimeBlockTaskSummary | null;
+  draft: TimeBlockEditorDraft;
+};
 type HistoryState<T> = {
   items: T[];
   nextCursor: string | null;
@@ -151,14 +183,7 @@ type Material = {
   createdAt: string;
 };
 
-type TimeBlock = {
-  id: string;
-  date: string;
-  startTime: string;
-  endTime: string;
-  title: string;
-  taskId: string | null;
-};
+type TimeBlock = TimeBlockRecord;
 
 type ActivityEntry = {
   id: string;
@@ -202,6 +227,7 @@ type ReviewSummary = {
 
 type Bootstrap = {
   today: string;
+  todayKey: string;
   tasks: Task[];
   paletteTasks: PaletteTaskRecord[];
   notes: Note[];
@@ -217,6 +243,9 @@ type Bootstrap = {
 };
 
 const activityCategories = ["Deep Work", "Learning", "Admin", "Health", "Rest"];
+const TIMELINE_BASE_HOUR_HEIGHT_PX = 52;
+const TIMELINE_DESKTOP_TARGET_HEIGHT_PX = 24;
+const TIMELINE_TOUCH_TARGET_HEIGHT_PX = 44;
 const emptyHistory = <T,>(): HistoryState<T> => ({
   items: [],
   nextCursor: null,
@@ -342,6 +371,18 @@ function isActivityResponse(value: unknown): value is ActivityEntry {
     (activity.projectId === null || typeof activity.projectId === "string") &&
     typeof activity.createdAt === "string"
   );
+}
+
+function timeBlockErrorFieldFrom(
+  value: unknown
+): TimeBlockErrorField | null {
+  if (!value || typeof value !== "object") return null;
+  const field = (value as { field?: unknown }).field;
+  return ["title", "startTime", "endTime", "taskId"].includes(
+    String(field)
+  )
+    ? (field as TimeBlockErrorField)
+    : null;
 }
 
 function isPersistedDiaryResponse(value: unknown): value is Diary & {
@@ -492,6 +533,12 @@ export function Dashboard() {
   const [activityNote, setActivityNote] = useState("");
   const [activityError, setActivityError] = useState("");
   const [activitySaving, setActivitySaving] = useState(false);
+  const [timeBlockEditor, setTimeBlockEditor] =
+    useState<TimeBlockEditor | null>(null);
+  const [timeBlockError, setTimeBlockError] = useState("");
+  const [timeBlockErrorField, setTimeBlockErrorField] =
+    useState<TimeBlockErrorField | null>(null);
+  const [timeBlockSaving, setTimeBlockSaving] = useState(false);
   const [dismissedUnfinished, setDismissedUnfinished] = useState<string[]>([]);
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [dataManagementOpen, setDataManagementOpen] = useState(false);
@@ -509,6 +556,7 @@ export function Dashboard() {
   const noteCreateMutation = useRef<PendingMutation | null>(null);
   const materialCreateMutation = useRef<PendingMutation | null>(null);
   const activityCreateMutation = useRef<PendingMutation | null>(null);
+  const timeBlockCreateMutation = useRef<PendingMutation | null>(null);
   const noteHistoryRequest = useRef(false);
   const materialHistoryRequest = useRef(false);
   const paletteOpener = useRef<HTMLElement | null>(null);
@@ -625,21 +673,27 @@ export function Dashboard() {
       !response.ok ||
       !result ||
       typeof result !== "object" ||
-      !Array.isArray(result.tasks)
+      !Array.isArray(result.tasks) ||
+      typeof result.todayKey !== "string" ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(result.todayKey) ||
+      !Array.isArray(result.timeBlocks) ||
+      !result.timeBlocks.every(isTimeBlockRecord)
     ) {
       throw new Error("Dayflow could not refresh its latest data.");
     }
-    setData(result);
+    setData(result as Bootstrap);
   }
 
   async function refreshAfterConfirmedMutation() {
     try {
       await refresh();
+      return true;
     } catch {
       setAppError(
         "Your change was saved, but Dayflow could not refresh the latest view. Reload to try again."
       );
       setAppAnnouncement("Saved, but the latest view could not be refreshed.");
+      return false;
     }
   }
 
@@ -733,9 +787,12 @@ export function Dashboard() {
 
   const todayTasks = useMemo(() => {
     if (!data) return [];
-    const key = data.today.slice(0, 10);
+    const key = data.todayKey;
     return data.tasks
-      .filter((task) => task.date?.slice(0, 10) === key)
+      .filter(
+        (task) =>
+          taskDateLocalKey(task.date) === key
+      )
       .sort((a, b) => a.sortOrder - b.sortOrder);
   }, [data]);
 
@@ -773,6 +830,14 @@ export function Dashboard() {
     (sum, task) => sum + task.estimateMinutes,
     0
   );
+  const blockedMinutes = (data?.timeBlocks ?? [])
+    .filter(
+      (block) => block.date === data?.todayKey
+    )
+    .reduce(
+      (sum, block) => sum + safeTimeBlockDurationMinutes(block),
+      0
+    );
   const activityMinutes = (data?.activities ?? []).reduce(
     (sum, activity) => sum + activity.durationMinutes,
     0
@@ -951,7 +1016,7 @@ export function Dashboard() {
     navigate("backlog");
   }
 
-  async function addTask(date: string | null = data?.today.slice(0, 10) ?? null) {
+  async function addTask(date: string | null = data?.todayKey ?? null) {
     const title = newTask.trim();
     if (!title || taskCreatePending) return false;
     const payload = { title, date, estimateMinutes: 30 };
@@ -1005,7 +1070,7 @@ export function Dashboard() {
     if (!trimmed || !data || taskCreatePending) return;
     const payload = {
       title: trimmed,
-      date: data.today.slice(0, 10),
+      date: data.todayKey,
       estimateMinutes: 25
     };
     const mutationId = mutationIdFor(taskCreateMutation, payload);
@@ -1638,6 +1703,273 @@ export function Dashboard() {
     }
   }
 
+  function defaultTimeBlockTimes(durationMinutes: number) {
+    const now = new Date();
+    const duration = Math.min(
+      TIME_BLOCK_LAST_MINUTE,
+      Math.max(1, Math.trunc(durationMinutes))
+    );
+    const preferred =
+      Math.ceil(
+        (now.getHours() * 60 + now.getMinutes()) /
+          TIME_BLOCK_SLOT_INTERVAL_MINUTES
+      ) * TIME_BLOCK_SLOT_INTERVAL_MINUTES;
+    const latestStart = TIME_BLOCK_LAST_MINUTE - duration;
+    const startMinutes =
+      preferred <= latestStart
+        ? preferred
+        : Math.max(
+            0,
+            Math.floor(
+              latestStart / TIME_BLOCK_SLOT_INTERVAL_MINUTES
+            ) * TIME_BLOCK_SLOT_INTERVAL_MINUTES
+          );
+    return {
+      startTime: minutesToTimeBlockTime(startMinutes),
+      endTime: minutesToTimeBlockTime(startMinutes + duration)
+    };
+  }
+
+  function openTimeBlockEditor(task: Task | null = null) {
+    if (!data) return;
+    const durationMinutes = suggestedTaskBlockDuration(task);
+    const slot = defaultTimeBlockTimes(durationMinutes);
+    setTimeBlockError("");
+    setTimeBlockErrorField(null);
+    setTimeBlockEditor({
+      id: null,
+      date: data.todayKey,
+      originalTask: task
+        ? {
+            id: task.id,
+            title: task.title,
+            estimateMinutes: task.estimateMinutes
+          }
+        : null,
+      linkedTask: task
+        ? {
+            id: task.id,
+            title: task.title,
+            estimateMinutes: task.estimateMinutes
+          }
+        : null,
+      draft: {
+        title: task?.title ?? "",
+        startTime: slot.startTime,
+        endTime: slot.endTime,
+        taskId: task?.id ?? ""
+      }
+    });
+  }
+
+  function editTimeBlock(block: TimeBlock) {
+    setTimeBlockError("");
+    setTimeBlockErrorField(null);
+    setTimeBlockEditor({
+      id: block.id,
+      date: block.date,
+      originalTask: block.task,
+      linkedTask: block.task,
+      draft: {
+        title: block.title,
+        startTime: block.startTime,
+        endTime: block.endTime,
+        taskId: block.taskId ?? ""
+      }
+    });
+  }
+
+  function changeTimeBlockTask(taskId: string) {
+    setTimeBlockError("");
+    setTimeBlockErrorField(null);
+    setTimeBlockEditor((current) => {
+      if (!current) return current;
+      const task =
+        todayTasks.find((item) => item.id === taskId) ??
+        (current.linkedTask?.id === taskId
+          ? current.linkedTask
+          : current.originalTask?.id === taskId
+            ? current.originalTask
+            : null);
+      if (!task) {
+        return {
+          ...current,
+          draft: { ...current.draft, taskId: "" }
+        };
+      }
+      const slot =
+        current.id === null
+          ? defaultTimeBlockTimes(suggestedTaskBlockDuration(task))
+          : {
+              startTime: current.draft.startTime,
+              endTime: current.draft.endTime
+            };
+      return {
+        ...current,
+        linkedTask: {
+          id: task.id,
+          title: task.title,
+          estimateMinutes: task.estimateMinutes
+        },
+        draft: {
+          title: task.title,
+          startTime: slot.startTime,
+          endTime: slot.endTime,
+          taskId: task.id
+        }
+      };
+    });
+  }
+
+  async function saveTimeBlock() {
+    if (!data || !timeBlockEditor || timeBlockSaving) return;
+    const payload = {
+      date: timeBlockEditor.date,
+      title: timeBlockEditor.draft.title,
+      startTime: timeBlockEditor.draft.startTime,
+      endTime: timeBlockEditor.draft.endTime,
+      taskId: timeBlockEditor.draft.taskId || null
+    };
+    const creating = timeBlockEditor.id === null;
+    const mutationId = creating
+      ? mutationIdFor(timeBlockCreateMutation, payload)
+      : null;
+    setTimeBlockSaving(true);
+    setTimeBlockError("");
+    setTimeBlockErrorField(null);
+    try {
+      const response = await fetch(
+        creating
+          ? "/api/time-blocks"
+          : `/api/time-blocks/${timeBlockEditor.id}`,
+        {
+          method: creating ? "POST" : "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            ...(mutationId
+              ? { "X-Dayflow-Mutation-Id": mutationId }
+              : {})
+          },
+          body: JSON.stringify(payload)
+        }
+      );
+      const result = await response.json().catch(() => null);
+      if (
+        !response.ok ||
+        !isTimeBlockRecord(result) ||
+        (!creating && result.id !== timeBlockEditor.id) ||
+        result.title !== payload.title.trim() ||
+        result.startTime !== payload.startTime ||
+        result.endTime !== payload.endTime ||
+        result.taskId !== payload.taskId ||
+        result.date !== payload.date
+      ) {
+        setTimeBlockError(
+          result && typeof result.error === "string"
+            ? result.error
+            : "Time block could not be saved. Your draft is still here."
+        );
+        setTimeBlockErrorField(timeBlockErrorFieldFrom(result));
+        return;
+      }
+      setData((current) =>
+        current
+          ? {
+              ...current,
+              timeBlocks: creating
+                ? [...current.timeBlocks, result]
+                : current.timeBlocks.map((block) =>
+                    block.id === result.id ? result : block
+                  )
+            }
+          : current
+      );
+      if (creating) timeBlockCreateMutation.current = null;
+      setTimeBlockError("");
+      setTimeBlockErrorField(null);
+      setAppError("");
+      setAppAnnouncement(
+        creating ? "Time block added." : "Time block updated."
+      );
+      const refreshed = await refreshAfterConfirmedMutation();
+      if (!refreshed) {
+        setTimeBlockEditor((current) =>
+          current
+            ? {
+                id: result.id,
+                date: current.date,
+                originalTask: result.task,
+                linkedTask: result.task,
+                draft: current.draft
+              }
+            : current
+        );
+        setTimeBlockError(
+          "This Time Block was saved, but the latest view could not be refreshed. Your values are still here; reload to try again."
+        );
+        setTimeBlockErrorField(null);
+        return;
+      }
+      setTimeBlockEditor(null);
+    } catch {
+      setTimeBlockError(
+        "Time block could not be saved. Your draft is still here."
+      );
+      setTimeBlockErrorField(null);
+    } finally {
+      setTimeBlockSaving(false);
+    }
+  }
+
+  async function deleteTimeBlock() {
+    if (!timeBlockEditor?.id || timeBlockSaving) return;
+    const id = timeBlockEditor.id;
+    setTimeBlockSaving(true);
+    setTimeBlockError("");
+    setTimeBlockErrorField(null);
+    try {
+      const response = await fetch(`/api/time-blocks/${id}`, {
+        method: "DELETE"
+      });
+      const result = await response.json().catch(() => null);
+      if (
+        !response.ok ||
+        !result ||
+        typeof result !== "object" ||
+        result.ok !== true ||
+        result.id !== id
+      ) {
+        setTimeBlockError(
+          result && typeof result.error === "string"
+            ? result.error
+            : "Time block could not be deleted. Try again."
+        );
+        setTimeBlockErrorField(null);
+        return;
+      }
+      setData((current) =>
+        current
+          ? {
+              ...current,
+              timeBlocks: current.timeBlocks.filter(
+                (block) => block.id !== id
+              )
+            }
+          : current
+      );
+      setTimeBlockEditor(null);
+      setTimeBlockErrorField(null);
+      setAppError("");
+      setAppAnnouncement("Time block deleted.");
+      await refreshAfterConfirmedMutation();
+    } catch {
+      setTimeBlockError("Time block could not be deleted. Try again.");
+      setTimeBlockErrorField(null);
+    } finally {
+      setTimeBlockSaving(false);
+    }
+  }
+
   if (!data) {
     return (
       <main className="loading-screen">
@@ -1647,6 +1979,10 @@ export function Dashboard() {
     );
   }
 
+  const timeBlockDialogTasks = mergeTimeBlockTaskOptions(
+    openTodayTasks,
+    timeBlockEditor
+  );
   const isToday = screen === "today";
   const liveFocus = focus.active ?? focus.pendingCompletion;
   const showFullRail =
@@ -1807,11 +2143,12 @@ export function Dashboard() {
           <DayPage
             view={screen.replace("day-", "") as DayView}
             today={data.today}
+            todayKey={data.todayKey}
             tasks={openTodayTasks}
             activities={data.activities}
             timeBlocks={data.timeBlocks}
             projects={projectById}
-            plannedMinutes={plannedMinutes}
+            blockedMinutes={blockedMinutes}
             recordedMinutes={activityMinutes}
             noteCount={data.notes.length}
             activeFocus={focus.active}
@@ -1822,6 +2159,8 @@ export function Dashboard() {
             onQueueTask={queueTask}
             onFocusTransition={focus.transition}
             onOpenPalette={openCommandPalette}
+            onCreateTimeBlock={openTimeBlockEditor}
+            onEditTimeBlock={editTimeBlock}
           />
         )}
 
@@ -2000,6 +2339,35 @@ export function Dashboard() {
           onQueryChange={setPaletteQuery}
           onActivate={activatePaletteItem}
           onDismiss={dismissCommandPalette}
+        />
+      )}
+
+      {timeBlockEditor && (
+        <TimeBlockDialog
+          mode={timeBlockEditor.id === null ? "create" : "edit"}
+          dateLabel={formatLongLocalDateKey(timeBlockEditor.date)}
+          draft={timeBlockEditor.draft}
+          tasks={timeBlockDialogTasks}
+          saving={timeBlockSaving}
+          error={timeBlockError}
+          errorField={timeBlockErrorField}
+          onDraftChange={(draft) => {
+            setTimeBlockEditor((current) =>
+              current ? { ...current, draft } : current
+            );
+            setTimeBlockError("");
+            setTimeBlockErrorField(null);
+          }}
+          onTaskChange={changeTimeBlockTask}
+          onClose={() => {
+            setTimeBlockEditor(null);
+            setTimeBlockError("");
+            setTimeBlockErrorField(null);
+          }}
+          onSave={saveTimeBlock}
+          onDelete={
+            timeBlockEditor.id === null ? undefined : deleteTimeBlock
+          }
         />
       )}
 
@@ -2197,7 +2565,7 @@ function TodayPage({
               className="secondary-button focus-button"
               onClick={() =>
                 void onUpdateTask(firstCarry.id, {
-                  date: today.slice(0, 10),
+                  date: localDateKey(new Date(today)),
                   scheduleSource: "unfinished-to-today"
                 })
               }
@@ -2421,7 +2789,7 @@ function TodayPage({
               key={task.id}
               onClick={() =>
                 void onUpdateTask(task.id, {
-                  date: today.slice(0, 10),
+                  date: localDateKey(new Date(today)),
                   scheduleSource: "later-pill"
                 })
               }
@@ -2884,11 +3252,12 @@ function FirstRunPage({
 function DayPage({
   view,
   today,
+  todayKey,
   tasks,
   activities,
   timeBlocks,
   projects,
-  plannedMinutes,
+  blockedMinutes,
   recordedMinutes,
   noteCount,
   activeFocus,
@@ -2898,15 +3267,18 @@ function DayPage({
   onStartFocus,
   onQueueTask,
   onFocusTransition,
-  onOpenPalette
+  onOpenPalette,
+  onCreateTimeBlock,
+  onEditTimeBlock
 }: {
   view: DayView;
   today: string;
+  todayKey: string;
   tasks: Task[];
   activities: ActivityEntry[];
   timeBlocks: TimeBlock[];
   projects: Map<string, ProjectSummary>;
-  plannedMinutes: number;
+  blockedMinutes: number;
   recordedMinutes: number;
   noteCount: number;
   activeFocus: ReturnType<typeof useFocusSession>["active"];
@@ -2917,6 +3289,8 @@ function DayPage({
   onQueueTask: (task: Task, placement: QueuePlacement) => Promise<boolean>;
   onFocusTransition: ReturnType<typeof useFocusSession>["transition"];
   onOpenPalette: () => void;
+  onCreateTimeBlock: (task?: Task | null) => void;
+  onEditTimeBlock: (block: TimeBlock) => void;
 }) {
   return (
     <div className="day-page log-page page-stack">
@@ -2935,7 +3309,7 @@ function DayPage({
         }
       />
       <div className="log-totals" aria-label="Today’s log totals">
-        <span>{formatMinutes(plannedMinutes)} planned</span>
+        <span>{formatMinutes(blockedMinutes)} blocked</span>
         <strong>{formatMinutes(recordedMinutes)} recorded</strong>
         <span>
           {activities.length} {activities.length === 1 ? "session" : "sessions"} ·{" "}
@@ -2959,11 +3333,14 @@ function DayPage({
       )}
       {view === "timeline" && (
         <DayTimeline
-          today={today}
+          todayKey={todayKey}
           blocks={timeBlocks}
+          tasks={tasks}
           activities={activities}
           activeFocus={activeFocus}
           focusNow={focusNow}
+          onCreateBlock={onCreateTimeBlock}
+          onEditBlock={onEditTimeBlock}
         />
       )}
     </div>
@@ -3060,7 +3437,7 @@ function DayStream({
               <i />
               <section className="stream-task-card">
                 <span>
-                  <strong>Nothing running · {tasks.length} blocks planned</strong>
+                  <strong>Nothing running · {tasks.length} tasks left</strong>
                   <small>{idleNext.title} · {idleNext.estimateMinutes}m</small>
                 </span>
                 <button
@@ -3154,83 +3531,186 @@ function DayStream({
 }
 
 function DayTimeline({
-  today,
+  todayKey,
   blocks,
+  tasks,
   activities,
   activeFocus,
-  focusNow
+  focusNow,
+  onCreateBlock,
+  onEditBlock
 }: {
-  today: string;
+  todayKey: string;
   blocks: TimeBlock[];
+  tasks: Task[];
   activities: ActivityEntry[];
   activeFocus: ReturnType<typeof useFocusSession>["active"];
   focusNow: number;
+  onCreateBlock: (task?: Task | null) => void;
+  onEditBlock: (block: TimeBlock) => void;
 }) {
-  const key = today.slice(0, 10);
-  const todayBlocks = blocks.filter((block) => block.date.slice(0, 10) === key);
+  const todayBlocks = blocks
+    .filter((block) => block.date === todayKey)
+    .sort(
+      (left, right) =>
+        left.startTime.localeCompare(right.startTime) ||
+        left.endTime.localeCompare(right.endTime) ||
+        left.createdAt.localeCompare(right.createdAt) ||
+        left.id.localeCompare(right.id)
+    );
+  const bounds = timelineBounds(todayBlocks, activities, activeFocus, focusNow);
+  const timelineScales = timelineHourHeights(todayBlocks);
+  const timelineStyle = {
+    "--timeline-desktop-hour-height": `${timelineScales.desktop}px`,
+    "--timeline-touch-hour-height": `${timelineScales.touch}px`,
+    "--timeline-desktop-height": `${
+      bounds.hourCount * timelineScales.desktop
+    }px`,
+    "--timeline-touch-height": `${
+      bounds.hourCount * timelineScales.touch
+    }px`
+  } as CSSProperties;
   return (
     <section className="day-view">
       <p className="view-explainer">
         Planned time and focused time share one grid so gaps and overages stay honest.
       </p>
-      <div className="day-timeline-panel">
-        <div className="timeline-corner" />
-        <span className="timeline-column-label">Planned</span>
-        <span className="timeline-column-label focused">Focused</span>
-        <div className="timeline-hours">
-          {Array.from({ length: 10 }, (_, index) => (
-            <span key={index}>{formatHour(index + 8)}</span>
-          ))}
+      <div className="timeline-planning-toolbar">
+        <div>
+          <span className="eyebrow">Manual plan</span>
+          <strong>
+            {todayBlocks.length
+              ? `${todayBlocks.length} ${
+                  todayBlocks.length === 1 ? "block" : "blocks"
+                } · ${formatMinutes(
+                  todayBlocks.reduce(
+                    (sum, block) =>
+                      sum + safeTimeBlockDurationMinutes(block),
+                    0
+                  )
+                )}`
+              : "No time blocked yet"}
+          </strong>
         </div>
-        <div className="timeline-column">
-          {todayBlocks.map((block) => {
-            const start = parseTime(block.startTime);
-            const end = parseTime(block.endTime);
-            return (
-              <article
-                className="planned-block"
-                key={block.id}
-                style={timelinePosition(start, Math.max(15, end - start))}
+        <button
+          className="secondary-button"
+          type="button"
+          onClick={() => onCreateBlock(null)}
+        >
+          <Plus size={14} />
+          Add time block
+        </button>
+      </div>
+      {tasks.length > 0 && (
+        <div className="timeline-task-shortcuts" aria-label="Block a task">
+          <span>Block a task</span>
+          <div>
+            {tasks.map((task) => (
+              <button
+                aria-label={`Block time for ${task.title}`}
+                key={task.id}
+                onClick={() => onCreateBlock(task)}
+                type="button"
               >
-                <strong>{block.title}</strong>
-                <small>
-                  {block.startTime}–{block.endTime}
-                </small>
-              </article>
-            );
-          })}
-          <button className="timeline-empty" style={timelinePosition(15 * 60, 60)}>
-            Nothing planned · block 3:00–4:00
-          </button>
+                <span>{task.title}</span>
+                <small>{task.estimateMinutes || 30}m</small>
+              </button>
+            ))}
+          </div>
         </div>
-        <div className="timeline-column actual">
-          {activities.map((activity) => {
-            const date = new Date(activity.startedAt);
-            const start = date.getHours() * 60 + date.getMinutes();
-            return (
-              <article
-                className="focused-block"
-                key={activity.id}
-                style={timelinePosition(start, activity.durationMinutes)}
+      )}
+      <div className="day-timeline-scroll">
+        <div className="day-timeline-panel" style={timelineStyle}>
+          <div className="timeline-corner" />
+          <span className="timeline-column-label">Planned</span>
+          <span className="timeline-column-label focused">Focused</span>
+          <div className="timeline-hours">
+            {Array.from({ length: bounds.hourCount }, (_, index) => (
+              <span key={index}>{formatHour(index + bounds.startHour)}</span>
+            ))}
+          </div>
+          <div className="timeline-column">
+            {todayBlocks.map((block) => {
+              const interval = safeTimeBlockInterval(block);
+              if (!interval) return null;
+              return (
+                <button
+                  aria-label={`Time block: ${block.title}, ${block.startTime} to ${block.endTime}`}
+                  className="planned-block"
+                  key={block.id}
+                  onClick={() => onEditBlock(block)}
+                  style={timelinePosition(
+                    interval.startMinutes,
+                    interval.endMinutes - interval.startMinutes,
+                    bounds.startHour,
+                    bounds.hourCount
+                  )}
+                  type="button"
+                >
+                  <strong>{block.title}</strong>
+                  <small>
+                    {block.startTime}–{block.endTime}
+                  </small>
+                </button>
+              );
+            })}
+            {!todayBlocks.length && (
+              <button
+                className="timeline-empty"
+                onClick={() => onCreateBlock(null)}
+                style={timelinePosition(
+                  Math.max(9, bounds.startHour) * 60,
+                  60,
+                  bounds.startHour,
+                  bounds.hourCount
+                )}
+                type="button"
               >
-                <strong>{activity.note}</strong>
-                <small>{activity.durationMinutes}m</small>
+                Nothing planned · add a block
+              </button>
+            )}
+          </div>
+          <div className="timeline-column actual">
+            {activities.map((activity) => {
+              const date = new Date(activity.startedAt);
+              const start = date.getHours() * 60 + date.getMinutes();
+              return (
+                <article
+                  className="focused-block"
+                  key={activity.id}
+                  style={timelinePosition(
+                    start,
+                    activity.durationMinutes,
+                    bounds.startHour,
+                    bounds.hourCount
+                  )}
+                >
+                  <strong>{activity.note}</strong>
+                  <small>{activity.durationMinutes}m</small>
+                </article>
+              );
+            })}
+            {activeFocus && (
+              <article
+                className="focused-block running"
+                style={timelinePosition(
+                  new Date(activeFocus.startedAt).getHours() * 60 +
+                    new Date(activeFocus.startedAt).getMinutes(),
+                  Math.max(
+                    20,
+                    Math.floor(
+                      focusElapsedSeconds(activeFocus, focusNow) / 60
+                    )
+                  ),
+                  bounds.startHour,
+                  bounds.hourCount
+                )}
+              >
+                <strong>{activeFocus.label}</strong>
+                <small>running</small>
               </article>
-            );
-          })}
-          {activeFocus && (
-            <article
-              className="focused-block running"
-              style={timelinePosition(
-                new Date(activeFocus.startedAt).getHours() * 60 +
-                  new Date(activeFocus.startedAt).getMinutes(),
-                Math.max(20, Math.floor(focusElapsedSeconds(activeFocus, focusNow) / 60))
-              )}
-            >
-              <strong>{activeFocus.label}</strong>
-              <small>running</small>
-            </article>
-          )}
+            )}
+          </div>
         </div>
       </div>
     </section>
@@ -3486,7 +3966,7 @@ function DayMatrix({
             className="secondary-button"
             onClick={() =>
               void onUpdateTask(selectedTask.id, {
-                date: today.slice(0, 10),
+                date: localDateKey(new Date(today)),
                 scheduleSource: "backlog-matrix-today"
               })
             }
@@ -4420,6 +4900,7 @@ function SegmentedControl<T extends string>({
           key={id}
           className={value === id ? "active" : ""}
           onClick={() => onChange(id)}
+          type="button"
         >
           {label}
         </button>
@@ -4688,15 +5169,117 @@ function ReviewMetric({
   );
 }
 
-function timelinePosition(startMinutes: number, durationMinutes: number) {
-  const top = ((startMinutes - 8 * 60) / 60) * 52;
-  const height = Math.max(20, (durationMinutes / 60) * 52);
-  return { top: `${top}px`, height: `${height}px` };
+function timelineBounds(
+  blocks: TimeBlock[],
+  activities: ActivityEntry[],
+  activeFocus: ReturnType<typeof useFocusSession>["active"],
+  focusNow: number
+) {
+  let earliestMinutes = 8 * 60;
+  let latestMinutes = 18 * 60;
+  for (const block of blocks) {
+    const interval = safeTimeBlockInterval(block);
+    if (!interval) continue;
+    earliestMinutes = Math.min(earliestMinutes, interval.startMinutes);
+    latestMinutes = Math.max(latestMinutes, interval.endMinutes);
+  }
+  for (const activity of activities) {
+    const startedAt = new Date(activity.startedAt);
+    const start = startedAt.getHours() * 60 + startedAt.getMinutes();
+    earliestMinutes = Math.min(earliestMinutes, start);
+    latestMinutes = Math.max(
+      latestMinutes,
+      start + activity.durationMinutes
+    );
+  }
+  if (activeFocus) {
+    const startedAt = new Date(activeFocus.startedAt);
+    const start = startedAt.getHours() * 60 + startedAt.getMinutes();
+    earliestMinutes = Math.min(earliestMinutes, start);
+    latestMinutes = Math.max(
+      latestMinutes,
+      start + Math.max(20, focusElapsedSeconds(activeFocus, focusNow) / 60)
+    );
+  }
+  const startHour = Math.max(
+    0,
+    Math.min(23, Math.floor(earliestMinutes / 60))
+  );
+  const endHour = Math.max(
+    startHour + 1,
+    Math.min(24, Math.ceil(latestMinutes / 60))
+  );
+  return { startHour, endHour, hourCount: endHour - startHour };
 }
 
-function parseTime(value: string) {
-  const [hours, minutes] = value.split(":").map(Number);
-  return hours * 60 + minutes;
+function timelinePosition(
+  startMinutes: number,
+  durationMinutes: number,
+  startHour: number,
+  hourCount: number
+) {
+  const timelineMinutes = Math.max(60, hourCount * 60);
+  const top =
+    ((startMinutes - startHour * 60) / timelineMinutes) * 100;
+  const height = (durationMinutes / timelineMinutes) * 100;
+  return { top: `${top}%`, height: `${height}%` };
+}
+
+function timelineHourHeights(blocks: TimeBlock[]) {
+  const shortestBlock = blocks.reduce((shortest, block) => {
+    const duration = safeTimeBlockDurationMinutes(block);
+    return duration > 0 ? Math.min(shortest, duration) : shortest;
+  }, Number.POSITIVE_INFINITY);
+  if (!Number.isFinite(shortestBlock)) {
+    return {
+      desktop: TIMELINE_BASE_HOUR_HEIGHT_PX,
+      touch: TIMELINE_BASE_HOUR_HEIGHT_PX
+    };
+  }
+  return {
+    desktop: Math.max(
+      TIMELINE_BASE_HOUR_HEIGHT_PX,
+      Math.ceil(
+        (TIMELINE_DESKTOP_TARGET_HEIGHT_PX * 60) / shortestBlock
+      )
+    ),
+    touch: Math.max(
+      TIMELINE_BASE_HOUR_HEIGHT_PX,
+      Math.ceil(
+        (TIMELINE_TOUCH_TARGET_HEIGHT_PX * 60) / shortestBlock
+      )
+    )
+  };
+}
+
+function safeTimeBlockInterval(block: TimeBlock) {
+  try {
+    const startMinutes = timeBlockTimeToMinutes(block.startTime);
+    const endMinutes = timeBlockTimeToMinutes(block.endTime);
+    return startMinutes < endMinutes
+      ? { startMinutes, endMinutes }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function safeTimeBlockDurationMinutes(block: TimeBlock) {
+  try {
+    return timeBlockDurationMinutes(block);
+  } catch {
+    return 0;
+  }
+}
+
+function suggestedTaskBlockDuration(
+  task: Pick<Task, "estimateMinutes"> | null
+) {
+  const estimate = task?.estimateMinutes ?? 60;
+  return Math.min(
+    TIME_BLOCK_LAST_MINUTE,
+    Math.max(1, estimate || 30)
+  );
 }
 
 function formatHour(hour: number) {
@@ -4946,8 +5529,36 @@ function startOfDay(value: Date) {
   return value.getTime();
 }
 
+function taskDateLocalKey(value: string | null) {
+  if (!value) return null;
+  const date = parseLocalDate(value);
+  return date ? localDateKey(date) : null;
+}
+
+function mergeTimeBlockTaskOptions(
+  tasks: TimeBlockTaskSummary[],
+  editor: TimeBlockEditor | null
+) {
+  const result = [...tasks];
+  for (const task of [editor?.originalTask, editor?.linkedTask]) {
+    if (task && !result.some((candidate) => candidate.id === task.id)) {
+      result.push(task);
+    }
+  }
+  return result;
+}
+
 function formatLongDate(value: string) {
   return new Date(value).toLocaleDateString("en-US", {
+    weekday: "long",
+    month: "long",
+    day: "numeric"
+  });
+}
+
+function formatLongLocalDateKey(value: string) {
+  const [year, month, day] = value.split("-").map(Number);
+  return new Date(year, month - 1, day).toLocaleDateString("en-US", {
     weekday: "long",
     month: "long",
     day: "numeric"

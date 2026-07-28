@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
+import { mutationRequestHash } from "../../src/lib/idempotent-mutations";
 
 const repositoryRoot = process.cwd();
 const prismaCliPath = join(repositoryRoot, "node_modules", "prisma", "build", "index.js");
@@ -100,4 +101,108 @@ export function setFocusSessionElapsedMinutes(id: string, minutes: number) {
          "accumulatedPauseSeconds" = 0
      WHERE "id" = '${id}';`
   );
+}
+
+export function setCompletedFocusSessionInterval(
+  id: string,
+  date: string,
+  startTime: string,
+  endTime: string
+) {
+  if (!/^[A-Za-z0-9_-]+$/.test(id)) {
+    throw new Error("Focus session id contains unexpected characters.");
+  }
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+    !/^([01]\d|2[0-3]):[0-5]\d$/.test(startTime) ||
+    !/^([01]\d|2[0-3]):[0-5]\d$/.test(endTime)
+  ) {
+    throw new Error("Focus session interval is not canonical.");
+  }
+
+  const startedAt = new Date(`${date}T${startTime}:00`);
+  const completedAt = new Date(`${date}T${endTime}:00`);
+  const actualMinutes = Math.floor(
+    (completedAt.getTime() - startedAt.getTime()) / 60_000
+  );
+  if (
+    !Number.isFinite(startedAt.getTime()) ||
+    !Number.isFinite(completedAt.getTime()) ||
+    actualMinutes < 1
+  ) {
+    throw new Error("Focus session interval must end after it starts.");
+  }
+
+  runPrismaDbExecute(
+    ["--stdin"],
+    `UPDATE "FocusSession"
+     SET "activeKey" = NULL,
+         "startedAt" = ${startedAt.getTime()},
+         "pausedAt" = NULL,
+         "accumulatedPauseSeconds" = 0,
+         "status" = 'COMPLETED',
+         "completedAt" = ${completedAt.getTime()},
+         "actualMinutes" = ${actualMinutes},
+         "needsRecord" = false
+     WHERE "id" = '${id}';`
+  );
+}
+
+export function seedMalformedTimeBlock(date: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    throw new Error("Malformed Time Block seed date is not canonical.");
+  }
+  const timestamp = new Date(`${date}T00:00:00`).getTime();
+  if (!Number.isFinite(timestamp)) {
+    throw new Error("Malformed Time Block seed date is invalid.");
+  }
+  runPrismaDbExecute(
+    ["--stdin"],
+    `INSERT INTO "TimeBlock"
+     ("id", "date", "startTime", "endTime", "title", "taskId", "createdAt", "updatedAt")
+     VALUES
+     ('malformed-time-block', ${timestamp}, '09:00', '10:00',
+      '   ', NULL, ${timestamp}, ${timestamp});`
+  );
+}
+
+export function seedPreviousDayTimeBlockReceipt(date: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    throw new Error("Previous-day Time Block date is not canonical.");
+  }
+  const timestamp = new Date(`${date}T00:00:00`).getTime();
+  if (!Number.isFinite(timestamp)) {
+    throw new Error("Previous-day Time Block date is invalid.");
+  }
+
+  const mutationId = "e2e-time-block-before-midnight";
+  const payload = {
+    date,
+    startTime: "22:00",
+    endTime: "22:30",
+    title: "Saved before midnight",
+    taskId: null
+  };
+  const response = {
+    id: "time-block-before-midnight",
+    ...payload,
+    createdAt: new Date(timestamp).toISOString(),
+    task: null
+  };
+  const requestHash = mutationRequestHash("time-block.create", payload);
+  const responseJson = JSON.stringify(response).replaceAll("'", "''");
+  runPrismaDbExecute(
+    ["--stdin"],
+    `INSERT INTO "TimeBlock"
+     ("id", "date", "startTime", "endTime", "title", "taskId", "createdAt", "updatedAt")
+     VALUES
+     ('${response.id}', ${timestamp}, '${payload.startTime}',
+      '${payload.endTime}', '${payload.title}', NULL, ${timestamp}, ${timestamp});
+     INSERT INTO "MutationReceipt"
+     ("id", "kind", "requestHash", "responseJson", "createdAt")
+     VALUES
+     ('${mutationId}', 'time-block.create', '${requestHash}',
+      '${responseJson}', ${timestamp});`
+  );
+  return { mutationId, payload, response };
 }

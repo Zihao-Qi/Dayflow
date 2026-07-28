@@ -16,6 +16,14 @@ const atTime = (date: Date, hours: number, minutes: number) => {
 };
 
 async function main() {
+  const destructiveReset = process.env.DAYFLOW_SEED_RESET === "1";
+  if (!destructiveReset && (await hasExistingData())) {
+    console.log(
+      "Seed skipped: the database already contains Dayflow data. Use npm run db:reset-demo for an explicit destructive demo reset."
+    );
+    return;
+  }
+
   await prisma.taskScheduleChange.deleteMany();
   await prisma.focusSession.deleteMany();
   await prisma.activityEntry.deleteMany();
@@ -148,14 +156,16 @@ async function main() {
         durationMinutes: 35,
         category: "Deep Work",
         note: "Turned the dashboard direction into a concrete product outline.",
-        taskId: tasks[1].id
+        taskId: tasks[1].id,
+        attributedProjectId: project.id
       },
       {
         startedAt: atTime(today, 11, 5),
         durationMinutes: 20,
         category: "Learning",
         note: "Reviewed saved references and captured the useful ideas.",
-        taskId: tasks[2].id
+        taskId: tasks[2].id,
+        attributedProjectId: project.id
       },
       {
         startedAt: atTime(yesterday, 16, 15),
@@ -169,7 +179,8 @@ async function main() {
         durationMinutes: 15,
         category: "Deep Work",
         note: "Clarified the outcome and boundaries for the next release.",
-        projectId: project.id
+        projectId: project.id,
+        attributedProjectId: project.id
       }
     ]
   });
@@ -227,6 +238,22 @@ async function main() {
       { date: tomorrow, startTime: "09:30", endTime: "11:00", title: "Build next version", taskId: tasks[3].id }
     ]
   });
+}
+
+async function hasExistingData() {
+  const counts = await Promise.all([
+    prisma.project.count(),
+    prisma.projectPhase.count(),
+    prisma.task.count(),
+    prisma.note.count(),
+    prisma.diaryEntry.count(),
+    prisma.material.count(),
+    prisma.timeBlock.count(),
+    prisma.activityEntry.count(),
+    prisma.focusSession.count(),
+    prisma.taskScheduleChange.count()
+  ]);
+  return counts.some((count) => count > 0);
 }
 
 main()

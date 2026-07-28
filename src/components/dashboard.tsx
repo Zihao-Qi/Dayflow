@@ -101,12 +101,13 @@ type Note = {
 };
 
 type Diary = {
-  id: string;
+  id: string | null;
   date: string;
   content: string;
   reflection: string;
   mood: number;
   energy: number;
+  persisted: boolean;
 };
 
 type Material = {
@@ -155,8 +156,8 @@ type ReviewSummary = {
   focusedMinutes: number;
   completedSessions: number;
   cancelledSessions: number;
-  pendingRecordSessions: number;
-  pendingRecordMinutes: number;
+  pendingEnrichmentSessions: number;
+  pendingEnrichmentMinutes: number;
   longestMinutes: number;
   longestStartedAt: string | null;
 };
@@ -195,6 +196,7 @@ function describeTaskMove(title: string, position: number, total: number) {
 function diariesEqual(left: Diary, right: Diary) {
   return (
     left.id === right.id &&
+    left.persisted === right.persisted &&
     left.date === right.date &&
     left.content === right.content &&
     left.reflection === right.reflection &&
@@ -221,9 +223,11 @@ export function Dashboard() {
   const [newTask, setNewTask] = useState("");
   const [newNote, setNewNote] = useState("");
   const [noteTags, setNoteTags] = useState("");
+  const [noteProjectId, setNoteProjectId] = useState("");
   const [materialTitle, setMaterialTitle] = useState("");
   const [materialUrl, setMaterialUrl] = useState("");
   const [materialNotes, setMaterialNotes] = useState("");
+  const [materialProjectId, setMaterialProjectId] = useState("");
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [projectCreateOpen, setProjectCreateOpen] = useState(false);
   const [focusDraft, setFocusDraft] = useState<FocusDraft | null>(null);
@@ -232,6 +236,7 @@ export function Dashboard() {
   const [activityDuration, setActivityDuration] = useState("30");
   const [activityCategory, setActivityCategory] = useState(activityCategories[0]);
   const [activityTaskId, setActivityTaskId] = useState("");
+  const [activityProjectId, setActivityProjectId] = useState("");
   const [activityNote, setActivityNote] = useState("");
   const [activityError, setActivityError] = useState("");
   const [dismissedUnfinished, setDismissedUnfinished] = useState<string[]>([]);
@@ -259,6 +264,10 @@ export function Dashboard() {
       );
     }
   }, [figureArrangement]);
+
+  useEffect(() => {
+    if (focus.retryNext) setRailExpanded(true);
+  }, [focus.retryNext]);
 
   useEffect(() => {
     function onShortcut(event: KeyboardEvent) {
@@ -614,37 +623,63 @@ export function Dashboard() {
 
   async function addNote() {
     if (!newNote.trim()) return;
-    await fetch("/api/notes", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        content: newNote.trim(),
-        tags: noteTags
-          .split(",")
-          .map((tag) => tag.trim())
-          .filter(Boolean)
-      })
-    });
-    setNewNote("");
-    setNoteTags("");
-    await refresh();
+    try {
+      const response = await fetch("/api/notes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          content: newNote.trim(),
+          tags: noteTags
+            .split(",")
+            .map((tag) => tag.trim())
+            .filter(Boolean),
+          projectId: noteProjectId || null
+        })
+      });
+      const result = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        setAppError(result.error ?? "The note could not be saved.");
+        return;
+      }
+      setNewNote("");
+      setNoteTags("");
+      setNoteProjectId("");
+      setAppError("");
+      await refresh();
+    } catch {
+      setAppError("The note could not be saved. Your draft is still here.");
+    }
   }
 
   async function addMaterial() {
     if (!materialUrl.trim()) return;
-    await fetch("/api/materials", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        title: materialTitle.trim(),
-        url: materialUrl.trim(),
-        notes: materialNotes.trim()
-      })
-    });
-    setMaterialTitle("");
-    setMaterialUrl("");
-    setMaterialNotes("");
-    await refresh();
+    try {
+      const response = await fetch("/api/materials", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: materialTitle.trim(),
+          url: materialUrl.trim(),
+          notes: materialNotes.trim(),
+          projectId: materialProjectId || null
+        })
+      });
+      const result = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        setAppError(result.error ?? "The reference could not be saved.");
+        return;
+      }
+      setMaterialTitle("");
+      setMaterialUrl("");
+      setMaterialNotes("");
+      setMaterialProjectId("");
+      setAppError("");
+      await refresh();
+    } catch {
+      setAppError(
+        "The reference could not be saved. Your draft is still here."
+      );
+    }
   }
 
   async function saveDiary(diary: Diary) {
@@ -702,6 +737,7 @@ export function Dashboard() {
         durationMinutes: minutes,
         category: activityCategory,
         taskId: activityTaskId || null,
+        projectId: activityProjectId || null,
         note: activityNote.trim()
       })
     });
@@ -712,6 +748,7 @@ export function Dashboard() {
     }
     setActivityNote("");
     setActivityTaskId("");
+    setActivityProjectId("");
     setActivityError("");
     setActivityOpen(false);
     await refresh();
@@ -729,6 +766,7 @@ export function Dashboard() {
   const isToday = screen === "today";
   const liveFocus = focus.active ?? focus.pendingCompletion;
   const showFullRail =
+    Boolean(focus.retryNext) ||
     (phoneLayout && railExpanded && Boolean(liveFocus)) ||
     (!compactLayout &&
       (isToday ||
@@ -935,15 +973,19 @@ export function Dashboard() {
             onSaveRecovered={reportDiarySaveRecovery}
             newNote={newNote}
             noteTags={noteTags}
+            noteProjectId={noteProjectId}
             onNewNoteChange={setNewNote}
             onNoteTagsChange={setNoteTags}
+            onNoteProjectChange={setNoteProjectId}
             onAddNote={addNote}
             materialTitle={materialTitle}
             materialUrl={materialUrl}
             materialNotes={materialNotes}
+            materialProjectId={materialProjectId}
             onMaterialTitleChange={setMaterialTitle}
             onMaterialUrlChange={setMaterialUrl}
             onMaterialNotesChange={setMaterialNotes}
+            onMaterialProjectChange={setMaterialProjectId}
             onAddMaterial={addMaterial}
           />
         )}
@@ -994,7 +1036,9 @@ export function Dashboard() {
           activities={data.activities}
           queuedTasks={queuedTasks}
           mode="full"
-          collapsible={phoneLayout || (!isToday && !wideFocusRail)}
+          collapsible={
+            !focus.retryNext && (phoneLayout || (!isToday && !wideFocusRail))
+          }
           onCollapse={() => setRailExpanded(false)}
           onOpenPalette={() => setPaletteOpen(true)}
           onQueueTask={(taskId, placement) => {
@@ -1058,16 +1102,24 @@ export function Dashboard() {
       {activityOpen && (
         <ActivityDialog
           tasks={todayTasks}
+          projects={data.projects}
           time={activityTime}
           duration={activityDuration}
           category={activityCategory}
           taskId={activityTaskId}
+          projectId={activityProjectId}
           note={activityNote}
           error={activityError}
           onTimeChange={setActivityTime}
           onDurationChange={setActivityDuration}
           onCategoryChange={setActivityCategory}
-          onTaskChange={setActivityTaskId}
+          onTaskChange={(value) => {
+            setActivityTaskId(value);
+            if (todayTasks.find((task) => task.id === value)?.projectId) {
+              setActivityProjectId("");
+            }
+          }}
+          onProjectChange={setActivityProjectId}
           onNoteChange={(value) => {
             setActivityNote(value);
             setActivityError("");
@@ -2666,15 +2718,19 @@ function JournalPage({
   onSaveRecovered,
   newNote,
   noteTags,
+  noteProjectId,
   onNewNoteChange,
   onNoteTagsChange,
+  onNoteProjectChange,
   onAddNote,
   materialTitle,
   materialUrl,
   materialNotes,
+  materialProjectId,
   onMaterialTitleChange,
   onMaterialUrlChange,
   onMaterialNotesChange,
+  onMaterialProjectChange,
   onAddMaterial
 }: {
   today: string;
@@ -2690,15 +2746,19 @@ function JournalPage({
   onSaveRecovered: () => void;
   newNote: string;
   noteTags: string;
+  noteProjectId: string;
   onNewNoteChange: (value: string) => void;
   onNoteTagsChange: (value: string) => void;
+  onNoteProjectChange: (value: string) => void;
   onAddNote: () => Promise<void>;
   materialTitle: string;
   materialUrl: string;
   materialNotes: string;
+  materialProjectId: string;
   onMaterialTitleChange: (value: string) => void;
   onMaterialUrlChange: (value: string) => void;
   onMaterialNotesChange: (value: string) => void;
+  onMaterialProjectChange: (value: string) => void;
   onAddMaterial: () => Promise<void>;
 }) {
   const diarySave = useSaveState<Diary>({
@@ -2807,6 +2867,21 @@ function JournalPage({
               onChange={(event) => onNoteTagsChange(event.target.value)}
               placeholder="Tags, comma separated"
             />
+            <label>
+              Project
+              <select
+                aria-label="Project"
+                value={noteProjectId}
+                onChange={(event) => onNoteProjectChange(event.target.value)}
+              >
+                <option value="">No Project</option>
+                {[...projects.values()].map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.name}
+                  </option>
+                ))}
+              </select>
+            </label>
             <button className="primary-button" onClick={() => void onAddNote()}>
               <Plus size={14} />
               Save note
@@ -2837,6 +2912,21 @@ function JournalPage({
               onChange={(event) => onMaterialNotesChange(event.target.value)}
               placeholder="Why this matters"
             />
+            <label>
+              Project
+              <select
+                aria-label="Project"
+                value={materialProjectId}
+                onChange={(event) => onMaterialProjectChange(event.target.value)}
+              >
+                <option value="">No Project</option>
+                {[...projects.values()].map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.name}
+                  </option>
+                ))}
+              </select>
+            </label>
             <button className="primary-button" onClick={() => void onAddMaterial()}>
               <LinkIcon size={14} />
               Save reference
@@ -2889,15 +2979,19 @@ function ReviewPage({
   }));
   const taskDone = stats.reduce((sum, stat) => sum + stat.completed, 0);
   const taskTotal = stats.reduce((sum, stat) => sum + stat.total, 0);
+  const todayEvidence =
+    stats.find((stat) => stat.day === today.slice(0, 10)) ?? null;
   const longestWhen = summary.longestStartedAt
     ? formatBlockMoment(summary.longestStartedAt)
     : "No completed focus block yet";
-  const moved = projects.filter((project) => project.lastProgressAt).slice(0, 4);
+  const moved = projects
+    .filter((project) => project.movedDuringReviewPeriod)
+    .slice(0, 4);
   const recordedDays = chartData.filter((stat) => stat.actualHours > 0);
   const isFirstWeek = recordedDays.length === 1 && summary.focusedMinutes > 0;
   const sessionNote = [
-    summary.pendingRecordSessions
-      ? `${summary.pendingRecordSessions} awaiting optional details`
+    summary.pendingEnrichmentSessions
+      ? `${summary.pendingEnrichmentSessions} awaiting optional details`
       : null,
     summary.cancelledSessions
       ? `${summary.cancelledSessions} cancelled`
@@ -2912,16 +3006,33 @@ function ReviewPage({
         title="Review"
         actions={
           <span className="review-focus-pill">
-            {formatMinutes(summary.focusedMinutes)} focused this week
+            {formatMinutes(summary.focusedMinutes)} focused this review period
           </span>
         }
       />
-      {summary.pendingRecordSessions > 0 && (
+      <section
+        className="review-diary-evidence"
+        aria-label="Today’s diary evidence"
+      >
+        <span>
+          Mood ·{" "}
+          {todayEvidence?.mood === null || todayEvidence?.mood === undefined
+            ? "Not recorded"
+            : `${todayEvidence.mood}/5`}
+        </span>
+        <span>
+          Energy ·{" "}
+          {todayEvidence?.energy === null || todayEvidence?.energy === undefined
+            ? "Not recorded"
+            : `${todayEvidence.energy}/5`}
+        </span>
+      </section>
+      {summary.pendingEnrichmentSessions > 0 && (
         <p className="review-pending-note" role="status">
           <Check size={14} />
           <span>
-            <strong>{formatMinutes(summary.pendingRecordMinutes)} is already counted.</strong>{" "}
-            {summary.pendingRecordSessions === 1 ? "This session" : "These sessions"} can
+            <strong>{formatMinutes(summary.pendingEnrichmentMinutes)} is already counted.</strong>{" "}
+            {summary.pendingEnrichmentSessions === 1 ? "This session" : "These sessions"} can
             receive optional notes and categories later.
           </span>
         </p>
@@ -2946,7 +3057,7 @@ function ReviewPage({
             />
           </div>
           <section className="panel review-charts-panel review-first-week-chart">
-            <span>Planned vs focused</span>
+            <span>Planned vs recorded</span>
             <div className="review-first-week-plot">
               <ResponsiveContainer width="100%" height={250}>
                 <BarChart data={chartData}>
@@ -2964,7 +3075,7 @@ function ReviewPage({
               </p>
             </div>
             <small>
-              {recordedDays[0]?.label ?? "One day"} only · the other days have no sessions
+              {recordedDays[0]?.label ?? "One day"} only · the other days have no recorded time
             </small>
           </section>
         </>
@@ -2993,10 +3104,10 @@ function ReviewPage({
             />
           </div>
           <section className="panel review-charts-panel">
-            <h2>Where the focus went</h2>
+            <h2>Recorded time</h2>
             <div className="review-charts">
               <div>
-                <span>Focused hours per day</span>
+                <span>Recorded hours per day</span>
                 <ResponsiveContainer width="100%" height={190}>
                   <BarChart data={chartData}>
                     <CartesianGrid stroke="#eee8de" vertical={false} />
@@ -3008,7 +3119,7 @@ function ReviewPage({
                 </ResponsiveContainer>
               </div>
               <div>
-                <span>Planned vs focused</span>
+                <span>Planned vs recorded</span>
                 <ResponsiveContainer width="100%" height={190}>
                   <BarChart data={chartData}>
                     <CartesianGrid stroke="#eee8de" vertical={false} />
@@ -3035,11 +3146,14 @@ function ReviewPage({
               </div>
               <small>
                 {project.completedTaskCount}/{project.taskCount} tasks ·{" "}
-                {formatInvestedMinutes(project.investedMinutes)} invested this week
+                {formatInvestedMinutes(project.reviewPeriodInvestedMinutes)} invested
+                this review period
               </small>
             </button>
           ))}
-          {!moved.length && <p>No project movement recorded yet this week.</p>}
+          {!moved.length && (
+            <p>No project movement recorded this review period.</p>
+          )}
         </section>
         <section className="panel reflection-card">
           <div className="reflection-heading">
@@ -3152,35 +3266,43 @@ function CommandPalette({
 
 function ActivityDialog({
   tasks,
+  projects,
   time,
   duration,
   category,
   taskId,
+  projectId,
   note,
   error,
   onTimeChange,
   onDurationChange,
   onCategoryChange,
   onTaskChange,
+  onProjectChange,
   onNoteChange,
   onClose,
   onSave
 }: {
   tasks: Task[];
+  projects: ProjectSummary[];
   time: string;
   duration: string;
   category: string;
   taskId: string;
+  projectId: string;
   note: string;
   error: string;
   onTimeChange: (value: string) => void;
   onDurationChange: (value: string) => void;
   onCategoryChange: (value: string) => void;
   onTaskChange: (value: string) => void;
+  onProjectChange: (value: string) => void;
   onNoteChange: (value: string) => void;
   onClose: () => void;
   onSave: () => Promise<void>;
 }) {
+  const linkedTaskProjectId =
+    tasks.find((task) => task.id === taskId)?.projectId ?? null;
   return (
     <div className="palette-overlay" role="presentation" onMouseDown={onClose}>
       <section
@@ -3230,6 +3352,23 @@ function ActivityDialog({
               <option value="">No linked task</option>
               {tasks.map((task) => <option key={task.id} value={task.id}>{task.title}</option>)}
             </select>
+          </label>
+          <label>
+            Project
+            <select
+              aria-label="Project"
+              value={linkedTaskProjectId ?? projectId}
+              disabled={Boolean(linkedTaskProjectId)}
+              onChange={(event) => onProjectChange(event.target.value)}
+            >
+              <option value="">No Project</option>
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
+            </select>
+            {linkedTaskProjectId && <small>Inherited from linked task</small>}
           </label>
         </div>
         {error && <p className="form-error">{error}</p>}

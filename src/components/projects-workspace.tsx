@@ -711,8 +711,8 @@ function ProjectDetailWorkspace({
             <strong>{formatInvestedMinutes(detail.investedMinutes)}</strong>
             <small>
               {detail.weeklyMinutesBudget
-                ? `of ${formatInvestedMinutes(detail.weeklyMinutesBudget)} this week`
-                : "No weekly budget"}
+                ? `${formatInvestedMinutes(detail.reviewPeriodInvestedMinutes)} this review period · ${formatInvestedMinutes(detail.weeklyMinutesBudget)} weekly budget`
+                : `${formatInvestedMinutes(detail.reviewPeriodInvestedMinutes)} this review period`}
             </small>
           </div>
           <div className="project-metric">

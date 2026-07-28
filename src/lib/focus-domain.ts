@@ -12,8 +12,8 @@ export type FocusSessionRecord = {
   accumulatedPauseSeconds: number;
   status: FocusSessionStatus;
   completedAt: string | null;
-  needsRecord: boolean;
-  recordedAt: string | null;
+  needsEnrichment: boolean;
+  enrichedAt: string | null;
   completionNote: string | null;
   completionCategory: string | null;
   taskId: string | null;

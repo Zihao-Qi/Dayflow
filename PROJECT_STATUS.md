@@ -1,6 +1,6 @@
 # Dayflow Project Status and Plan
 
-Last updated: July 26, 2026
+Last updated: July 27, 2026
 
 ## Project Goal
 
@@ -25,6 +25,15 @@ The approved specification for finishable Projects, optional Phases, Project
 backlogs, progress tracking, and confirmation-based unfinished-task handling is:
 
 - `docs/specs/PROJECTS_V1.md`
+
+The July 27 independent review produced two corrective specifications:
+
+- `docs/specs/EVIDENCE_INTEGRITY_V1.md` — implemented July 27
+- `docs/specs/LOCAL_DATA_RELIABILITY_V1.md`
+
+The canonical workspace navigation decision is:
+
+- `docs/adr/0001-six-destination-workspace.md`
 
 The shipped interface now uses six clear destinations: Today, Log, Projects,
 Backlog, Journal, and Review. Frequent actions remain immediately available,
@@ -73,9 +82,13 @@ Funemployment Day has a narrower and immediately understandable promise around r
 - Allows a session to link to a Task, a Project, or neither; Project context is inherited from a linked Task.
 - Keeps one running or paused session across page reloads.
 - Supports pause, resume, finish early, and cancel.
-- Converts completed Focus Sessions with at least one elapsed minute into Deep Work Activity evidence.
+- Atomically converts completed Focus Sessions with at least one elapsed minute
+  into exactly one Activity, with optional details enriching that evidence.
+- Enforces one running or paused session at the database boundary, including
+  concurrent tabs.
 - Keeps Break Sessions separate from Activity time and suggests an appropriate break after focus.
-- Shows today’s completed Focus Sessions and focused minutes.
+- Derives focused minutes from Focus-origin Activities while retaining Focus
+  Sessions as timer lifecycle records.
 - Can show a browser completion notification after the user explicitly enables permission.
 - Keeps timer logic behind a reusable domain interface for a future macOS companion.
 
@@ -99,10 +112,13 @@ Funemployment Day has a narrower and immediately understandable promise around r
 - Supports optional Phases while allowing tasks to live directly at the Project root.
 - Lets Project and standalone tasks remain unscheduled in a backlog.
 - Uses completed-task count for current-plan progress and recorded Activity time for invested effort.
+- Separates all-time Invested Time from Review-Period Invested Time and compares
+  weekly budgets only with the latter.
 - Requires explicit Project completion and derives Phase completion from current tasks.
 - Supports Active, Paused, Completed, and Archived Project states.
 - Preserves associated tasks, activities, notes, and materials when a Project container is deleted.
 - Lets activities, notes, and materials link directly to Projects.
+- Rejects direct Project attribution that conflicts with a linked Task.
 - Shows Project context quietly on Today tasks and Project progress in Review.
 - Surfaces unfinished scheduled tasks without silently changing their dates.
 - Supports moving unfinished tasks to today, choosing another day, returning them to a backlog, leaving them in place, and undoing a schedule move.
@@ -129,7 +145,7 @@ Funemployment Day has a narrower and immediately understandable promise around r
 - Uses activity durations as the source for Daily Pulse spent time and weekly actual-time charts.
 - Supports deleting activity entries.
 - Includes activities in the local agent export.
-- Uses task-level actual minutes only as a compatibility fallback on days without activity entries.
+- Reconciles legacy task-level actual minutes into Activity entries during migration.
 
 ### Urgency and Importance Matrix
 
@@ -231,7 +247,9 @@ prisma/dev.db
 Schema and seed files:
 
 - `prisma/schema.prisma`
-- `prisma/init.sql`
+- `prisma/migrations/`
+- `prisma/legacy-upgrades/`
+- `prisma/init.sql` (legacy-schema compatibility fixture)
 - `prisma/seed.ts`
 
 Useful commands:
@@ -239,11 +257,17 @@ Useful commands:
 ```bash
 npm run db:setup
 npm run dev
+npm run test:unit
+npm run test:migrations
 npm run typecheck
 npm run build
 ```
 
-Note: the project currently uses `prisma/init.sql` plus `npm run db:setup` for local database setup. `prisma db push` previously had local schema-engine issues in this environment.
+`npm run db:setup` applies the checked-in Prisma migrations, runs repeatable
+evidence reconciliation, and seeds a new, empty local database. Existing
+databases are classified and safely baselined before newer migrations are
+applied; the seed step detects existing data and skips itself. The explicitly
+destructive demo reset is `npm run db:reset-demo`.
 
 ## Verification Completed
 
@@ -251,6 +275,8 @@ The following checks have passed:
 
 ```bash
 npm run test:e2e
+npm run test:unit
+npm run test:migrations
 npm run typecheck
 npm run build
 ```
@@ -350,7 +376,6 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
 - Add CSV export for activity and task history alongside the existing JSON agent export.
 - Add a printable or shareable weekly summary.
 - Add a backup command or UI action.
-- Consider using Prisma migrations once the local schema-engine issue is resolved.
 
 ### 7. Improve the App-Like Experience
 

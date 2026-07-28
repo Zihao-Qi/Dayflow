@@ -3,6 +3,10 @@
 Status: Implemented  
 Last updated: July 23, 2026
 
+> **Evidence contract:** [Evidence Integrity v1](./EVIDENCE_INTEGRITY_V1.md)
+> is authoritative for Activity creation, idempotency, attribution, aggregation,
+> and completion-enrichment behavior.
+
 ## Purpose
 
 Dayflow’s Focus Timer turns planned work into honest evidence of time spent

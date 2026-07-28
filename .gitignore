@@ -5,6 +5,7 @@ node_modules
 .env.local
 dev.db
 prisma/dev.db
+prisma/backups/
 *.log
 *.tsbuildinfo
 playwright-report

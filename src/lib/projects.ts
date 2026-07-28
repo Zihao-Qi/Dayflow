@@ -1,6 +1,7 @@
 import { ProjectDurationUnit, ProjectStatus, TaskStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { calculateProjectMetrics } from "@/lib/project-domain";
+import { reviewPeriodRange } from "@/lib/dates";
 
 const projectRead = {
   phases: {
@@ -28,7 +29,7 @@ const projectRead = {
       }
     }
   },
-  activities: {
+  attributedActivities: {
     orderBy: { startedAt: "desc" as const }
   },
   notes: {
@@ -40,6 +41,7 @@ const projectRead = {
 };
 
 export async function listProjectSummaries() {
+  const reviewPeriod = reviewPeriodRange();
   const projects = await prisma.project.findMany({
     orderBy: [{ status: "asc" }, { updatedAt: "desc" }],
     include: {
@@ -54,16 +56,17 @@ export async function listProjectSummaries() {
           }
         }
       },
-      activities: {
+      attributedActivities: {
         select: { id: true, durationMinutes: true, startedAt: true }
       }
     }
   });
 
-  return projects.map((project) => summarizeProject(project));
+  return projects.map((project) => summarizeProject(project, reviewPeriod));
 }
 
 export async function getProjectDetail(id: string) {
+  const reviewPeriod = reviewPeriodRange();
   const project = await prisma.project.findUnique({
     where: { id },
     include: projectRead
@@ -71,11 +74,8 @@ export async function getProjectDetail(id: string) {
 
   if (!project) return null;
 
-  const summary = summarizeProject(project);
-  const activities = uniqueById([
-    ...project.activities,
-    ...project.tasks.flatMap((task) => task.activities)
-  ]).sort(
+  const summary = summarizeProject(project, reviewPeriod);
+  const activities = [...project.attributedActivities].sort(
     (a, b) => b.startedAt.getTime() - a.startedAt.getTime()
   );
   const notes = uniqueById([
@@ -147,8 +147,10 @@ export async function deleteProjectSafely(id: string) {
       data: { projectId: null, phaseId: null }
     });
     await transaction.activityEntry.updateMany({
-      where: { projectId: id },
-      data: { projectId: null }
+      where: {
+        OR: [{ projectId: id }, { attributedProjectId: id }]
+      },
+      data: { projectId: null, attributedProjectId: null }
     });
     await transaction.note.updateMany({
       where: { projectId: id },
@@ -192,19 +194,38 @@ type SummaryInput = {
     completedAt: Date | null;
     activities: Array<{ id: string; durationMinutes: number; startedAt: Date }>;
   }>;
-  activities: Array<{ id: string; durationMinutes: number; startedAt: Date }>;
+  attributedActivities: Array<{
+    id: string;
+    durationMinutes: number;
+    startedAt: Date;
+  }>;
 };
 
-function summarizeProject(project: SummaryInput) {
+function summarizeProject(
+  project: SummaryInput,
+  reviewPeriod: { start: Date; end: Date }
+) {
   const metrics = calculateProjectMetrics(project.tasks);
-  const activities = uniqueById([
-    ...project.activities,
-    ...project.tasks.flatMap((task) => task.activities)
-  ]);
+  const activities = project.attributedActivities;
   const investedMinutes = activities.reduce(
     (sum, activity) => sum + activity.durationMinutes,
     0
   );
+  const reviewPeriodInvestedMinutes = activities
+    .filter(
+      (activity) =>
+        activity.startedAt >= reviewPeriod.start &&
+        activity.startedAt < reviewPeriod.end
+    )
+    .reduce((sum, activity) => sum + activity.durationMinutes, 0);
+  const movedDuringReviewPeriod =
+    reviewPeriodInvestedMinutes > 0 ||
+    project.tasks.some(
+      (task) =>
+        task.completedAt &&
+        task.completedAt >= reviewPeriod.start &&
+        task.completedAt < reviewPeriod.end
+    );
   const nextTask =
     project.tasks
       .filter((task) => task.status !== "DONE")
@@ -237,6 +258,8 @@ function summarizeProject(project: SummaryInput) {
     phaseCount: project.phases.length,
     backlogCount: project.tasks.filter((task) => !task.date && task.status !== "DONE").length,
     investedMinutes,
+    reviewPeriodInvestedMinutes,
+    movedDuringReviewPeriod,
     nextTaskId: nextTask?.id ?? null,
     nextTaskTitle: nextTask?.title ?? null,
     nextTaskEstimateMinutes: nextTask?.estimateMinutes ?? null,

@@ -1,4 +1,8 @@
-import { FocusSessionKind, FocusSessionStatus } from "@prisma/client";
+import {
+  FocusSessionKind,
+  FocusSessionStatus,
+  Prisma
+} from "@prisma/client";
 import { sameDayRange } from "@/lib/dates";
 import { suggestedBreakMinutes } from "@/lib/focus-domain";
 import { consumeFocusQueueTask } from "@/lib/focus-queue";
@@ -16,12 +20,15 @@ const focusSessionInclude = {
   },
   project: {
     select: { id: true, name: true }
+  },
+  activity: {
+    select: { id: true }
   }
 };
 
 export async function getFocusSnapshot() {
   const { start, end } = sameDayRange();
-  const [active, pendingCompletion, completed] = await Promise.all([
+  const [active, pendingCompletion, completed, focused] = await Promise.all([
     prisma.focusSession.findFirst({
       where: { status: { in: ["RUNNING", "PAUSED"] } },
       orderBy: { startedAt: "desc" },
@@ -31,7 +38,7 @@ export async function getFocusSnapshot() {
       where: {
         kind: "FOCUS",
         status: "COMPLETED",
-        needsRecord: true
+        needsEnrichment: true
       },
       orderBy: { completedAt: "desc" },
       include: focusSessionInclude
@@ -43,6 +50,13 @@ export async function getFocusSnapshot() {
         completedAt: { gte: start, lt: end }
       },
       select: { actualMinutes: true }
+    }),
+    prisma.activityEntry.aggregate({
+      where: {
+        origin: "FOCUS",
+        startedAt: { gte: start, lt: end }
+      },
+      _sum: { durationMinutes: true }
     })
   ]);
 
@@ -51,7 +65,7 @@ export async function getFocusSnapshot() {
     pendingCompletion,
     today: {
       completedSessions: completed.length,
-      focusedMinutes: completed.reduce((sum, session) => sum + session.actualMinutes, 0)
+      focusedMinutes: focused._sum.durationMinutes ?? 0
     }
   };
 }
@@ -64,8 +78,12 @@ export async function startFocusSession(input: {
   projectId?: string | null;
 }) {
   const kind = parseKind(input.kind);
-  const plannedMinutes = Math.round(Number(input.plannedMinutes));
-  if (!Number.isFinite(plannedMinutes) || plannedMinutes < 1 || plannedMinutes > 240) {
+  const plannedMinutes = Number(input.plannedMinutes);
+  if (
+    !Number.isInteger(plannedMinutes) ||
+    plannedMinutes < 1 ||
+    plannedMinutes > 240
+  ) {
     throw new FocusSessionError("Timer duration must be between 1 and 240 minutes.");
   }
 
@@ -76,14 +94,17 @@ export async function startFocusSession(input: {
   if (active) throw new FocusSessionConflictError("Finish or cancel the active timer first.");
 
   if (kind === "BREAK") {
-    return prisma.focusSession.create({
-      data: {
-        kind,
-        plannedMinutes,
-        label: "Break"
-      },
-      include: focusSessionInclude
-    });
+    return createWithActiveSessionGuard(() =>
+      prisma.focusSession.create({
+        data: {
+          activeKey: 1,
+          kind,
+          plannedMinutes,
+          label: "Break"
+        },
+        include: focusSessionInclude
+      })
+    );
   }
 
   const taskId = String(input.taskId ?? "").trim() || null;
@@ -127,20 +148,23 @@ export async function startFocusSession(input: {
       : "") ||
     "Focus session";
 
-  return prisma.$transaction(async (transaction) => {
-    const session = await transaction.focusSession.create({
-      data: {
-        kind,
-        plannedMinutes,
-        label,
-        taskId,
-        projectId
-      },
-      include: focusSessionInclude
-    });
-    if (taskId) await consumeFocusQueueTask(transaction, taskId);
-    return session;
-  });
+  return createWithActiveSessionGuard(() =>
+    prisma.$transaction(async (transaction) => {
+      const session = await transaction.focusSession.create({
+        data: {
+          activeKey: 1,
+          kind,
+          plannedMinutes,
+          label,
+          taskId,
+          projectId
+        },
+        include: focusSessionInclude
+      });
+      if (taskId) await consumeFocusQueueTask(transaction, taskId);
+      return session;
+    })
+  );
 }
 
 export async function transitionFocusSession(
@@ -163,10 +187,11 @@ export async function transitionFocusSession(
     if (session.status !== "RUNNING") {
       throw new FocusSessionError("Only a running timer can be paused.");
     }
-    await prisma.focusSession.update({
-      where: { id },
+    const paused = await prisma.focusSession.updateMany({
+      where: { id, status: "RUNNING", activeKey: 1 },
       data: { status: "PAUSED", pausedAt: now }
     });
+    if (paused.count !== 1) throw terminalTransitionConflict();
     return { completed: false, suggestedBreakMinutes: null };
   }
 
@@ -178,14 +203,15 @@ export async function transitionFocusSession(
       0,
       Math.floor((now.getTime() - session.pausedAt.getTime()) / 1000)
     );
-    await prisma.focusSession.update({
-      where: { id },
+    const resumed = await prisma.focusSession.updateMany({
+      where: { id, status: "PAUSED", activeKey: 1 },
       data: {
         status: "RUNNING",
         pausedAt: null,
         accumulatedPauseSeconds: session.accumulatedPauseSeconds + pausedSeconds
       }
     });
+    if (resumed.count !== 1) throw terminalTransitionConflict();
     return { completed: false, suggestedBreakMinutes: null };
   }
 
@@ -193,42 +219,60 @@ export async function transitionFocusSession(
     if (!isActive(session.status)) {
       throw new FocusSessionError("This timer is no longer active.");
     }
-    await prisma.focusSession.update({
-      where: { id },
-      data: { status: "CANCELED", completedAt: now, pausedAt: null }
+    const canceled = await prisma.focusSession.updateMany({
+      where: {
+        id,
+        status: session.status,
+        activeKey: 1
+      },
+      data: {
+        activeKey: null,
+        status: "CANCELED",
+        completedAt: now,
+        pausedAt: null
+      }
     });
+    if (canceled.count !== 1) throw terminalTransitionConflict();
     return { completed: false, suggestedBreakMinutes: null };
   }
 
-  if (action === "record") {
-    if (
-      session.kind !== "FOCUS" ||
-      session.status !== "COMPLETED" ||
-      !session.needsRecord
-    ) {
-      throw new FocusSessionError("This focus block no longer needs a completion record.");
+  if (action === "enrich" || action === "record") {
+    if (session.kind !== "FOCUS" || session.status !== "COMPLETED") {
+      throw new FocusSessionError("Only a completed focus block can be enriched.");
     }
     const note = String(input.note ?? "").trim();
     const category = String(input.category ?? "").trim() || "Deep Work";
     const activityNote =
       note || session.task?.title || session.label || "Focus session";
 
-    await prisma.$transaction(async (transaction) => {
+    const activity = await prisma.$transaction(async (transaction) => {
+      let persistedActivity = null;
       if (session.actualMinutes >= 1) {
-        await transaction.activityEntry.create({
-          data: {
+        persistedActivity = await transaction.activityEntry.upsert({
+          where: { focusSessionId: session.id },
+          create: {
             startedAt: session.startedAt,
             durationMinutes: session.actualMinutes,
             category,
             note: activityNote,
+            origin: "FOCUS",
             taskId: session.taskId,
-            projectId: session.task?.projectId ? null : session.projectId
+            projectId: session.task?.projectId ? null : session.projectId,
+            attributedProjectId: session.task?.projectId ?? session.projectId,
+            focusSessionId: session.id
+          },
+          update: {
+            category,
+            note: activityNote
           }
         });
       }
       if (input.taskCompleted === true && session.taskId) {
-        await transaction.task.update({
-          where: { id: session.taskId },
+        await transaction.task.updateMany({
+          where: {
+            id: session.taskId,
+            status: { not: "DONE" }
+          },
           data: {
             status: "DONE",
             completedAt: now
@@ -236,26 +280,39 @@ export async function transitionFocusSession(
         });
         await consumeFocusQueueTask(transaction, session.taskId);
       }
+      await transaction.focusSession.updateMany({
+        where: { id, enrichedAt: null },
+        data: { enrichedAt: now }
+      });
       await transaction.focusSession.update({
         where: { id },
         data: {
-          needsRecord: false,
-          recordedAt: now,
+          needsEnrichment: false,
           completionNote: note || null,
           completionCategory: category
         }
       });
+      return persistedActivity;
     });
 
     return {
       completed: true,
-      recorded: true,
+      enriched: true,
+      activity,
       suggestedBreakMinutes: suggestedBreakMinutes(session.plannedMinutes),
       completedSession: null
     };
   }
 
   if (action === "complete") {
+    if (session.status === "COMPLETED") {
+      return {
+        completed: true,
+        suggestedBreakMinutes:
+          session.kind === "FOCUS" ? suggestedBreakMinutes(session.plannedMinutes) : null,
+        completedSession: session.kind === "FOCUS" ? session : null
+      };
+    }
     if (!isActive(session.status)) {
       throw new FocusSessionError("This timer is no longer active.");
     }
@@ -271,16 +328,51 @@ export async function transitionFocusSession(
       Math.floor(elapsedSeconds / 60)
     );
 
-    const completedSession = await prisma.focusSession.update({
-      where: { id },
-      data: {
-        status: "COMPLETED",
-        completedAt: now,
-        pausedAt: null,
-        actualMinutes,
-        needsRecord: session.kind === "FOCUS"
-      },
-      include: focusSessionInclude
+    const completedSession = await prisma.$transaction(async (transaction) => {
+      const claimed = await transaction.focusSession.updateMany({
+        where: {
+          id,
+          status: session.status,
+          activeKey: 1
+        },
+        data: {
+          activeKey: null,
+          status: "COMPLETED",
+          completedAt: now,
+          pausedAt: null,
+          actualMinutes,
+          needsEnrichment: session.kind === "FOCUS"
+        }
+      });
+      if (claimed.count !== 1) {
+        const persisted = await transaction.focusSession.findUnique({
+          where: { id },
+          include: focusSessionInclude
+        });
+        if (persisted?.status === "COMPLETED") return persisted;
+        throw terminalTransitionConflict();
+      }
+      if (session.kind === "FOCUS" && actualMinutes >= 1) {
+        await transaction.activityEntry.upsert({
+          where: { focusSessionId: session.id },
+          create: {
+            startedAt: session.startedAt,
+            durationMinutes: actualMinutes,
+            category: "Deep Work",
+            note: session.task?.title || session.label || "Focus session",
+            origin: "FOCUS",
+            taskId: session.taskId,
+            projectId: session.task?.projectId ? null : session.projectId,
+            attributedProjectId: session.task?.projectId ?? session.projectId,
+            focusSessionId: session.id
+          },
+          update: {}
+        });
+      }
+      return transaction.focusSession.findUniqueOrThrow({
+        where: { id },
+        include: focusSessionInclude
+      });
     });
 
     return {
@@ -298,9 +390,35 @@ export class FocusSessionError extends Error {}
 export class FocusSessionConflictError extends FocusSessionError {}
 
 function parseKind(value: unknown): FocusSessionKind {
-  return String(value ?? "FOCUS").toUpperCase() === "BREAK" ? "BREAK" : "FOCUS";
+  const kind = String(value ?? "FOCUS").trim().toUpperCase();
+  if (kind === "FOCUS" || kind === "BREAK") return kind;
+  throw new FocusSessionError("Timer kind must be FOCUS or BREAK.");
 }
 
 function isActive(status: FocusSessionStatus) {
   return status === "RUNNING" || status === "PAUSED";
+}
+
+function terminalTransitionConflict() {
+  return new FocusSessionConflictError(
+    "This timer was updated in another tab. Refresh and try again."
+  );
+}
+
+async function createWithActiveSessionGuard<T>(
+  create: () => Promise<T>
+): Promise<T> {
+  try {
+    return await create();
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      throw new FocusSessionConflictError(
+        "Finish or cancel the active timer first."
+      );
+    }
+    throw error;
+  }
 }

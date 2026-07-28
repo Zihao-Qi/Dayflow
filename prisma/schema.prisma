@@ -43,23 +43,29 @@ enum FocusSessionKind {
   BREAK
 }
 
+enum ActivityOrigin {
+  MANUAL
+  FOCUS
+}
+
 model Project {
-  id                  String          @id @default(cuid())
-  name                String
-  desiredOutcome      String          @default("")
-  targetDate          DateTime?
-  targetDurationValue Int?
-  targetDurationUnit  ProjectDurationUnit?
-  weeklyMinutesBudget Int?
-  status              ProjectStatus   @default(ACTIVE)
-  createdAt           DateTime        @default(now())
-  updatedAt           DateTime        @updatedAt
-  phases              ProjectPhase[]
-  tasks               Task[]
-  notes               Note[]
-  materials           Material[]
-  activities          ActivityEntry[]
-  focusSessions       FocusSession[]
+  id                   String               @id @default(cuid())
+  name                 String
+  desiredOutcome       String               @default("")
+  targetDate           DateTime?
+  targetDurationValue  Int?
+  targetDurationUnit   ProjectDurationUnit?
+  weeklyMinutesBudget  Int?
+  status               ProjectStatus        @default(ACTIVE)
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+  phases               ProjectPhase[]
+  tasks                Task[]
+  notes                Note[]
+  materials            Material[]
+  activities           ActivityEntry[]      @relation("ActivityDirectProject")
+  attributedActivities ActivityEntry[]      @relation("ActivityAttribution")
+  focusSessions        FocusSession[]
 
   @@index([status])
 }
@@ -78,31 +84,31 @@ model ProjectPhase {
 }
 
 model Task {
-  id              String          @id @default(cuid())
-  title           String
-  date            DateTime?
-  status          TaskStatus      @default(TODO)
-  priority        Priority        @default(MEDIUM)
-  urgentScore     Int             @default(2)
-  importanceScore Int             @default(3)
-  deadline        DateTime?
-  estimateMinutes Int             @default(30)
-  actualMinutes   Int             @default(0)
-  sortOrder       Int             @default(0)
+  id                 String               @id @default(cuid())
+  title              String
+  date               DateTime?
+  status             TaskStatus           @default(TODO)
+  priority           Priority             @default(MEDIUM)
+  urgentScore        Int                  @default(2)
+  importanceScore    Int                  @default(3)
+  deadline           DateTime?
+  estimateMinutes    Int                  @default(30)
+  actualMinutes      Int                  @default(0)
+  sortOrder          Int                  @default(0)
   focusQueuePosition Int?
-  completedAt     DateTime?
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
-  projectId       String?
-  phaseId         String?
-  project         Project?        @relation(fields: [projectId], references: [id], onDelete: SetNull)
-  phase           ProjectPhase?   @relation(fields: [phaseId], references: [id], onDelete: SetNull)
-  notes           Note[]
-  materials       Material[]
-  timeBlocks      TimeBlock[]
-  activities      ActivityEntry[]
-  focusSessions   FocusSession[]
-  scheduleChanges TaskScheduleChange[]
+  completedAt        DateTime?
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  projectId          String?
+  phaseId            String?
+  project            Project?             @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  phase              ProjectPhase?        @relation(fields: [phaseId], references: [id], onDelete: SetNull)
+  notes              Note[]
+  materials          Material[]
+  timeBlocks         TimeBlock[]
+  activities         ActivityEntry[]
+  focusSessions      FocusSession[]
+  scheduleChanges    TaskScheduleChange[]
 
   @@index([date])
   @@index([focusQueuePosition])
@@ -168,25 +174,32 @@ model TimeBlock {
 }
 
 model ActivityEntry {
-  id              String   @id @default(cuid())
-  startedAt       DateTime
-  durationMinutes Int
-  category        String
-  note            String
-  taskId          String?
-  projectId       String?
-  task            Task?    @relation(fields: [taskId], references: [id], onDelete: SetNull)
-  project         Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id                  String         @id @default(cuid())
+  startedAt           DateTime
+  durationMinutes     Int
+  category            String
+  note                String
+  origin              ActivityOrigin @default(MANUAL)
+  taskId              String?
+  projectId           String?
+  attributedProjectId String?
+  focusSessionId      String?        @unique
+  task                Task?          @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  project             Project?       @relation("ActivityDirectProject", fields: [projectId], references: [id], onDelete: SetNull)
+  attributedProject   Project?       @relation("ActivityAttribution", fields: [attributedProjectId], references: [id], onDelete: SetNull)
+  focusSession        FocusSession?  @relation(fields: [focusSessionId], references: [id], onDelete: SetNull)
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
 
   @@index([startedAt])
   @@index([taskId])
   @@index([projectId])
+  @@index([attributedProjectId])
 }
 
 model FocusSession {
   id                      String             @id @default(cuid())
+  activeKey               Int?               @unique
   kind                    FocusSessionKind   @default(FOCUS)
   plannedMinutes          Int
   actualMinutes           Int                @default(0)
@@ -196,14 +209,15 @@ model FocusSession {
   accumulatedPauseSeconds Int                @default(0)
   status                  FocusSessionStatus @default(RUNNING)
   completedAt             DateTime?
-  needsRecord             Boolean            @default(false)
-  recordedAt              DateTime?
+  needsEnrichment         Boolean            @default(false) @map("needsRecord")
+  enrichedAt              DateTime?          @map("recordedAt")
   completionNote          String?
   completionCategory      String?
   taskId                  String?
   projectId               String?
   task                    Task?              @relation(fields: [taskId], references: [id], onDelete: SetNull)
   project                 Project?           @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  activity                ActivityEntry?
   createdAt               DateTime           @default(now())
   updatedAt               DateTime           @updatedAt
 
@@ -214,13 +228,13 @@ model FocusSession {
 }
 
 model TaskScheduleChange {
-  id           String   @id @default(cuid())
+  id           String    @id @default(cuid())
   taskId       String
   previousDate DateTime?
   nextDate     DateTime?
-  source       String   @default("manual")
-  createdAt    DateTime @default(now())
-  task         Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  source       String    @default("manual")
+  createdAt    DateTime  @default(now())
+  task         Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
 
   @@index([taskId, createdAt])
 }

@@ -34,16 +34,18 @@ type FocusSessionContextValue = {
   busy: boolean;
   error: string;
   suggestedBreak: number | null;
+  retryNext: FocusStartInput | null;
   notificationState: NotificationPermission | "unsupported";
   activityRevision: number;
   start: (input: FocusStartInput) => Promise<boolean>;
   transition: (action: FocusTransition) => Promise<boolean>;
-  recordCompletion: (input: {
+  enrichCompletion: (input: {
     note: string;
     category: string;
     taskCompleted: boolean;
     next: FocusStartInput | null;
   }) => Promise<boolean>;
+  retryNextStart: () => Promise<boolean>;
   dismissBreakSuggestion: () => void;
   requestNotificationPermission: () => Promise<void>;
 };
@@ -57,6 +59,7 @@ type TransitionResult = {
 };
 
 const FocusSessionContext = createContext<FocusSessionContextValue | null>(null);
+const retryNextStorageKey = "dayflow-focus-retry-next";
 
 export function FocusSessionProvider({ children }: { children: React.ReactNode }) {
   const [snapshot, setSnapshot] = useState<FocusSnapshot | null>(null);
@@ -64,6 +67,7 @@ export function FocusSessionProvider({ children }: { children: React.ReactNode }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [suggestedBreak, setSuggestedBreak] = useState<number | null>(null);
+  const [retryNext, setRetryNext] = useState<FocusStartInput | null>(null);
   const [notificationState, setNotificationState] = useState<
     NotificationPermission | "unsupported"
   >("unsupported");
@@ -71,15 +75,29 @@ export function FocusSessionProvider({ children }: { children: React.ReactNode }
   const autoFinishingId = useRef<string | null>(null);
   const active = snapshot?.active ?? null;
   const pendingCompletion = snapshot?.pendingCompletion ?? null;
+  const rememberRetryNext = useCallback((next: FocusStartInput | null) => {
+    setRetryNext(next);
+    if (next) {
+      window.sessionStorage.setItem(retryNextStorageKey, JSON.stringify(next));
+    } else {
+      window.sessionStorage.removeItem(retryNextStorageKey);
+    }
+  }, []);
 
   useEffect(() => {
     let live = true;
+    setRetryNext(readStoredRetryNext());
     if ("Notification" in window) setNotificationState(Notification.permission);
     void fetch("/api/focus-session", { cache: "no-store" })
       .then(async (response) => {
         if (!response.ok) throw new Error("Focus timer could not be loaded.");
         const result = (await response.json()) as FocusSnapshot;
-        if (live) setSnapshot(result);
+        if (live) {
+          setSnapshot(result);
+          if (result.active || result.pendingCompletion) {
+            rememberRetryNext(null);
+          }
+        }
       })
       .catch((caught: unknown) => {
         if (live) setError(messageFrom(caught));
@@ -87,7 +105,7 @@ export function FocusSessionProvider({ children }: { children: React.ReactNode }
     return () => {
       live = false;
     };
-  }, []);
+  }, [rememberRetryNext]);
 
   useEffect(() => {
     if (active?.status !== "RUNNING" && active?.status !== "PAUSED") return;
@@ -189,6 +207,7 @@ export function FocusSessionProvider({ children }: { children: React.ReactNode }
         }
         setSnapshot(result.snapshot);
         setSuggestedBreak(null);
+        rememberRetryNext(null);
         setNow(Date.now());
         setActivityRevision((revision) => revision + 1);
         return true;
@@ -199,10 +218,10 @@ export function FocusSessionProvider({ children }: { children: React.ReactNode }
         setBusy(false);
       }
     },
-    [busy]
+    [busy, rememberRetryNext]
   );
 
-  const recordCompletion = useCallback(
+  const enrichCompletion = useCallback(
     async (input: {
       note: string;
       category: string;
@@ -218,7 +237,7 @@ export function FocusSessionProvider({ children }: { children: React.ReactNode }
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            action: "record",
+            action: "enrich",
             note: input.note,
             category: input.category,
             taskCompleted: input.taskCompleted
@@ -228,6 +247,11 @@ export function FocusSessionProvider({ children }: { children: React.ReactNode }
         if (!response.ok) {
           throw new Error(result.error ?? "The completion record could not be saved.");
         }
+        setSnapshot(result.snapshot);
+        setSuggestedBreak(null);
+        rememberRetryNext(null);
+        setNow(Date.now());
+        setActivityRevision((revision) => revision + 1);
         let nextSnapshot = result.snapshot;
         if (input.next) {
           const nextResponse = await fetch("/api/focus-session", {
@@ -243,16 +267,15 @@ export function FocusSessionProvider({ children }: { children: React.ReactNode }
             error?: string;
           };
           if (!nextResponse.ok || !nextResult.snapshot) {
+            rememberRetryNext(input.next);
             throw new Error(
               nextResult.error ?? "The next queue item could not be started."
             );
           }
           nextSnapshot = nextResult.snapshot;
+          rememberRetryNext(null);
         }
         setSnapshot(nextSnapshot);
-        setSuggestedBreak(null);
-        setNow(Date.now());
-        setActivityRevision((revision) => revision + 1);
         return true;
       } catch (caught) {
         setError(messageFrom(caught));
@@ -261,8 +284,13 @@ export function FocusSessionProvider({ children }: { children: React.ReactNode }
         setBusy(false);
       }
     },
-    [busy, snapshot]
+    [busy, rememberRetryNext, snapshot]
   );
+
+  const retryNextStart = useCallback(async () => {
+    if (!retryNext) return false;
+    return start(retryNext);
+  }, [retryNext, start]);
 
   const requestNotificationPermission = useCallback(async () => {
     if (!("Notification" in window)) return;
@@ -278,11 +306,13 @@ export function FocusSessionProvider({ children }: { children: React.ReactNode }
       busy,
       error,
       suggestedBreak,
+      retryNext,
       notificationState,
       activityRevision,
       start,
       transition,
-      recordCompletion,
+      enrichCompletion,
+      retryNextStart,
       dismissBreakSuggestion: () => setSuggestedBreak(null),
       requestNotificationPermission
     }),
@@ -294,11 +324,13 @@ export function FocusSessionProvider({ children }: { children: React.ReactNode }
       busy,
       error,
       suggestedBreak,
+      retryNext,
       notificationState,
       activityRevision,
       start,
       transition,
-      recordCompletion,
+      enrichCompletion,
+      retryNextStart,
       requestNotificationPermission
     ]
   );
@@ -314,6 +346,42 @@ export function useFocusSession() {
   const value = useContext(FocusSessionContext);
   if (!value) throw new Error("useFocusSession must be used inside FocusSessionProvider.");
   return value;
+}
+
+function readStoredRetryNext(): FocusStartInput | null {
+  try {
+    const raw = window.sessionStorage.getItem(retryNextStorageKey);
+    if (!raw) return null;
+    const value = JSON.parse(raw) as Partial<FocusStartInput>;
+    const plannedMinutes = Number(value.plannedMinutes);
+    if (
+      !Number.isInteger(plannedMinutes) ||
+      plannedMinutes < 1 ||
+      plannedMinutes > 240 ||
+      (value.kind !== undefined &&
+        value.kind !== "FOCUS" &&
+        value.kind !== "BREAK")
+    ) {
+      window.sessionStorage.removeItem(retryNextStorageKey);
+      return null;
+    }
+    return {
+      kind: value.kind,
+      plannedMinutes,
+      label: typeof value.label === "string" ? value.label : undefined,
+      taskId:
+        typeof value.taskId === "string" || value.taskId === null
+          ? value.taskId
+          : undefined,
+      projectId:
+        typeof value.projectId === "string" || value.projectId === null
+          ? value.projectId
+          : undefined
+    };
+  } catch {
+    window.sessionStorage.removeItem(retryNextStorageKey);
+    return null;
+  }
 }
 
 function messageFrom(error: unknown) {

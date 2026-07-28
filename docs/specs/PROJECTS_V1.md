@@ -3,6 +3,10 @@
 Status: Implemented  
 Date: July 23, 2026
 
+> **Information architecture update:** The domain and behavior rules in this
+> specification remain authoritative, but its Plan/Projects navigation model is
+> superseded by [ADR 0001](../adr/0001-six-destination-workspace.md).
+
 ## Summary
 
 Projects add one finishable layer above Dayflow tasks:
@@ -134,7 +138,9 @@ A typical summary is:
 
 ## Information Architecture
 
-Projects will not add a fifth primary navigation destination in v1.
+This section records the original v1 design. Its primary-navigation decision is
+superseded by [ADR 0001](../adr/0001-six-destination-workspace.md); Projects is
+now a stable workspace destination.
 
 ### Capture
 

@@ -1,16 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { startOfLocalDay } from "@/lib/dates";
+import { parseLocalDate, startOfLocalDay } from "@/lib/dates";
+import {
+  EvidenceAttributionError,
+  resolveTaskProjectAttribution
+} from "@/lib/evidence-attribution";
 
 export async function POST(request: NextRequest) {
   const body = await request.json();
   const durationMinutes = Number(body.durationMinutes);
   const note = String(body.note ?? "").trim();
   const category = String(body.category ?? "").trim() || "Deep Work";
-  const taskId = String(body.taskId ?? "").trim() || null;
-  let projectId = String(body.projectId ?? "").trim() || null;
 
-  if (!Number.isFinite(durationMinutes) || durationMinutes < 1 || durationMinutes > 1440) {
+  if (
+    !Number.isInteger(durationMinutes) ||
+    durationMinutes < 1 ||
+    durationMinutes > 1440
+  ) {
     return NextResponse.json(
       { error: "Duration must be between 1 and 1440 minutes." },
       { status: 400 }
@@ -21,38 +27,37 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Add a short note about what happened." }, { status: 400 });
   }
 
-  if (taskId) {
-    const task = await prisma.task.findUnique({
-      where: { id: taskId },
-      select: { id: true, projectId: true }
-    });
-    if (!task) {
-      return NextResponse.json({ error: "The linked task could not be found." }, { status: 400 });
+  let attribution;
+  try {
+    attribution = await resolveTaskProjectAttribution(
+      body.taskId,
+      body.projectId
+    );
+  } catch (error) {
+    if (error instanceof EvidenceAttributionError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
     }
-    if (task.projectId) {
-      if (projectId && projectId !== task.projectId) {
-        return NextResponse.json(
-          { error: "The selected task belongs to a different project." },
-          { status: 400 }
-        );
-      }
-      projectId = null;
-    }
+    throw error;
   }
 
-  if (projectId) {
-    const project = await prisma.project.findUnique({
-      where: { id: projectId },
-      select: { id: true }
-    });
-    if (!project) {
-      return NextResponse.json({ error: "The linked project could not be found." }, { status: 400 });
-    }
+  const sourceDate =
+    body.date === undefined || body.date === null || body.date === ""
+      ? new Date()
+      : parseLocalDate(body.date);
+  if (!sourceDate) {
+    return NextResponse.json(
+      { error: "Activity date is invalid." },
+      { status: 400 }
+    );
   }
-
-  const sourceDate = body.date ? new Date(body.date) : new Date();
-  const startedAt = startOfLocalDay(Number.isNaN(sourceDate.getTime()) ? new Date() : sourceDate);
+  const startedAt = startOfLocalDay(sourceDate);
   const time = parseTime(body.startTime);
+  if (!time) {
+    return NextResponse.json(
+      { error: "Activity start time is invalid." },
+      { status: 400 }
+    );
+  }
   startedAt.setHours(time.hours, time.minutes, 0, 0);
 
   const activity = await prisma.activityEntry.create({
@@ -61,8 +66,9 @@ export async function POST(request: NextRequest) {
       durationMinutes: Math.round(durationMinutes),
       category,
       note,
-      taskId,
-      projectId
+      taskId: attribution.taskId,
+      projectId: attribution.projectId,
+      attributedProjectId: attribution.attributedProjectId
     }
   });
 
@@ -70,11 +76,14 @@ export async function POST(request: NextRequest) {
 }
 
 function parseTime(value: unknown) {
+  if (value === undefined || value === null || value === "") {
+    const now = new Date();
+    return { hours: now.getHours(), minutes: now.getMinutes() };
+  }
   const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(String(value ?? ""));
   if (match) {
     return { hours: Number(match[1]), minutes: Number(match[2]) };
   }
 
-  const now = new Date();
-  return { hours: now.getHours(), minutes: now.getMinutes() };
+  return null;
 }

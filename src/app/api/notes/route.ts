@@ -1,27 +1,44 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { startOfLocalDay } from "@/lib/dates";
+import { parseLocalDate, startOfLocalDay } from "@/lib/dates";
+import {
+  EvidenceAttributionError,
+  resolveTaskProjectAttribution
+} from "@/lib/evidence-attribution";
 
 export async function POST(request: NextRequest) {
   const body = await request.json();
-  const projectId = String(body.projectId ?? "").trim() || null;
-  if (projectId) {
-    const project = await prisma.project.findUnique({
-      where: { id: projectId },
-      select: { id: true }
-    });
-    if (!project) {
-      return NextResponse.json({ error: "The linked project could not be found." }, { status: 400 });
+  let attribution;
+  try {
+    attribution = await resolveTaskProjectAttribution(
+      body.taskId,
+      body.projectId
+    );
+  } catch (error) {
+    if (error instanceof EvidenceAttributionError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
     }
+    throw error;
+  }
+
+  const date =
+    body.date === undefined || body.date === null || body.date === ""
+      ? startOfLocalDay()
+      : parseLocalDate(body.date);
+  if (!date) {
+    return NextResponse.json(
+      { error: "Note date is invalid." },
+      { status: 400 }
+    );
   }
 
   const note = await prisma.note.create({
     data: {
       content: String(body.content ?? "").trim(),
       tags: JSON.stringify(Array.isArray(body.tags) ? body.tags : []),
-      taskId: body.taskId || null,
-      projectId,
-      date: body.date ? startOfLocalDay(new Date(body.date)) : startOfLocalDay()
+      taskId: attribution.taskId,
+      projectId: attribution.projectId,
+      date
     }
   });
   return NextResponse.json({ ...note, tags: JSON.parse(note.tags) });

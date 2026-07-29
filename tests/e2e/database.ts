@@ -86,6 +86,79 @@ export function seedJournalHistory(count = 105) {
   runPrismaDbExecute(["--stdin"], statements.join("\n"));
 }
 
+export function seedJournalSearchHistory(count = 125) {
+  const baseTimestamp = Date.UTC(2026, 1, 1, 12);
+  const statements: string[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const suffix = String(index).padStart(3, "0");
+    const timestamp = baseTimestamp + index * 1_000;
+    const searchableNote = index % 2 === 0;
+    const noteContent = searchableNote
+      ? `Needle note ${suffix}`
+      : `Ordinary note ${suffix}`;
+    const tags = searchableNote
+      ? '["design-systems","archive"]'
+      : '["design"]';
+    const materialField = index % 3;
+    const materialTitle =
+      materialField === 0
+        ? `Beacon title ${suffix}`
+        : `History reference ${suffix}`;
+    const materialUrl =
+      materialField === 1
+        ? `https://example.com/beacon/${suffix}`
+        : `https://example.com/history/${suffix}`;
+    const materialNotes =
+      materialField === 2 ? `Beacon notes ${suffix}` : "";
+    statements.push(
+      `INSERT INTO "Note"
+       ("id", "content", "tags", "date", "createdAt", "updatedAt")
+       VALUES
+       ('search-note-${suffix}', '${noteContent}', '${tags}',
+        ${baseTimestamp}, ${timestamp}, ${timestamp});`,
+      `INSERT INTO "Material"
+       ("id", "title", "url", "type", "notes", "createdAt", "updatedAt")
+       VALUES
+       ('search-material-${suffix}', '${materialTitle}',
+        '${materialUrl}', 'website', '${materialNotes}',
+        ${timestamp}, ${timestamp});`
+    );
+  }
+  runPrismaDbExecute(["--stdin"], statements.join("\n"));
+}
+
+export function seedJournalSearchTies() {
+  const timestamp = Date.UTC(2026, 2, 1, 12);
+  runPrismaDbExecute(
+    ["--stdin"],
+    ["a", "b", "c"]
+      .map(
+        (suffix) => `
+          INSERT INTO "Note"
+          ("id", "content", "tags", "date", "createdAt", "updatedAt")
+          VALUES
+          ('search-tie-${suffix}', 'Tie search ${suffix}', '[]',
+           ${timestamp}, ${timestamp}, ${timestamp});
+        `
+      )
+      .join("\n")
+  );
+}
+
+export function seedMalformedJournalTags() {
+  const timestamp = Date.UTC(2026, 2, 2, 12);
+  runPrismaDbExecute(
+    ["--stdin"],
+    `INSERT INTO "Note"
+     ("id", "content", "tags", "date", "createdAt", "updatedAt")
+     VALUES
+     ('search-tags-scalar', 'Malformed scalar tags', '"design"',
+      ${timestamp}, ${timestamp}, ${timestamp}),
+     ('search-tags-object', 'Malformed object tags', '{"x":"design"}',
+      ${timestamp}, ${timestamp}, ${timestamp});`
+  );
+}
+
 export function setFocusSessionElapsedMinutes(id: string, minutes: number) {
   if (!/^[A-Za-z0-9_-]+$/.test(id)) {
     throw new Error("Focus session id contains unexpected characters.");

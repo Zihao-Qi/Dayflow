@@ -32,7 +32,8 @@ lucide-react. The app runs locally without accounts or hosted services.
   planning, full editing, confirmed deletion, and planned-versus-recorded
   Timeline comparison.
 - Journal workspace for diary entries, quick notes, and saved references, with
-  Task-linked Notes and Task/Note-linked References.
+  Task-linked Notes, Task/Note-linked References, complete-history text search,
+  and exact Note tag filtering.
 - Review workspace for seven-day evidence summaries, Project movement, and a
   period-bound narrative and next-period intention.
 - Project attribution for activities, notes, and saved references.
@@ -53,6 +54,7 @@ Product and corrective specifications:
 - [Activity Capture v1](./docs/specs/ACTIVITY_CAPTURE_V1.md)
 - [Activity Editing v1](./docs/specs/ACTIVITY_EDITING_V1.md)
 - [Journal Relationships v1](./docs/specs/JOURNAL_RELATIONSHIPS_V1.md)
+- [Journal Search & Filtering v1](./docs/specs/JOURNAL_SEARCH_FILTERING_V1.md)
 - [CSV Export v1](./docs/specs/CSV_EXPORT_V1.md)
 - [Six-destination workspace decision](./docs/adr/0001-six-destination-workspace.md)
 

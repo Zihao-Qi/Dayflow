@@ -55,6 +55,10 @@ The Journal relationship-capture contract is:
 
 - `docs/specs/JOURNAL_RELATIONSHIPS_V1.md` — implemented July 29
 
+The Journal retrieval contract is:
+
+- `docs/specs/JOURNAL_SEARCH_FILTERING_V1.md` — implemented July 29
+
 The canonical workspace navigation decision is:
 
 - `docs/adr/0001-six-destination-workspace.md`
@@ -260,6 +264,8 @@ Funemployment Day has a narrower and immediately understandable promise around r
 - Groups diary, notes, and references under one Journal destination.
 - Supports quick notes.
 - Supports tags on notes.
+- Searches complete Note history by content and filters by one exact canonical
+  tag without changing newest-first pagination.
 - Lets Notes link to available Tasks while inheriting compatible Project
   context.
 - Supports daily diary content.
@@ -274,6 +280,7 @@ Funemployment Day has a narrower and immediately understandable promise around r
 - Lets References link to available Tasks and paginated Note history while
   preserving Note provenance separately from Project attribution.
 - Displays saved materials in a library-style list.
+- Searches complete Reference history across title, URL, and notes.
 
 ### Charts and Visualization
 
@@ -417,9 +424,13 @@ Journal Relationships coverage verifies Task and direct Project attribution,
 Task/Note-linked References, inherited Project display, strict canonical
 response decoding, typed missing and conflicting relationships without failed
 writes, complete draft retention and recovery, paginated access to every Note
-option, saved relationship labels, and phone usability. The complete July 29,
-2026 reliability gate passed with 131 unit tests, 13 backup/integration tests,
-all migration fixtures, the production build, and 91 Chromium browser tests.
+option, saved relationship labels, and phone usability. Journal Search &
+Filtering coverage verifies complete Note and Reference search, exact tags,
+literal wildcard behavior, query-bound cursors, stale-response rejection,
+exact retry replay, independent relationship options, preserved capture drafts
+and loaded history, and phone usability. The complete July 29, 2026 reliability
+gate passed with 137 unit tests, 13 backup/integration tests, all migration
+fixtures, the production build, and 95 Chromium browser tests.
 
 CSV Export coverage verifies complete historical Task and Activity retrieval,
 stable columns and ordering, Manual and Focus Activity inclusion, exact and
@@ -495,7 +506,6 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
 
 ### 4. Strengthen Notes, Diary, and Materials
 
-- Add search and tag filtering for notes and materials.
 - Consider markdown support for diary and notes.
 - Add richer diary states for empty days and completed reviews.
 - Add gentle prompts such as “What would make today feel complete?”, “Record a small win,” and “What should carry forward?”
@@ -538,9 +548,8 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
    daily use before widening those workflows.
 3. Replace the remaining visible placeholder controls with working manual
    planning actions or remove them until specified.
-4. Add search and tag filtering for Notes and References.
-5. Add installable PWA metadata and verify offline/local behavior.
-6. Keep the handoff convention:
+4. Add installable PWA metadata and verify offline/local behavior.
+5. Keep the handoff convention:
    - Gemini records front-end design and UI changes in `DAYFLOW_CHANGELOG.md`.
    - This file records product status, implementation status, limitations, and development plan.
-7. Expand the README with the core Decide → Plan → Record → Capture → Review workflow as the app shape stabilizes.
+6. Expand the README with the core Decide → Plan → Record → Capture → Review workflow as the app shape stabilizes.

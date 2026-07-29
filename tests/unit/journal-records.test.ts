@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  isJournalHistoryPage,
   isJournalMaterialRecord,
   isJournalNoteRecord
 } from "../../src/lib/journal-records";
@@ -46,6 +47,38 @@ test("Journal Material records require canonical relationships, type, and timest
   );
   assert.equal(
     isJournalMaterialRecord({ ...material, createdAt: "not-a-date" }),
+    false
+  );
+});
+
+test("Journal history pages require valid records, cursors, and counts", () => {
+  const validPage = {
+    items: [note],
+    nextCursor: "opaque-cursor",
+    totalCount: 2
+  };
+
+  assert.equal(isJournalHistoryPage(validPage, isJournalNoteRecord), true);
+  assert.equal(
+    isJournalHistoryPage(
+      { ...validPage, items: [{ ...note, content: 42 }] },
+      isJournalNoteRecord
+    ),
+    false
+  );
+  assert.equal(
+    isJournalHistoryPage({ ...validPage, nextCursor: 42 }, isJournalNoteRecord),
+    false
+  );
+  assert.equal(
+    isJournalHistoryPage({ ...validPage, totalCount: -1 }, isJournalNoteRecord),
+    false
+  );
+  assert.equal(
+    isJournalHistoryPage(
+      { ...validPage, totalCount: 1.5 },
+      isJournalNoteRecord
+    ),
     false
   );
 });

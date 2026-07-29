@@ -40,6 +40,9 @@ lucide-react. The app runs locally without accounts or hosted services.
 - Global Capture palette with Task and Project search, typed Focus commands,
   URL and Note intent recognition, and draft-preserving handoff to the owning
   workspace.
+- First-run guidance for genuinely empty workspaces, with complete-history
+  readiness, durable first-Task recovery, working Project and Capture
+  handoffs, and a phone-safe explanation of the core workflow.
 - Deadline-aware urgency that increases as a due date approaches.
 - Portable, formula-safe CSV downloads for complete Task and Activity history,
   alongside a versioned JSON export for agents.
@@ -56,7 +59,24 @@ Product and corrective specifications:
 - [Journal Relationships v1](./docs/specs/JOURNAL_RELATIONSHIPS_V1.md)
 - [Journal Search & Filtering v1](./docs/specs/JOURNAL_SEARCH_FILTERING_V1.md)
 - [CSV Export v1](./docs/specs/CSV_EXPORT_V1.md)
+- [First-Run Onboarding v1](./docs/specs/FIRST_RUN_ONBOARDING_V1.md)
 - [Six-destination workspace decision](./docs/adr/0001-six-destination-workspace.md)
+
+## Core Workflow
+
+Dayflow uses one small loop rather than a setup system:
+
+1. **Decide** what matters in Today or Backlog.
+2. **Plan** actionable Tasks, finishable Projects, and Time Blocks.
+3. **Record** what happened through Focus Sessions and Activities.
+4. **Capture** useful context as Notes, Diary writing, and References.
+5. **Review** the last seven days of evidence and choose what deserves
+   protection next.
+
+A genuinely empty workspace introduces this loop with one first Task plus
+direct handoffs to Project creation and the global Capture palette. Any
+meaningful persisted workspace record suppresses that empty-state onboarding,
+even when the current day itself has nothing scheduled.
 
 ## Local Setup
 

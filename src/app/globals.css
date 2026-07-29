@@ -1565,6 +1565,49 @@ html[data-layout-mode="phone"] {
   line-height: 1.55;
 }
 
+.first-run-loop {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  width: min(620px, 100%);
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  list-style: none;
+}
+
+.first-run-loop li {
+  position: relative;
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 10px 18px 10px 0;
+}
+
+.first-run-loop li:not(:last-child)::after {
+  position: absolute;
+  top: 50%;
+  right: 7px;
+  color: #b4ada1;
+  content: "→";
+  transform: translateY(-50%);
+}
+
+.first-run-loop strong {
+  color: var(--ink);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.first-run-loop small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .first-run-start {
   display: grid;
   gap: 12px;
@@ -1604,6 +1647,11 @@ html[data-layout-mode="phone"] {
   background: transparent;
   color: var(--muted);
   text-align: left;
+}
+
+.first-run-ready > button:disabled {
+  cursor: wait;
+  opacity: 0.58;
 }
 
 .first-run-ready > button > span {
@@ -9259,6 +9307,24 @@ html[data-layout-mode="phone"] {
 }
 
 html[data-layout-mode="phone"] {
+  .first-run-loop {
+    grid-template-columns: 1fr;
+  }
+
+  .first-run-loop li {
+    grid-template-columns: 68px minmax(0, 1fr);
+    gap: 10px;
+    padding: 7px 0;
+  }
+
+  .first-run-loop li:not(:last-child)::after {
+    content: none;
+  }
+
+  .first-run-loop small {
+    white-space: normal;
+  }
+
   .mobile-capture-button {
     grid-auto-flow: column;
     gap: 6px;

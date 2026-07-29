@@ -12,6 +12,7 @@ import { listProjectSummaries } from "@/lib/projects";
 import { buildReviewSummary } from "@/lib/review-domain";
 import { serializeTimeBlock } from "@/lib/time-block-persistence";
 import { isTimeBlockRecord } from "@/lib/time-blocks";
+import { isWorkspaceEmpty } from "@/lib/workspace-readiness";
 
 export async function GET() {
   const today = startOfLocalDay();
@@ -37,7 +38,8 @@ export async function GET() {
     reviewMaterials,
     projects,
     savedReview,
-    activityCategoryRows
+    activityCategoryRows,
+    workspaceEmpty
   ] =
     await Promise.all([
       prisma.task.findMany({
@@ -129,7 +131,8 @@ export async function GET() {
       prisma.activityEntry.findMany({
         select: { category: true },
         distinct: ["category"]
-      })
+      }),
+      isWorkspaceEmpty(prisma)
     ]);
 
   const diaryEntry = diary
@@ -193,7 +196,8 @@ export async function GET() {
     ),
     stats,
     review,
-    reviewSummary
+    reviewSummary,
+    workspaceEmpty
   });
 }
 

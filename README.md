@@ -23,6 +23,8 @@ lucide-react. The app runs locally without accounts or hosted services.
 - Expandable task details keep status, deadline, estimate, urgency, and importance available without crowding each row.
 - Log views for scheduled work and recorded daily activity, plus Backlog
   arrangements for Quadrant, Project, Due, and sufficiently wide Figure views.
+- Manual Activity capture for today or any earlier local date, with free custom
+  category labels and complete-history suggestions.
 - Manual Activity editing from Log with stable identity and calendar date,
   historical Project attribution, protected Focus evidence, and draft-safe
   retries.
@@ -47,6 +49,7 @@ Product and corrective specifications:
 - [Local Data Reliability v1](./docs/specs/LOCAL_DATA_RELIABILITY_V1.md)
 - [Command Palette v1](./docs/specs/COMMAND_PALETTE_V1.md)
 - [Manual Time Blocks v1](./docs/specs/TIME_BLOCKS_V1.md)
+- [Activity Capture v1](./docs/specs/ACTIVITY_CAPTURE_V1.md)
 - [Activity Editing v1](./docs/specs/ACTIVITY_EDITING_V1.md)
 - [CSV Export v1](./docs/specs/CSV_EXPORT_V1.md)
 - [Six-destination workspace decision](./docs/adr/0001-six-destination-workspace.md)

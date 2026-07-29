@@ -6811,6 +6811,10 @@ kbd {
   box-shadow: 0 30px 70px rgba(37, 35, 31, 0.28);
 }
 
+.activity-dialog-overlay {
+  overflow-y: auto;
+}
+
 .activity-dialog textarea {
   min-height: 110px;
 }
@@ -7626,6 +7630,21 @@ html[data-layout-mode="phone"] {
 
   .activity-dialog-grid {
     grid-template-columns: 1fr;
+  }
+
+  .activity-dialog-overlay {
+    padding: 10px 10px 90px;
+  }
+
+  .activity-dialog {
+    width: 100%;
+  }
+
+  .activity-dialog input,
+  .activity-dialog select,
+  .activity-dialog .primary-button,
+  .activity-dialog .text-button {
+    min-height: 44px;
   }
 
   .timeline-planning-toolbar {

@@ -33,12 +33,12 @@ test("Activity input is normalized into one canonical timestamp", () => {
       date: "2026-07-27",
       startTime: "09:05",
       durationMinutes: 25,
-      category: "  Deep Work  ",
+      category: "  Creative Writing  ",
       note: "  Finished the reliability slice.  ",
       taskId: " task-1 ",
       projectId: " project-1 "
     },
-    new Date("2026-07-01T12:00:00-05:00")
+    new Date("2026-07-28T12:00:00-05:00")
   );
 
   assert.equal(activity.startedAt.getFullYear(), 2026);
@@ -47,7 +47,7 @@ test("Activity input is normalized into one canonical timestamp", () => {
   assert.equal(activity.startedAt.getHours(), 9);
   assert.equal(activity.startedAt.getMinutes(), 5);
   assert.equal(activity.durationMinutes, 25);
-  assert.equal(activity.category, "Deep Work");
+  assert.equal(activity.category, "Creative Writing");
   assert.equal(activity.note, "Finished the reliability slice.");
   assert.equal(activity.taskId, "task-1");
   assert.equal(activity.projectId, "project-1");
@@ -94,7 +94,7 @@ test("Activity duration, date, and time are strict and bounded", () => {
     );
   }
 
-  for (const date of ["2026-02-30", "tomorrow", 20260727]) {
+  for (const date of ["", "  ", "2026-02-30", "tomorrow", 20260727]) {
     expectRequestError(
       () =>
         parseActivityCreateMutation({
@@ -105,6 +105,19 @@ test("Activity duration, date, and time are strict and bounded", () => {
       "date"
     );
   }
+
+  expectRequestError(
+    () =>
+      parseActivityCreateMutation(
+        {
+          date: "2026-07-28",
+          durationMinutes: 25,
+          note: "Future evidence"
+        },
+        new Date("2026-07-27T23:59:00-05:00")
+      ),
+    "date"
+  );
 
   for (const startTime of ["24:00", "9:05", "09:60", 905]) {
     expectRequestError(
@@ -120,6 +133,17 @@ test("Activity duration, date, and time are strict and bounded", () => {
 });
 
 test("Activity text and relationship identifiers are bounded", () => {
+  for (const category of ["", "  "]) {
+    expectRequestError(
+      () =>
+        parseActivityCreateMutation({
+          durationMinutes: 25,
+          note: "Valid note",
+          category
+        }),
+      "category"
+    );
+  }
   expectRequestError(
     () =>
       parseActivityCreateMutation({

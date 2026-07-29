@@ -43,6 +43,10 @@ The manual Activity correction contract is:
 
 - `docs/specs/ACTIVITY_EDITING_V1.md` — implemented July 28
 
+The retrospective Activity capture and category-label contract is:
+
+- `docs/specs/ACTIVITY_CAPTURE_V1.md` — implemented July 28
+
 The portable analysis-export contract is:
 
 - `docs/specs/CSV_EXPORT_V1.md` — implemented July 28
@@ -185,8 +189,12 @@ Funemployment Day has a narrower and immediately understandable promise around r
 
 ### Activity and Time Logging
 
-- Supports manually recording what happened during the day.
+- Supports manually recording what happened today or on any earlier local
+  calendar date while rejecting future evidence.
 - Stores activity time, duration, category, accomplishment note, and an optional linked task.
+- Keeps the calm default category labels and offers labels from complete
+  Activity history as deterministic suggestions while allowing any bounded
+  custom label.
 - Supports correcting Manual Activities from Log without changing their
   identity or original local calendar day.
 - Revalidates deliberately changed Task and Project relationships while
@@ -195,7 +203,6 @@ Funemployment Day has a narrower and immediately understandable promise around r
 - Keeps Focus-generated Activity evidence protected behind the Focus workflow.
 - Preserves the complete Activity edit draft through rejected, malformed, or
   mismatched responses.
-- Includes calm default categories for deep work, learning, administration, health, and rest.
 - Uses activity durations as the source for Daily Pulse spent time and weekly actual-time charts.
 - Supports deleting activity entries.
 - Includes activities in the local agent export.
@@ -393,6 +400,11 @@ changed Project attribution, protected Focus evidence, optimistic conflicts,
 derived Log and Review totals, retry convergence, and complete draft retention
 through rejected or ambiguous responses.
 
+Activity Capture coverage verifies past-or-today local dates, server-side
+future rejection, free custom labels, complete and deterministic historical
+suggestions, Task-derived Project attribution, canonical response checking,
+full draft retention through malformed success, and phone usability.
+
 CSV Export coverage verifies complete historical Task and Activity retrieval,
 stable columns and ordering, Manual and Focus Activity inclusion, exact and
 local time semantics, relationships, Unicode and CSV escaping, spreadsheet
@@ -430,8 +442,6 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
 - Touch-specific drag behavior still needs manual verification on a physical mobile device.
 - Focus Timer sessions are single-device and depend on the local Dayflow process; there is no menu-bar or system-wide macOS timer yet.
 - Focus and break lengths are chosen per session; configurable default presets and long-break cycles are not implemented yet.
-- Activity categories use a fixed default list; user-defined categories are not implemented yet.
-- Activity entry is currently focused on today rather than retrospective logging for another date.
 - Complete JSON export and lossless database backup/restore are available from
   local commands and a managed local UI. UI restore is intentionally applied
   on the next Dayflow startup rather than against a live Prisma connection.
@@ -466,8 +476,6 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
 - Validate Manual Activity editing through daily use.
 - Validate Focus Timer defaults and break suggestions through daily use.
 - Explore a small macOS companion only after the web timer workflow is stable.
-- Add custom activity category management.
-- Allow retrospective activity logging for another date.
 - Keep rest and non-task activity valid records rather than treating all progress as task completion.
 
 ### 4. Strengthen Notes, Diary, and Materials
@@ -517,10 +525,9 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
    daily use before widening those workflows.
 3. Replace the remaining visible placeholder controls with working manual
    planning actions or remove them until specified.
-4. Specify custom Activity categories and retrospective capture.
-5. Improve task-to-note and task-to-material linking.
-6. Add installable PWA metadata and verify offline/local behavior.
-7. Keep the handoff convention:
+4. Improve task-to-note and task-to-material linking.
+5. Add installable PWA metadata and verify offline/local behavior.
+6. Keep the handoff convention:
    - Gemini records front-end design and UI changes in `DAYFLOW_CHANGELOG.md`.
    - This file records product status, implementation status, limitations, and development plan.
-8. Expand the README with the core Decide → Plan → Record → Capture → Review workflow as the app shape stabilizes.
+7. Expand the README with the core Decide → Plan → Record → Capture → Review workflow as the app shape stabilizes.

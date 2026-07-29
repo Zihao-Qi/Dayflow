@@ -9,6 +9,7 @@ import {
   EVIDENCE_RELATION_ID_MAX_LENGTH,
   EvidenceMutationRequestError,
   parseActivityCreateMutation,
+  parseActivityReplaceMutation,
   parseDiaryUpsertMutation,
   readEvidenceMutationBody
 } from "../../src/lib/evidence-mutations";
@@ -162,6 +163,64 @@ test("Activity text and relationship identifiers are bounded", () => {
       }),
     "projectId"
   );
+});
+
+test("Activity replacement is a strict full editable-field replacement", () => {
+  const activity = parseActivityReplaceMutation({
+    startTime: "09:05",
+    durationMinutes: 25,
+    category: "  Deep Work  ",
+    note: "  Corrected Activity evidence.  ",
+    taskId: " task-1 ",
+    projectId: null,
+    date: "2020-01-01",
+    origin: "FOCUS"
+  });
+
+  assert.deepEqual(activity, {
+    startTime: "09:05",
+    durationMinutes: 25,
+    category: "Deep Work",
+    note: "Corrected Activity evidence.",
+    taskId: "task-1",
+    projectId: null
+  });
+});
+
+test("Activity replacement requires time, category, and relationship keys", () => {
+  const valid = {
+    startTime: "09:05",
+    durationMinutes: 25,
+    category: "Deep Work",
+    note: "Corrected Activity evidence.",
+    taskId: null,
+    projectId: null
+  };
+
+  for (const [field, value] of [
+    ["startTime", undefined],
+    ["startTime", "9:05"],
+    ["category", undefined],
+    ["category", " "]
+  ] as const) {
+    expectRequestError(
+      () => parseActivityReplaceMutation({ ...valid, [field]: value }),
+      field
+    );
+  }
+
+  for (const field of ["taskId", "projectId"] as const) {
+    const body = { ...valid };
+    delete body[field];
+    expectRequestError(
+      () => parseActivityReplaceMutation(body),
+      field
+    );
+    expectRequestError(
+      () => parseActivityReplaceMutation({ ...valid, [field]: "" }),
+      field
+    );
+  }
 });
 
 test("Diary input applies canonical defaults without trimming writing", () => {

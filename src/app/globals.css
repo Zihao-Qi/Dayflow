@@ -5710,6 +5710,39 @@ kbd {
   font-weight: 650;
 }
 
+.stream-activity-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.stream-activity-heading > strong {
+  font-size: 13.5px;
+  font-weight: 650;
+}
+
+.stream-activity-edit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 700;
+}
+
+.stream-activity-edit:hover {
+  border-color: #b7c5ad;
+  background: var(--sage-soft);
+  color: #3f4d39;
+}
+
 .stream-row > div > p {
   margin: 5px 0 0;
   color: var(--muted);
@@ -5940,6 +5973,10 @@ kbd {
 }
 
 @media (any-pointer: coarse) {
+  .stream-activity-edit {
+    min-height: 44px;
+  }
+
   .day-timeline-panel {
     --timeline-hour-height: var(--timeline-touch-hour-height);
     --timeline-height: var(--timeline-touch-height);

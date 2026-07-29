@@ -1,7 +1,11 @@
 import { parseLocalDate, startOfLocalDay } from "@/lib/dates";
+import {
+  ACTIVITY_CATEGORY_MAX_LENGTH,
+  DEFAULT_ACTIVITY_CATEGORY
+} from "@/lib/activity-categories";
 
 export const ACTIVITY_DURATION_MAX_MINUTES = 1_440;
-export const ACTIVITY_CATEGORY_MAX_LENGTH = 100;
+export { ACTIVITY_CATEGORY_MAX_LENGTH };
 export const ACTIVITY_NOTE_MAX_LENGTH = 5_000;
 export const EVIDENCE_RELATION_ID_MAX_LENGTH = 191;
 export const DIARY_CONTENT_MAX_LENGTH = 20_000;
@@ -71,12 +75,7 @@ export function parseActivityCreateMutation(
   now = new Date()
 ): ActivityCreateMutation {
   const body = requireObject(value);
-  const date = parseDate(
-    body.date,
-    now,
-    "date",
-    "Activity date is invalid."
-  );
+  const date = parseActivityDate(body.date, now);
   const time = parseActivityTime(body.startTime, now);
   const startedAt = startOfLocalDay(date);
   startedAt.setHours(time.hours, time.minutes, 0, 0);
@@ -175,6 +174,28 @@ function parseDate(
   return date;
 }
 
+function parseActivityDate(value: unknown, now: Date) {
+  if (typeof value === "string" && !value.trim()) {
+    throw new EvidenceMutationRequestError(
+      "Activity date is invalid.",
+      "date"
+    );
+  }
+  const date = parseDate(
+    value,
+    now,
+    "date",
+    "Activity date is invalid."
+  );
+  if (date.getTime() > startOfLocalDay(now).getTime()) {
+    throw new EvidenceMutationRequestError(
+      "Activity date cannot be in the future.",
+      "date"
+    );
+  }
+  return date;
+}
+
 function parseActivityTime(value: unknown, now: Date) {
   if (value === undefined || value === null || value === "") {
     return { hours: now.getHours(), minutes: now.getMinutes() };
@@ -204,8 +225,8 @@ function parseRequiredActivityTime(value: unknown) {
 }
 
 function parseActivityCategory(value: unknown) {
-  if (value === undefined || value === null || value === "") {
-    return "Deep Work";
+  if (value === undefined || value === null) {
+    return DEFAULT_ACTIVITY_CATEGORY;
   }
   if (typeof value !== "string") {
     throw new EvidenceMutationRequestError(
@@ -213,7 +234,13 @@ function parseActivityCategory(value: unknown) {
       "category"
     );
   }
-  const category = value.trim() || "Deep Work";
+  const category = value.trim();
+  if (!category) {
+    throw new EvidenceMutationRequestError(
+      "Choose an Activity category.",
+      "category"
+    );
+  }
   if (category.length > ACTIVITY_CATEGORY_MAX_LENGTH) {
     throw new EvidenceMutationRequestError(
       `Activity category must be ${ACTIVITY_CATEGORY_MAX_LENGTH} characters or fewer.`,

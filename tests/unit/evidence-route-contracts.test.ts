@@ -6,6 +6,7 @@ import { PUT as updateActivity } from "../../src/app/api/activities/[id]/route";
 import { PUT as saveDiary } from "../../src/app/api/diary/route";
 import { POST as createMaterial } from "../../src/app/api/materials/route";
 import { POST as createNote } from "../../src/app/api/notes/route";
+import { addDays, localDateKey } from "../../src/lib/dates";
 
 test("evidence routes return typed malformed-JSON responses", async () => {
   const activityResponse = await createActivity(
@@ -53,6 +54,48 @@ test("evidence routes expose typed validation errors", async () => {
     error: "Duration must be between 1 and 1440 minutes.",
     code: "VALIDATION_ERROR",
     field: "durationMinutes"
+  });
+
+  const futureActivityResponse = await createActivity(
+    jsonRequest("http://localhost/api/activities", "POST", {
+      date: localDateKey(addDays(new Date(), 1)),
+      durationMinutes: 25,
+      note: "Future evidence"
+    })
+  );
+  assert.equal(futureActivityResponse.status, 400);
+  assert.deepEqual(await futureActivityResponse.json(), {
+    error: "Activity date cannot be in the future.",
+    code: "VALIDATION_ERROR",
+    field: "date"
+  });
+
+  const blankDateResponse = await createActivity(
+    jsonRequest("http://localhost/api/activities", "POST", {
+      date: "",
+      durationMinutes: 25,
+      note: "Blank Activity date"
+    })
+  );
+  assert.equal(blankDateResponse.status, 400);
+  assert.deepEqual(await blankDateResponse.json(), {
+    error: "Activity date is invalid.",
+    code: "VALIDATION_ERROR",
+    field: "date"
+  });
+
+  const blankCategoryResponse = await createActivity(
+    jsonRequest("http://localhost/api/activities", "POST", {
+      durationMinutes: 25,
+      category: " ",
+      note: "Blank Activity category"
+    })
+  );
+  assert.equal(blankCategoryResponse.status, 400);
+  assert.deepEqual(await blankCategoryResponse.json(), {
+    error: "Choose an Activity category.",
+    code: "VALIDATION_ERROR",
+    field: "category"
   });
 
   const diaryResponse = await saveDiary(

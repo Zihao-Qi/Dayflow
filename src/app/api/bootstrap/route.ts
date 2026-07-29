@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { buildActivityCategorySuggestions } from "@/lib/activity-categories";
 import { prisma } from "@/lib/prisma";
 import {
   addDays,
@@ -35,7 +36,8 @@ export async function GET() {
     reviewNotes,
     reviewMaterials,
     projects,
-    savedReview
+    savedReview,
+    activityCategoryRows
   ] =
     await Promise.all([
       prisma.task.findMany({
@@ -123,6 +125,10 @@ export async function GET() {
             periodEnd: reviewEnd
           }
         }
+      }),
+      prisma.activityEntry.findMany({
+        select: { category: true },
+        distinct: ["category"]
       })
     ]);
 
@@ -178,6 +184,9 @@ export async function GET() {
       .map(serializeTimeBlock)
       .filter(isTimeBlockRecord),
     activities,
+    activityCategorySuggestions: buildActivityCategorySuggestions(
+      activityCategoryRows.map(({ category }) => category)
+    ),
     projects,
     unfinishedTasks: tasks.filter(
       (task) => task.date && task.date < today && task.status !== "DONE"

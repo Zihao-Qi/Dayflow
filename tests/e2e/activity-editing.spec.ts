@@ -1,4 +1,5 @@
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+import { localDateKey, localTime } from "./activity-date-helpers";
 import {
   resetTestDatabase,
   setFocusSessionElapsedMinutes
@@ -62,22 +63,6 @@ async function createManualActivity(
   return (await response.json()) as Activity;
 }
 
-function localTime(iso: string) {
-  const date = new Date(iso);
-  return `${String(date.getHours()).padStart(2, "0")}:${String(
-    date.getMinutes()
-  ).padStart(2, "0")}`;
-}
-
-function localDateKey(iso: string) {
-  const date = new Date(iso);
-  return [
-    date.getFullYear(),
-    String(date.getMonth() + 1).padStart(2, "0"),
-    String(date.getDate()).padStart(2, "0")
-  ].join("-");
-}
-
 test("edits one manual Activity in place and refreshes derived totals", async ({
   page
 }) => {
@@ -132,7 +117,7 @@ test("edits one manual Activity in place and refreshes derived totals", async ({
   await dialog.getByLabel("Activity note").fill("Corrected Activity evidence");
   await dialog.getByLabel("Time", { exact: true }).fill("10:15");
   await dialog.getByLabel("Minutes", { exact: true }).fill("35");
-  await dialog.getByLabel("Category", { exact: true }).selectOption("Learning");
+  await dialog.getByLabel("Category", { exact: true }).fill("Learning");
   await dialog
     .getByLabel("Linked task")
     .selectOption({ label: "No linked task" });
@@ -339,6 +324,90 @@ test("preserves historical attribution until relationships change", async ({
   ).json()) as { activities: Activity[] };
   expect(after.activities).toHaveLength(1);
   expect(after.activities[0].id).toBe(original.id);
+});
+
+test("accepts direct Project attribution when a historical Task becomes standalone", async ({
+  page
+}) => {
+  const originalProject = await createProject(
+    page.request,
+    "Original historical Project"
+  );
+  const directProject = await createProject(
+    page.request,
+    "Direct replacement Project"
+  );
+  const bootstrap = (await (
+    await page.request.get("/api/bootstrap")
+  ).json()) as { todayKey: string };
+  const taskResponse = await page.request.post("/api/tasks", {
+    data: {
+      title: "Task that became standalone",
+      date: bootstrap.todayKey,
+      projectId: originalProject.id
+    }
+  });
+  expect(taskResponse.status()).toBe(201);
+  const task = (await taskResponse.json()) as { id: string };
+  const original = await createManualActivity(page.request, {
+    startTime: "12:30",
+    durationMinutes: 30,
+    category: "Deep Work",
+    note: "Evidence with historical attribution",
+    taskId: task.id
+  });
+  expect(original.projectId).toBeNull();
+  expect(original.attributedProjectId).toBe(originalProject.id);
+
+  const detachResponse = await page.request.patch(`/api/tasks/${task.id}`, {
+    data: { projectId: null, phaseId: null }
+  });
+  expect(detachResponse.ok()).toBe(true);
+
+  await openDashboard(page);
+  await openLog(page);
+  await page
+    .getByRole("button", {
+      name: "Edit activity: Evidence with historical attribution",
+      exact: true
+    })
+    .click();
+  const dialog = page.getByRole("dialog", {
+    name: "Edit activity",
+    exact: true
+  });
+  const taskSelect = dialog.getByLabel("Linked task");
+  const projectSelect = dialog.getByLabel("Project");
+  await expect(projectSelect).toHaveValue(originalProject.id);
+  await expect(projectSelect).toBeDisabled();
+
+  await taskSelect.selectOption("");
+  await projectSelect.selectOption(directProject.id);
+  await taskSelect.selectOption(task.id);
+  await expect(projectSelect).toHaveValue(directProject.id);
+  await expect(projectSelect).toBeEnabled();
+  await dialog
+    .getByLabel("Activity note")
+    .fill("Evidence with direct attribution");
+
+  const updateResponse = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === `/api/activities/${original.id}` &&
+      response.request().method() === "PUT"
+  );
+  await dialog.getByRole("button", { name: "Save changes" }).click();
+  const response = await updateResponse;
+  expect(response.status()).toBe(200);
+  expect(await response.json()).toEqual(
+    expect.objectContaining({
+      id: original.id,
+      taskId: task.id,
+      projectId: directProject.id,
+      attributedProjectId: directProject.id,
+      note: "Evidence with direct attribution"
+    })
+  );
+  await expect(dialog).toHaveCount(0);
 });
 
 test("protects Focus evidence from the API and omits its edit control", async ({

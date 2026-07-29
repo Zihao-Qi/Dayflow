@@ -1,6 +1,6 @@
 # Dayflow Project Status and Plan
 
-Last updated: July 28, 2026
+Last updated: July 29, 2026
 
 ## Project Goal
 
@@ -50,6 +50,10 @@ The retrospective Activity capture and category-label contract is:
 The portable analysis-export contract is:
 
 - `docs/specs/CSV_EXPORT_V1.md` — implemented July 28
+
+The Journal relationship-capture contract is:
+
+- `docs/specs/JOURNAL_RELATIONSHIPS_V1.md` — implemented July 29
 
 The canonical workspace navigation decision is:
 
@@ -256,6 +260,8 @@ Funemployment Day has a narrower and immediately understandable promise around r
 - Groups diary, notes, and references under one Journal destination.
 - Supports quick notes.
 - Supports tags on notes.
+- Lets Notes link to available Tasks while inheriting compatible Project
+  context.
 - Supports daily diary content.
 - Supports mood and energy sliders.
 - Supports reflection content in the review flow.
@@ -265,6 +271,8 @@ Funemployment Day has a narrower and immediately understandable promise around r
 - Lives in the Journal as the canonical place to browse and save references.
 - Supports saving materials such as YouTube links, articles, websites, PDFs, or references.
 - Stores title, URL, type, notes, and optional task attachment fields.
+- Lets References link to available Tasks and paginated Note history while
+  preserving Note provenance separately from Project attribution.
 - Displays saved materials in a library-style list.
 
 ### Charts and Visualization
@@ -405,6 +413,14 @@ future rejection, free custom labels, complete and deterministic historical
 suggestions, Task-derived Project attribution, canonical response checking,
 full draft retention through malformed success, and phone usability.
 
+Journal Relationships coverage verifies Task and direct Project attribution,
+Task/Note-linked References, inherited Project display, strict canonical
+response decoding, typed missing and conflicting relationships without failed
+writes, complete draft retention and recovery, paginated access to every Note
+option, saved relationship labels, and phone usability. The complete July 29,
+2026 reliability gate passed with 131 unit tests, 13 backup/integration tests,
+all migration fixtures, the production build, and 91 Chromium browser tests.
+
 CSV Export coverage verifies complete historical Task and Activity retrieval,
 stable columns and ordering, Manual and Focus Activity inclusion, exact and
 local time semantics, relationships, Unicode and CSV escaping, spreadsheet
@@ -449,7 +465,6 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
   summaries, structured JSON import, arbitrary-path browser import, and
   automatic rolling backups are not implemented.
 - The app is responsive but is not yet configured as an installable PWA.
-- Notes and materials have fields for task linking, but the UI for attaching them to tasks is still limited.
 - PDF upload/storage is not implemented yet; materials currently store reference URLs and notes.
 - There is no hosted sync, authentication, or multi-device support yet.
 - There is no live Hermes integration yet; the local export endpoint is the
@@ -480,8 +495,6 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
 
 ### 4. Strengthen Notes, Diary, and Materials
 
-- Add UI for linking notes to tasks.
-- Add UI for linking materials to tasks or notes.
 - Add search and tag filtering for notes and materials.
 - Consider markdown support for diary and notes.
 - Add richer diary states for empty days and completed reviews.
@@ -525,7 +538,7 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
    daily use before widening those workflows.
 3. Replace the remaining visible placeholder controls with working manual
    planning actions or remove them until specified.
-4. Improve task-to-note and task-to-material linking.
+4. Add search and tag filtering for Notes and References.
 5. Add installable PWA metadata and verify offline/local behavior.
 6. Keep the handoff convention:
    - Gemini records front-end design and UI changes in `DAYFLOW_CHANGELOG.md`.

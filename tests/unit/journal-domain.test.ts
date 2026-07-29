@@ -3,8 +3,11 @@ import test from "node:test";
 import {
   decodeJournalCursor,
   encodeJournalCursor,
+  inferMaterialTitle,
+  inferMaterialType,
   JOURNAL_PAGE_MAX_LIMIT,
   JournalRequestError,
+  normalizeNoteTags,
   parseJournalPage,
   parseMaterialCreateInput,
   parseNoteCreateInput
@@ -22,16 +25,27 @@ test("Note input requires content and normalizes bounded tags", () => {
     {
       content: "  Keep the draft  ",
       tags: [" Product ", "#Design Systems", "product", ""],
-      date: "2026-07-27"
+      date: "2026-07-27",
+      taskId: " task-1 ",
+      projectId: " project-1 "
     },
     new Date("2026-07-01T12:00:00-05:00")
   );
 
   assert.equal(note.content, "Keep the draft");
   assert.deepEqual(note.tags, ["product", "design-systems"]);
+  assert.equal(note.taskId, "task-1");
+  assert.equal(note.projectId, "project-1");
   assert.equal(note.date.getFullYear(), 2026);
   assert.equal(note.date.getMonth(), 6);
   assert.equal(note.date.getDate(), 27);
+});
+
+test("Note tag normalization is shared by browser and mutation parsing", () => {
+  assert.deepEqual(
+    normalizeNoteTags([" #Decisions ", "Design systems", "decisions"]),
+    ["decisions", "design-systems"]
+  );
 });
 
 test("Material input validates URL and type while preserving the entered URL", () => {
@@ -55,12 +69,20 @@ test("Material input validates URL and type while preserving the entered URL", (
   const material = parseMaterialCreateInput({
     url: " https://www.youtube.com/watch?v=example ",
     title: "",
-    notes: " Watch later "
+    notes: " Watch later ",
+    taskId: " task-1 ",
+    noteId: " note-1 ",
+    projectId: " project-1 "
   });
   assert.equal(material.url, "https://www.youtube.com/watch?v=example");
   assert.equal(material.type, "youtube");
   assert.equal(material.title, "YouTube material");
   assert.equal(material.notes, "Watch later");
+  assert.equal(material.taskId, "task-1");
+  assert.equal(material.noteId, "note-1");
+  assert.equal(material.projectId, "project-1");
+  assert.equal(inferMaterialType(material.url), "youtube");
+  assert.equal(inferMaterialTitle(material.type), "YouTube material");
 });
 
 test("Journal cursors round trip and cannot cross collection types", () => {

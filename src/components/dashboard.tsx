@@ -263,6 +263,7 @@ type ReviewSummary = {
 type Bootstrap = {
   today: string;
   todayKey: string;
+  workspaceEmpty: boolean;
   tasks: Task[];
   paletteTasks: PaletteTaskRecord[];
   notes: Note[];
@@ -662,6 +663,7 @@ export function Dashboard() {
       !response.ok ||
       !result ||
       typeof result !== "object" ||
+      typeof result.workspaceEmpty !== "boolean" ||
       !Array.isArray(result.tasks) ||
       typeof result.todayKey !== "string" ||
       !/^\d{4}-\d{2}-\d{2}$/.test(result.todayKey) ||
@@ -999,6 +1001,12 @@ export function Dashboard() {
     closeCommandPaletteForHandoff();
     setMobileMoreOpen(false);
     if (next !== "projects") setSelectedProjectId(null);
+  }
+
+  function openFirstProject() {
+    setSelectedProjectId(null);
+    setProjectCreateOpen(true);
+    navigate("projects");
   }
 
   function openFocus(target: FocusTarget) {
@@ -2154,9 +2162,7 @@ export function Dashboard() {
   const completedSessions = focus.snapshot?.today.completedSessions ?? 0;
   const firstRun =
     firstRunSeen === false &&
-    data.tasks.length === 0 &&
-    data.projects.length === 0 &&
-    data.activities.length === 0;
+    data.workspaceEmpty;
 
   return (
     <main className="app-shell focus-shell">
@@ -2254,6 +2260,8 @@ export function Dashboard() {
             saving={taskCreatePending}
             onTitleChange={setNewTask}
             onBegin={beginFirstRun}
+            onCreateProject={openFirstProject}
+            onOpenCapture={openCommandPalette}
           />
         )}
         {screen === "today" && !firstRun && (
@@ -3314,13 +3322,17 @@ function FirstRunPage({
   title,
   saving,
   onTitleChange,
-  onBegin
+  onBegin,
+  onCreateProject,
+  onOpenCapture
 }: {
   today: string;
   title: string;
   saving: boolean;
   onTitleChange: (title: string) => void;
   onBegin: (title: string, startFocus: boolean) => Promise<void>;
+  onCreateProject: () => void;
+  onOpenCapture: () => void;
 }) {
   return (
     <div className="first-run-page page-stack">
@@ -3329,6 +3341,28 @@ function FirstRunPage({
         Dayflow keeps one honest record of where your attention went. There is nothing
         to import and nothing to configure — the first block of focus is the whole setup.
       </p>
+      <ol className="first-run-loop" aria-label="Dayflow workflow">
+        <li>
+          <strong>Decide</strong>
+          <small>what matters</small>
+        </li>
+        <li>
+          <strong>Plan</strong>
+          <small>when to do it</small>
+        </li>
+        <li>
+          <strong>Record</strong>
+          <small>what happened</small>
+        </li>
+        <li>
+          <strong>Capture</strong>
+          <small>useful context</small>
+        </li>
+        <li>
+          <strong>Review</strong>
+          <small>evidence, choose next</small>
+        </li>
+      </ol>
       <section className="first-run-start">
         <span className="eyebrow focus-eyebrow">Start here</span>
         <label>
@@ -3342,6 +3376,7 @@ function FirstRunPage({
         </label>
         <div>
           <button
+            type="button"
             className="primary-button"
             disabled={saving || !title.trim()}
             onClick={() => void onBegin(title, true)}
@@ -3350,6 +3385,7 @@ function FirstRunPage({
             {saving ? "Saving…" : "Focus on it for 25m"}
           </button>
           <button
+            type="button"
             className="secondary-button"
             disabled={saving || !title.trim()}
             onClick={() => void onBegin(title, false)}
@@ -3360,14 +3396,22 @@ function FirstRunPage({
       </section>
       <section className="first-run-ready">
         <span className="eyebrow">When you are ready</span>
-        <button>
+        <button
+          type="button"
+          disabled={saving}
+          onClick={onCreateProject}
+        >
           <Layers3 size={17} />
           <span>
             <strong>Group work under a project</strong>
             <small>Only worth it when something takes more than a few days.</small>
           </span>
         </button>
-        <button>
+        <button
+          type="button"
+          disabled={saving}
+          onClick={onOpenCapture}
+        >
           <NotebookPen size={17} />
           <span>
             <strong>

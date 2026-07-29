@@ -165,6 +165,7 @@ export function ProjectsWorkspace({
   const [detail, setDetail] = useState<ProjectDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [error, setError] = useState("");
+  const createButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!selectedProjectId) {
@@ -201,6 +202,11 @@ export function ProjectsWorkspace({
 
   async function sync() {
     await Promise.all([reloadDetail(), onDataChanged()]);
+  }
+
+  function closeCreateForm() {
+    onCreateOpenChange(false);
+    window.setTimeout(() => createButtonRef.current?.focus(), 0);
   }
 
   async function updateProject(patch: ProjectPatch, reportError = true) {
@@ -306,7 +312,12 @@ export function ProjectsWorkspace({
             <h1>Projects</h1>
             <p>Keep a finishable outcome connected to the work you do each day.</p>
           </div>
-          <button className="primary-button" onClick={() => onCreateOpenChange(true)}>
+          <button
+            ref={createButtonRef}
+            type="button"
+            className="primary-button"
+            onClick={() => onCreateOpenChange(true)}
+          >
             <Plus size={16} />
             New project
           </button>
@@ -314,7 +325,7 @@ export function ProjectsWorkspace({
 
         {createOpen && (
           <ProjectCreateForm
-            onCancel={() => onCreateOpenChange(false)}
+            onCancel={closeCreateForm}
             onCreated={async (project) => {
               onCreateOpenChange(false);
               try {

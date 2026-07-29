@@ -59,6 +59,10 @@ The Journal retrieval contract is:
 
 - `docs/specs/JOURNAL_SEARCH_FILTERING_V1.md` — implemented July 29
 
+The first-run workspace-readiness and handoff contract is:
+
+- `docs/specs/FIRST_RUN_ONBOARDING_V1.md` — implemented July 29
+
 The canonical workspace navigation decision is:
 
 - `docs/adr/0001-six-destination-workspace.md`
@@ -130,6 +134,21 @@ Funemployment Day has a narrower and immediately understandable promise around r
   effort budget.
 - Confirms cancellation when a Focus Session has accumulated meaningful work.
 - Makes Activity span the tablet grid instead of leaving an empty panel cell.
+
+### First-Run Onboarding
+
+- Shows onboarding only for a genuinely empty workspace, using complete
+  persisted Projects, Tasks, Notes, Diary Entries, Reviews, References, Time
+  Blocks, Activities, and Focus Sessions rather than today's preview.
+- Keeps internal Mutation Receipts from falsely establishing a workspace.
+- Explains the Decide → Plan → Record → Capture → Review loop without adding a
+  setup wizard.
+- Preserves the first-Task draft through canceled handoffs and idempotent
+  lost-success recovery.
+- Opens the existing Create Project and Search or Add surfaces with deliberate
+  forward and return focus.
+- Keeps secondary handoffs out of a pending first-Task save and gives all four
+  phone actions 44-pixel touch targets without horizontal overflow.
 
 ### Local Data Reliability
 
@@ -428,9 +447,14 @@ option, saved relationship labels, and phone usability. Journal Search &
 Filtering coverage verifies complete Note and Reference search, exact tags,
 literal wildcard behavior, query-bound cursors, stale-response rejection,
 exact retry replay, independent relationship options, preserved capture drafts
-and loaded history, and phone usability. The complete July 29, 2026 reliability
-gate passed with 137 unit tests, 13 backup/integration tests, all migration
-fixtures, the production build, and 95 Chromium browser tests.
+and loaded history, and phone usability.
+
+First-Run Onboarding coverage verifies complete-history workspace readiness,
+internal-record exclusion, Project and Capture keyboard handoffs, forward and
+return focus, preserved drafts, idempotent lost-success recovery, pending-save
+exclusion, and phone usability. The complete July 29, 2026 reliability gate
+passed with 137 unit tests, 14 backup/integration tests, all migration fixtures,
+the production build, and 100 Chromium browser tests.
 
 CSV Export coverage verifies complete historical Task and Activity retrieval,
 stable columns and ordering, Manual and Focus Activity inclusion, exact and
@@ -531,7 +555,6 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
 - Add a web app manifest, icons, and installable PWA behavior.
 - Define useful offline behavior and make local data status visible.
 - Keep Dayflow’s quiet notebook visual identity instead of adopting a generic SaaS dashboard style.
-- Add a short first-run explanation of the Decide → Plan → Record → Capture → Review loop.
 
 ### 8. Prepare for Future Hosted Version
 
@@ -546,10 +569,7 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
    resumes.
 2. Validate Manual Time Blocks, Activity editing, and the weekly Review through
    daily use before widening those workflows.
-3. Replace the remaining visible placeholder controls with working manual
-   planning actions or remove them until specified.
-4. Add installable PWA metadata and verify offline/local behavior.
-5. Keep the handoff convention:
+3. Add installable PWA metadata and verify offline/local behavior.
+4. Keep the handoff convention:
    - Gemini records front-end design and UI changes in `DAYFLOW_CHANGELOG.md`.
    - This file records product status, implementation status, limitations, and development plan.
-6. Expand the README with the core Decide → Plan → Record → Capture → Review workflow as the app shape stabilizes.

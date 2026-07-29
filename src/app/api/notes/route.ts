@@ -6,50 +6,18 @@ import {
   runIdempotentCreate
 } from "@/lib/idempotent-mutations";
 import {
-  encodeJournalCursor,
   JournalRequestError,
-  parseJournalPage,
   parseNoteCreateInput,
   parseStoredTags
 } from "@/lib/journal-domain";
+import { readJournalHistory } from "@/lib/journal-history";
 import { resolveJournalAttribution } from "@/lib/journal-relations";
 
 export async function GET(request: NextRequest) {
   try {
-    const { limit, cursor } = parseJournalPage(
-      request.nextUrl.searchParams,
-      "note"
+    return NextResponse.json(
+      await readJournalHistory(prisma, "note", request.nextUrl.searchParams)
     );
-    const [records, totalCount] = await prisma.$transaction([
-      prisma.note.findMany({
-        where: cursor
-          ? {
-              OR: [
-                { createdAt: { lt: cursor.createdAt } },
-                {
-                  createdAt: cursor.createdAt,
-                  id: { lt: cursor.id }
-                }
-              ]
-            }
-          : undefined,
-        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-        take: limit + 1
-      }),
-      prisma.note.count()
-    ]);
-    const hasMore = records.length > limit;
-    const notes = records.slice(0, limit).map((note) => ({
-      ...note,
-      tags: parseStoredTags(note.tags)
-    }));
-    const last = hasMore ? records[limit - 1] : null;
-
-    return NextResponse.json({
-      items: notes,
-      nextCursor: last ? encodeJournalCursor("note", last) : null,
-      totalCount
-    });
   } catch (error) {
     return journalErrorResponse(error, "Notes could not be loaded.");
   }

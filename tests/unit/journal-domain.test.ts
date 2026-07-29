@@ -104,6 +104,39 @@ test("Journal cursors round trip and cannot cross collection types", () => {
   );
 });
 
+test("filtered Journal cursors are bound to one canonical query scope", () => {
+  const createdAt = new Date("2026-07-27T17:25:31.123Z");
+  const encoded = encodeJournalCursor(
+    "note",
+    { createdAt, id: "note_123" },
+    "scope-a"
+  );
+
+  assert.deepEqual(decodeJournalCursor(encoded, "note", "scope-a"), {
+    createdAt,
+    id: "note_123"
+  });
+  for (const scope of ["", "scope-b"]) {
+    assert.throws(
+      () => decodeJournalCursor(encoded, "note", scope),
+      (error) =>
+        error instanceof JournalRequestError &&
+        error.code === "INVALID_CURSOR"
+    );
+  }
+
+  const unfiltered = encodeJournalCursor("note", {
+    createdAt,
+    id: "note_123"
+  });
+  assert.throws(
+    () => decodeJournalCursor(unfiltered, "note", "scope-a"),
+    (error) =>
+      error instanceof JournalRequestError &&
+      error.code === "INVALID_CURSOR"
+  );
+});
+
 test("Journal page parsing caps large limits and rejects ambiguous input", () => {
   const capped = parseJournalPage(
     new URLSearchParams({ limit: "10000" }),

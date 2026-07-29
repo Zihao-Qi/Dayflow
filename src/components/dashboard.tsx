@@ -31,6 +31,7 @@ import {
   Plus,
   RefreshCw,
   Save,
+  Search,
   Sparkles,
   Trash2
 } from "lucide-react";
@@ -40,6 +41,13 @@ import { ProjectsWorkspace } from "@/components/projects-workspace";
 import { FocusDraft, FocusRail } from "@/components/focus-timer";
 import { useFocusSession } from "@/components/focus-session-provider";
 import { SaveStateChip, useSaveState } from "@/components/save-state";
+import {
+  useJournalEvidenceHistory,
+  type JournalHistoryResult,
+  type JournalHistoryState,
+  type NoteHistoryCriteria,
+  type ReferenceHistoryCriteria
+} from "@/components/use-journal-evidence-history";
 import {
   TimeBlockDialog,
   type TimeBlockEditorDraft,
@@ -63,6 +71,8 @@ import {
 import {
   inferMaterialTitle,
   inferMaterialType,
+  JOURNAL_SEARCH_MAX_LENGTH,
+  NOTE_TAG_MAX_LENGTH,
   normalizeNoteTags
 } from "@/lib/journal-domain";
 import {
@@ -134,15 +144,6 @@ type ActivityEditor = {
   original: ActivityEntry;
   draft: ActivityDraft;
 };
-type HistoryState<T> = {
-  items: T[];
-  nextCursor: string | null;
-  totalCount: number | null;
-  loaded: boolean;
-  loading: boolean;
-  error: string;
-};
-
 type Task = {
   id: string;
   title: string;
@@ -280,14 +281,6 @@ type Bootstrap = {
 const TIMELINE_BASE_HOUR_HEIGHT_PX = 52;
 const TIMELINE_DESKTOP_TARGET_HEIGHT_PX = 24;
 const TIMELINE_TOUCH_TARGET_HEIGHT_PX = 44;
-const emptyHistory = <T,>(): HistoryState<T> => ({
-  items: [],
-  nextCursor: null,
-  totalCount: null,
-  loaded: false,
-  loading: false,
-  error: ""
-});
 const emptyNoteCaptureDraft: NoteCaptureDraft = {
   content: "",
   tags: "",
@@ -351,6 +344,20 @@ function taskProjectIdFor(
   tasks: JournalTaskOption[]
 ): string | null {
   return tasks.find(({ id }) => id === taskId)?.projectId ?? null;
+}
+
+function mergeJournalRecords<T extends { id: string; createdAt: string }>(
+  ...collections: T[][]
+) {
+  const byId = new Map<string, T>();
+  for (const item of collections.flat()) {
+    if (!byId.has(item.id)) byId.set(item.id, item);
+  }
+  return [...byId.values()].sort(
+    (left, right) =>
+      Date.parse(right.createdAt) - Date.parse(left.createdAt) ||
+      right.id.localeCompare(left.id)
+  );
 }
 
 function normalizeReview(review: Review): Review {
@@ -477,41 +484,6 @@ function isTaskReorderResponse(
   );
 }
 
-function isHistoryResponse<T>(
-  value: unknown,
-  isItem: (item: unknown) => item is T
-): value is { items: T[]; nextCursor: string | null; totalCount: number } {
-  if (!value || typeof value !== "object") return false;
-  const page = value as {
-    items?: unknown;
-    nextCursor?: unknown;
-    totalCount?: unknown;
-  };
-  return (
-    Array.isArray(page.items) &&
-    page.items.every(isItem) &&
-    (page.nextCursor === null || typeof page.nextCursor === "string") &&
-    Number.isInteger(page.totalCount) &&
-    Number(page.totalCount) >= 0
-  );
-}
-
-function appendUnique<T extends { id: string }>(current: T[], next: T[]) {
-  const seen = new Set(current.map((item) => item.id));
-  return [...current, ...next.filter((item) => !seen.has(item.id))];
-}
-
-function mergeHistoryReset<T extends { id: string; createdAt: string }>(
-  serverItems: T[],
-  currentItems: T[]
-) {
-  return appendUnique(serverItems, currentItems).sort(
-    (left, right) =>
-      Date.parse(right.createdAt) - Date.parse(left.createdAt) ||
-      right.id.localeCompare(left.id)
-  );
-}
-
 function mutationIdFor(
   reference: React.MutableRefObject<PendingMutation | null>,
   payload: unknown
@@ -534,17 +506,23 @@ export function Dashboard() {
   const compactLayout = layoutMode !== "desktop";
   const phoneLayout = layoutMode === "phone";
   const [data, setData] = useState<Bootstrap | null>(null);
-  const [noteHistory, setNoteHistory] = useState<HistoryState<Note>>(
-    emptyHistory<Note>
-  );
-  const [materialHistory, setMaterialHistory] = useState<HistoryState<Material>>(
-    emptyHistory<Material>
-  );
   const [screen, setScreen] = useState<Screen>("today");
   const [railExpanded, setRailExpanded] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState("");
   const [journalView, setJournalView] = useState<JournalView>("daily");
+  const noteHistory = useJournalEvidenceHistory(
+    "note",
+    screen === "journal" && journalView === "notes"
+  );
+  const materialHistory = useJournalEvidenceHistory(
+    "material",
+    screen === "journal" && journalView === "references"
+  );
+  const noteOptionHistory = useJournalEvidenceHistory(
+    "note",
+    screen === "journal" && journalView === "references"
+  );
   const [backlogArrange, setBacklogArrange] =
     useState<BacklogArrange>("quadrant");
   const [backlogScopeProjectId, setBacklogScopeProjectId] = useState<string | null>(
@@ -603,8 +581,6 @@ export function Dashboard() {
   const materialCreateMutation = useRef<PendingMutation | null>(null);
   const activityCreateMutation = useRef<PendingMutation | null>(null);
   const timeBlockCreateMutation = useRef<PendingMutation | null>(null);
-  const noteHistoryRequest = useRef(false);
-  const materialHistoryRequest = useRef(false);
   const paletteOpener = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -656,42 +632,6 @@ export function Dashboard() {
   useEffect(() => {
     if (focus.retryNext) setRailExpanded(true);
   }, [focus.retryNext]);
-
-  useEffect(() => {
-    if (
-      screen === "journal" &&
-      (journalView === "notes" || journalView === "references") &&
-      !noteHistory.loaded &&
-      !noteHistory.loading &&
-      !noteHistory.error
-    ) {
-      void loadNoteHistory(true);
-    }
-  }, [
-    screen,
-    journalView,
-    noteHistory.loaded,
-    noteHistory.loading,
-    noteHistory.error
-  ]);
-
-  useEffect(() => {
-    if (
-      screen === "journal" &&
-      journalView === "references" &&
-      !materialHistory.loaded &&
-      !materialHistory.loading &&
-      !materialHistory.error
-    ) {
-      void loadMaterialHistory(true);
-    }
-  }, [
-    screen,
-    journalView,
-    materialHistory.loaded,
-    materialHistory.loading,
-    materialHistory.error
-  ]);
 
   useEffect(() => {
     function onShortcut(event: KeyboardEvent) {
@@ -749,94 +689,6 @@ export function Dashboard() {
       );
       setAppAnnouncement("Saved, but the latest view could not be refreshed.");
       return false;
-    }
-  }
-
-  async function loadNoteHistory(reset = false) {
-    if (noteHistoryRequest.current) return;
-    const cursor = reset ? null : noteHistory.nextCursor;
-    if (!reset && noteHistory.loaded && !cursor) return;
-    noteHistoryRequest.current = true;
-    setNoteHistory((current) => ({ ...current, loading: true, error: "" }));
-    try {
-      const query = new URLSearchParams({ limit: "50" });
-      if (cursor) query.set("cursor", cursor);
-      const response = await fetch(`/api/notes?${query}`, { cache: "no-store" });
-      const result = await response.json().catch(() => null);
-      if (!response.ok || !isHistoryResponse(result, isNoteResponse)) {
-        throw new Error(
-          result && typeof result.error === "string"
-            ? result.error
-            : "Note history could not be loaded."
-        );
-      }
-      setNoteHistory((current) => {
-        const items = reset
-          ? mergeHistoryReset(result.items, current.items)
-          : appendUnique(current.items, result.items);
-        return {
-          items,
-          nextCursor: result.nextCursor,
-          totalCount: Math.max(result.totalCount, items.length),
-          loaded: true,
-          loading: false,
-          error: ""
-        };
-      });
-    } catch (error) {
-      setNoteHistory((current) => ({
-        ...current,
-        loading: false,
-        error:
-          error instanceof Error ? error.message : "Note history could not be loaded."
-      }));
-    } finally {
-      noteHistoryRequest.current = false;
-    }
-  }
-
-  async function loadMaterialHistory(reset = false) {
-    if (materialHistoryRequest.current) return;
-    const cursor = reset ? null : materialHistory.nextCursor;
-    if (!reset && materialHistory.loaded && !cursor) return;
-    materialHistoryRequest.current = true;
-    setMaterialHistory((current) => ({ ...current, loading: true, error: "" }));
-    try {
-      const query = new URLSearchParams({ limit: "50" });
-      if (cursor) query.set("cursor", cursor);
-      const response = await fetch(`/api/materials?${query}`, { cache: "no-store" });
-      const result = await response.json().catch(() => null);
-      if (!response.ok || !isHistoryResponse(result, isMaterialResponse)) {
-        throw new Error(
-          result && typeof result.error === "string"
-            ? result.error
-            : "Reference history could not be loaded."
-        );
-      }
-      setMaterialHistory((current) => {
-        const items = reset
-          ? mergeHistoryReset(result.items, current.items)
-          : appendUnique(current.items, result.items);
-        return {
-          items,
-          nextCursor: result.nextCursor,
-          totalCount: Math.max(result.totalCount, items.length),
-          loaded: true,
-          loading: false,
-          error: ""
-        };
-      });
-    } catch (error) {
-      setMaterialHistory((current) => ({
-        ...current,
-        loading: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Reference history could not be loaded."
-      }));
-    } finally {
-      materialHistoryRequest.current = false;
     }
   }
 
@@ -902,12 +754,8 @@ export function Dashboard() {
   }, [data?.paletteTasks, data?.tasks]);
   const journalNoteOptions = useMemo(
     () =>
-      mergeHistoryReset(noteHistory.items, data?.notes ?? []).sort(
-        (left, right) =>
-          Date.parse(right.createdAt) - Date.parse(left.createdAt) ||
-          right.id.localeCompare(left.id)
-      ),
-    [data?.notes, noteHistory.items]
+      mergeJournalRecords(noteOptionHistory.items, data?.notes ?? []),
+    [data?.notes, noteOptionHistory.items]
   );
   const backlogTasks = useMemo(
     () =>
@@ -1634,17 +1482,8 @@ export function Dashboard() {
       }
       setNoteDraft(emptyNoteCaptureDraft);
       noteCreateMutation.current = null;
-      setNoteHistory((current) => {
-        const exists = current.items.some((item) => item.id === result.id);
-        return {
-          ...current,
-          items: [result, ...current.items.filter((item) => item.id !== result.id)],
-          totalCount:
-            current.totalCount === null
-              ? null
-              : current.totalCount + (exists ? 0 : 1)
-        };
-      });
+      noteHistory.refresh();
+      noteOptionHistory.refresh();
       setAppError("");
       if (noteCreateWasInError.current) {
         noteCreateWasInError.current = false;
@@ -1711,20 +1550,7 @@ export function Dashboard() {
       }
       setMaterialDraft(emptyMaterialCaptureDraft);
       materialCreateMutation.current = null;
-      setMaterialHistory((current) => {
-        const exists = current.items.some((item) => item.id === result.id);
-        return {
-          ...current,
-          items: [
-            result,
-            ...current.items.filter((item) => item.id !== result.id)
-          ],
-          totalCount:
-            current.totalCount === null
-              ? null
-              : current.totalCount + (exists ? 0 : 1)
-        };
-      });
+      materialHistory.refresh();
       setAppError("");
       if (materialCreateWasInError.current) {
         materialCreateWasInError.current = false;
@@ -2537,18 +2363,9 @@ export function Dashboard() {
             }
             noteHistory={noteHistory}
             materialHistory={materialHistory}
+            noteOptionHistory={noteOptionHistory}
             tasks={journalTaskOptions}
             noteOptions={journalNoteOptions}
-            onLoadMoreNotes={() => void loadNoteHistory(false)}
-            onRetryNotes={() => {
-              setNoteHistory((current) => ({ ...current, error: "" }));
-              void loadNoteHistory(!noteHistory.loaded);
-            }}
-            onLoadMoreMaterials={() => void loadMaterialHistory(false)}
-            onRetryMaterials={() => {
-              setMaterialHistory((current) => ({ ...current, error: "" }));
-              void loadMaterialHistory(!materialHistory.loaded);
-            }}
             projects={projectById}
             onDiaryChange={setDiaryValue}
             onSaveDiary={saveDiary}
@@ -4458,12 +4275,9 @@ function JournalPage({
   materials,
   noteHistory,
   materialHistory,
+  noteOptionHistory,
   tasks,
   noteOptions,
-  onLoadMoreNotes,
-  onRetryNotes,
-  onLoadMoreMaterials,
-  onRetryMaterials,
   projects,
   onDiaryChange,
   onSaveDiary,
@@ -4486,14 +4300,14 @@ function JournalPage({
   diary: Diary;
   notes: Note[];
   materials: Material[];
-  noteHistory: HistoryState<Note>;
-  materialHistory: HistoryState<Material>;
+  noteHistory: JournalHistoryResult<Note, NoteHistoryCriteria>;
+  materialHistory: JournalHistoryResult<
+    Material,
+    ReferenceHistoryCriteria
+  >;
+  noteOptionHistory: JournalHistoryResult<Note, NoteHistoryCriteria>;
   tasks: JournalTaskOption[];
   noteOptions: Note[];
-  onLoadMoreNotes: () => void;
-  onRetryNotes: () => void;
-  onLoadMoreMaterials: () => void;
-  onRetryMaterials: () => void;
   projects: Map<string, ProjectSummary>;
   onDiaryChange: <K extends keyof Diary>(key: K, value: Diary[K]) => void;
   onSaveDiary: (diary: Diary) => Promise<boolean>;
@@ -4531,6 +4345,12 @@ function JournalPage({
 
   const noteTaskProjectId = taskProjectIdFor(noteDraft.taskId, tasks);
   const materialTaskProjectId = taskProjectIdFor(materialDraft.taskId, tasks);
+  const noteFiltersActive = Boolean(
+    noteHistory.criteria.q.trim() || noteHistory.criteria.tag.trim()
+  );
+  const referenceSearchActive = Boolean(
+    materialHistory.criteria.q.trim()
+  );
 
   return (
     <div className="journal-page page-stack">
@@ -4693,18 +4513,51 @@ function JournalPage({
               {noteSaving ? "Saving…" : "Save note"}
             </button>
           </section>
-          <section>
+          <section className="journal-history-results">
+            <JournalSearchControls
+              kind="note"
+              text={noteHistory.criteria.q}
+              tag={noteHistory.criteria.tag}
+              loading={noteHistory.loading}
+              onTextChange={(q) =>
+                noteHistory.setCriteria({
+                  ...noteHistory.criteria,
+                  q
+                })
+              }
+              onTagChange={(tag) =>
+                noteHistory.setCriteria({
+                  ...noteHistory.criteria,
+                  tag
+                })
+              }
+              onClear={() =>
+                noteHistory.setCriteria({ q: "", tag: "" })
+              }
+            />
             <NoteCards
               notes={notes}
               projects={projects}
               tasks={tasks}
-              emptyCopy={noteHistory.loading ? "" : "No notes saved yet."}
+              onTagSelect={(tag) =>
+                noteHistory.setCriteria({
+                  ...noteHistory.criteria,
+                  tag
+                })
+              }
+              emptyCopy={
+                noteHistory.loading || noteHistory.error
+                  ? ""
+                  : noteFiltersActive
+                    ? "No notes match these filters."
+                    : "No notes saved yet."
+              }
             />
             <HistoryFooter
               noun="notes"
               state={noteHistory}
-              onLoadMore={onLoadMoreNotes}
-              onRetry={onRetryNotes}
+              onLoadMore={noteHistory.loadNext}
+              onRetry={noteHistory.retry}
             />
           </section>
         </div>
@@ -4759,7 +4612,7 @@ function JournalPage({
               <select
                 aria-label="Reference linked note"
                 value={materialDraft.noteId}
-                disabled={materialSaving || noteHistory.loading}
+                disabled={materialSaving || noteOptionHistory.loading}
                 onChange={(event) =>
                   onMaterialDraftChange("noteId", event.target.value)
                 }
@@ -4772,23 +4625,23 @@ function JournalPage({
                 ))}
               </select>
             </label>
-            {noteHistory.nextCursor && (
+            {noteOptionHistory.nextCursor && (
               <button
                 className="text-button journal-note-options-more"
                 type="button"
-                disabled={noteHistory.loading || materialSaving}
-                onClick={onLoadMoreNotes}
+                disabled={noteOptionHistory.loading || materialSaving}
+                onClick={noteOptionHistory.loadNext}
               >
-                {noteHistory.loading ? "Loading…" : "Load older notes"}
+                {noteOptionHistory.loading ? "Loading…" : "Load older notes"}
               </button>
             )}
-            {noteHistory.error && (
+            {noteOptionHistory.error && (
               <div className="journal-note-options-error" role="alert">
-                <span>{noteHistory.error}</span>
+                <span>{noteOptionHistory.error}</span>
                 <button
                   className="text-button"
                   type="button"
-                  onClick={onRetryNotes}
+                  onClick={noteOptionHistory.retry}
                 >
                   Retry notes
                 </button>
@@ -4824,19 +4677,36 @@ function JournalPage({
               {materialSaving ? "Saving…" : "Save reference"}
             </button>
           </section>
-          <section>
+          <section className="journal-history-results">
+            <JournalSearchControls
+              kind="material"
+              text={materialHistory.criteria.q}
+              loading={materialHistory.loading}
+              onTextChange={(q) =>
+                materialHistory.setCriteria({ q })
+              }
+              onClear={() =>
+                materialHistory.setCriteria({ q: "" })
+              }
+            />
             <ReferenceCards
               materials={materials}
               projects={projects}
               tasks={tasks}
               notes={noteOptions}
-              emptyCopy={materialHistory.loading ? "" : "No references saved yet."}
+              emptyCopy={
+                materialHistory.loading || materialHistory.error
+                  ? ""
+                  : referenceSearchActive
+                    ? "No references match this search."
+                    : "No references saved yet."
+              }
             />
             <HistoryFooter
               noun="references"
               state={materialHistory}
-              onLoadMore={onLoadMoreMaterials}
-              onRetry={onRetryMaterials}
+              onLoadMore={materialHistory.loadNext}
+              onRetry={materialHistory.retry}
             />
           </section>
         </div>
@@ -5553,15 +5423,80 @@ function ScoreDots({
   );
 }
 
+function JournalSearchControls({
+  kind,
+  text,
+  tag = "",
+  loading,
+  onTextChange,
+  onTagChange,
+  onClear
+}: {
+  kind: "note" | "material";
+  text: string;
+  tag?: string;
+  loading: boolean;
+  onTextChange: (value: string) => void;
+  onTagChange?: (value: string) => void;
+  onClear: () => void;
+}) {
+  const notes = kind === "note";
+  const active = Boolean(text.trim() || (notes && tag.trim()));
+  return (
+    <div
+      className="journal-search-controls"
+      role="search"
+      aria-label={notes ? "Search Notes" : "Search References"}
+      aria-busy={loading}
+    >
+      <label>
+        <span>{notes ? "Search Notes" : "Search References"}</span>
+        <span className="journal-search-input">
+          <Search size={15} aria-hidden="true" />
+          <input
+            type="search"
+            value={text}
+            maxLength={JOURNAL_SEARCH_MAX_LENGTH}
+            onChange={(event) => onTextChange(event.target.value)}
+            placeholder={
+              notes
+                ? "Find text in complete Note history"
+                : "Find reference names, links, or notes"
+            }
+          />
+        </span>
+      </label>
+      {notes && onTagChange && (
+        <label>
+          <span>Filter by tag</span>
+          <input
+            value={tag}
+            maxLength={NOTE_TAG_MAX_LENGTH}
+            onChange={(event) => onTagChange(event.target.value)}
+            placeholder="For example, decisions"
+          />
+        </label>
+      )}
+      {active && (
+        <button className="text-button" type="button" onClick={onClear}>
+          {notes ? "Clear filters" : "Clear search"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function NoteCards({
   notes,
   projects,
   tasks,
+  onTagSelect,
   emptyCopy = "No notes captured today."
 }: {
   notes: Note[];
   projects: Map<string, ProjectSummary>;
   tasks: JournalTaskOption[];
+  onTagSelect?: (tag: string) => void;
   emptyCopy?: string;
 }) {
   const taskById = new Map(tasks.map((task) => [task.id, task]));
@@ -5571,7 +5506,6 @@ function NoteCards({
         const task = note.taskId ? taskById.get(note.taskId) : null;
         const projectId = task?.projectId ?? note.projectId;
         const details = [
-          note.tags.map((tag) => `#${tag}`).join(" "),
           note.taskId ? `Task: ${task?.title ?? "Linked task"}` : "",
           projectId && projects.get(projectId)
             ? projects.get(projectId)?.name ?? ""
@@ -5580,6 +5514,26 @@ function NoteCards({
         return (
           <article className="note-card" key={note.id}>
             <p>{note.content}</p>
+            {note.tags.length > 0 && (
+              <div className="note-tag-list" aria-label="Note tags">
+                {note.tags.map((tag) =>
+                  onTagSelect ? (
+                    <button
+                      className="note-tag"
+                      type="button"
+                      key={tag}
+                      onClick={() => onTagSelect(tag)}
+                    >
+                      #{tag}
+                    </button>
+                  ) : (
+                    <span className="note-tag" key={tag}>
+                      #{tag}
+                    </span>
+                  )
+                )}
+              </div>
+            )}
             {details.length > 0 && <small>{details.join(" · ")}</small>}
           </article>
         );
@@ -5656,7 +5610,7 @@ function HistoryFooter<T>({
   onRetry
 }: {
   noun: string;
-  state: HistoryState<T>;
+  state: JournalHistoryState<T>;
   onLoadMore: () => void;
   onRetry: () => void;
 }) {

@@ -22,6 +22,31 @@ export type JournalMaterialRecord = {
   createdAt: string;
 };
 
+export type JournalHistoryPage<T> = {
+  items: T[];
+  nextCursor: string | null;
+  totalCount: number;
+};
+
+export function isJournalHistoryPage<T>(
+  value: unknown,
+  isItem: (item: unknown) => item is T
+): value is JournalHistoryPage<T> {
+  if (!value || typeof value !== "object") return false;
+  const page = value as {
+    items?: unknown;
+    nextCursor?: unknown;
+    totalCount?: unknown;
+  };
+  return (
+    Array.isArray(page.items) &&
+    page.items.every(isItem) &&
+    (page.nextCursor === null || typeof page.nextCursor === "string") &&
+    Number.isInteger(page.totalCount) &&
+    Number(page.totalCount) >= 0
+  );
+}
+
 export function isJournalNoteRecord(
   value: unknown
 ): value is JournalNoteRecord {

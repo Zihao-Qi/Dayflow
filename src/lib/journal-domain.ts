@@ -5,6 +5,7 @@ export const JOURNAL_PAGE_MAX_LIMIT = 100;
 export const NOTE_CONTENT_MAX_LENGTH = 20_000;
 export const NOTE_TAG_MAX_COUNT = 20;
 export const NOTE_TAG_MAX_LENGTH = 50;
+export const JOURNAL_SEARCH_MAX_LENGTH = 200;
 export const MATERIAL_TITLE_MAX_LENGTH = 200;
 export const MATERIAL_URL_MAX_LENGTH = 2_048;
 export const MATERIAL_NOTES_MAX_LENGTH = 5_000;
@@ -110,7 +111,8 @@ export function parseMaterialCreateInput(value: unknown): MaterialCreateInput {
 
 export function parseJournalPage(
   searchParams: URLSearchParams,
-  kind: JournalCursorKind
+  kind: JournalCursorKind,
+  queryScope = ""
 ) {
   const limitValues = searchParams.getAll("limit");
   if (limitValues.length > 1) {
@@ -144,29 +146,41 @@ export function parseJournalPage(
     limit,
     cursor:
       cursorValues.length === 1
-        ? decodeJournalCursor(cursorValues[0], kind)
+        ? decodeJournalCursor(cursorValues[0], kind, queryScope)
         : null
   };
 }
 
 export function encodeJournalCursor(
   kind: JournalCursorKind,
-  value: { createdAt: Date; id: string }
+  value: { createdAt: Date; id: string },
+  queryScope = ""
 ) {
   return Buffer.from(
-    JSON.stringify({
-      version: 1,
-      kind,
-      createdAt: value.createdAt.toISOString(),
-      id: value.id
-    }),
+    JSON.stringify(
+      queryScope
+        ? {
+            version: 2,
+            kind,
+            scope: queryScope,
+            createdAt: value.createdAt.toISOString(),
+            id: value.id
+          }
+        : {
+            version: 1,
+            kind,
+            createdAt: value.createdAt.toISOString(),
+            id: value.id
+          }
+    ),
     "utf8"
   ).toString("base64url");
 }
 
 export function decodeJournalCursor(
   value: string,
-  expectedKind: JournalCursorKind
+  expectedKind: JournalCursorKind,
+  expectedScope = ""
 ): JournalCursor {
   try {
     if (
@@ -184,8 +198,14 @@ export function decodeJournalCursor(
     const createdAt = new Date(createdAtText);
     const id = typeof cursor.id === "string" ? cursor.id : "";
 
+    const scopeMatches =
+      (cursor.version === 1 && expectedScope === "") ||
+      (cursor.version === 2 &&
+        expectedScope !== "" &&
+        cursor.scope === expectedScope);
+
     if (
-      cursor.version !== 1 ||
+      !scopeMatches ||
       cursor.kind !== expectedKind ||
       !id ||
       id.length > 191 ||

@@ -6,46 +6,17 @@ import {
   runIdempotentCreate
 } from "@/lib/idempotent-mutations";
 import {
-  encodeJournalCursor,
   JournalRequestError,
-  parseJournalPage,
   parseMaterialCreateInput
 } from "@/lib/journal-domain";
+import { readJournalHistory } from "@/lib/journal-history";
 import { resolveMaterialRelations } from "@/lib/journal-relations";
 
 export async function GET(request: NextRequest) {
   try {
-    const { limit, cursor } = parseJournalPage(
-      request.nextUrl.searchParams,
-      "material"
+    return NextResponse.json(
+      await readJournalHistory(prisma, "material", request.nextUrl.searchParams)
     );
-    const [records, totalCount] = await prisma.$transaction([
-      prisma.material.findMany({
-        where: cursor
-          ? {
-              OR: [
-                { createdAt: { lt: cursor.createdAt } },
-                {
-                  createdAt: cursor.createdAt,
-                  id: { lt: cursor.id }
-                }
-              ]
-            }
-          : undefined,
-        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-        take: limit + 1
-      }),
-      prisma.material.count()
-    ]);
-    const hasMore = records.length > limit;
-    const materials = records.slice(0, limit);
-    const last = hasMore ? records[limit - 1] : null;
-
-    return NextResponse.json({
-      items: materials,
-      nextCursor: last ? encodeJournalCursor("material", last) : null,
-      totalCount
-    });
   } catch (error) {
     return journalErrorResponse(error, "References could not be loaded.");
   }

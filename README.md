@@ -31,7 +31,8 @@ lucide-react. The app runs locally without accounts or hosted services.
 - Manual Time Blocks with freeform or Task-prefilled creation, non-overlapping
   planning, full editing, confirmed deletion, and planned-versus-recorded
   Timeline comparison.
-- Journal workspace for diary entries, quick notes, and saved references.
+- Journal workspace for diary entries, quick notes, and saved references, with
+  Task-linked Notes and Task/Note-linked References.
 - Review workspace for seven-day evidence summaries, Project movement, and a
   period-bound narrative and next-period intention.
 - Project attribution for activities, notes, and saved references.
@@ -51,6 +52,7 @@ Product and corrective specifications:
 - [Manual Time Blocks v1](./docs/specs/TIME_BLOCKS_V1.md)
 - [Activity Capture v1](./docs/specs/ACTIVITY_CAPTURE_V1.md)
 - [Activity Editing v1](./docs/specs/ACTIVITY_EDITING_V1.md)
+- [Journal Relationships v1](./docs/specs/JOURNAL_RELATIONSHIPS_V1.md)
 - [CSV Export v1](./docs/specs/CSV_EXPORT_V1.md)
 - [Six-destination workspace decision](./docs/adr/0001-six-destination-workspace.md)
 

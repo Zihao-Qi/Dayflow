@@ -6356,6 +6356,19 @@ kbd {
   min-height: 140px;
 }
 
+.journal-note-options-more {
+  justify-self: start;
+}
+
+.journal-note-options-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--danger);
+  font-size: 11.5px;
+}
+
 .note-list,
 .material-list {
   display: grid;

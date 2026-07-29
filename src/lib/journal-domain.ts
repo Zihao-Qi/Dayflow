@@ -76,7 +76,7 @@ export function parseNoteCreateInput(
 
   return {
     content,
-    tags: parseTags(body.tags),
+    tags: normalizeNoteTags(body.tags),
     date,
     taskId: parseOptionalRelationshipId(body.taskId, "Task"),
     projectId: parseOptionalRelationshipId(body.projectId, "Project")
@@ -301,7 +301,7 @@ function parseJournalDate(value: unknown, now: Date, errorMessage: string) {
   return date;
 }
 
-function parseTags(value: unknown) {
+export function normalizeNoteTags(value: unknown) {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) {
     throw new JournalRequestError(
@@ -405,7 +405,7 @@ function parseMaterialType(
   return type as MaterialType;
 }
 
-function inferMaterialType(url: string): MaterialType {
+export function inferMaterialType(url: string): MaterialType {
   const parsed = new URL(url);
   const hostname = parsed.hostname.toLowerCase();
   if (
@@ -419,6 +419,6 @@ function inferMaterialType(url: string): MaterialType {
   return "website";
 }
 
-function inferMaterialTitle(type: MaterialType) {
+export function inferMaterialTitle(type: MaterialType) {
   return type === "youtube" ? "YouTube material" : "Saved material";
 }

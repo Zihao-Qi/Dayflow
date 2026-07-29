@@ -61,6 +61,17 @@ import {
   parseLocalDate
 } from "@/lib/dates";
 import {
+  inferMaterialTitle,
+  inferMaterialType,
+  normalizeNoteTags
+} from "@/lib/journal-domain";
+import {
+  isJournalMaterialRecord as isMaterialResponse,
+  isJournalNoteRecord as isNoteResponse,
+  type JournalMaterialRecord,
+  type JournalNoteRecord
+} from "@/lib/journal-records";
+import {
   ACTIVITY_CATEGORY_MAX_LENGTH,
   DEFAULT_ACTIVITY_CATEGORY
 } from "@/lib/activity-categories";
@@ -161,16 +172,9 @@ type PaletteTaskRecord = Pick<
   | "projectId"
 >;
 type ActivityTaskOption = Pick<Task, "id" | "title" | "projectId">;
+type JournalTaskOption = Pick<Task, "id" | "title" | "projectId">;
 
-type Note = {
-  id: string;
-  content: string;
-  tags: string[];
-  taskId: string | null;
-  projectId: string | null;
-  date: string;
-  createdAt: string;
-};
+type Note = JournalNoteRecord;
 
 type Diary = {
   id: string | null;
@@ -191,15 +195,22 @@ type Review = {
   persisted: boolean;
 };
 
-type Material = {
-  id: string;
+type Material = JournalMaterialRecord;
+
+type NoteCaptureDraft = {
+  content: string;
+  tags: string;
+  taskId: string;
+  projectId: string;
+};
+
+type MaterialCaptureDraft = {
   title: string;
   url: string;
-  type: string;
   notes: string;
-  taskId: string | null;
-  projectId: string | null;
-  createdAt: string;
+  taskId: string;
+  noteId: string;
+  projectId: string;
 };
 
 type TimeBlock = TimeBlockRecord;
@@ -277,6 +288,20 @@ const emptyHistory = <T,>(): HistoryState<T> => ({
   loading: false,
   error: ""
 });
+const emptyNoteCaptureDraft: NoteCaptureDraft = {
+  content: "",
+  tags: "",
+  taskId: "",
+  projectId: ""
+};
+const emptyMaterialCaptureDraft: MaterialCaptureDraft = {
+  title: "",
+  url: "",
+  notes: "",
+  taskId: "",
+  noteId: "",
+  projectId: ""
+};
 
 const nav = [
   { id: "today", label: "Today", icon: LayoutDashboard },
@@ -314,6 +339,20 @@ function reviewsEqual(left: Review, right: Review) {
   );
 }
 
+function stringArraysEqual(left: string[], right: string[]) {
+  return (
+    left.length === right.length &&
+    left.every((value, index) => value === right[index])
+  );
+}
+
+function taskProjectIdFor(
+  taskId: string,
+  tasks: JournalTaskOption[]
+): string | null {
+  return tasks.find(({ id }) => id === taskId)?.projectId ?? null;
+}
+
 function normalizeReview(review: Review): Review {
   return {
     ...review,
@@ -348,36 +387,6 @@ function isTaskResponse(value: unknown): value is Task {
     (task.completedAt === null || typeof task.completedAt === "string") &&
     (task.projectId === null || typeof task.projectId === "string") &&
     (task.phaseId === null || typeof task.phaseId === "string")
-  );
-}
-
-function isNoteResponse(value: unknown): value is Note {
-  if (!value || typeof value !== "object") return false;
-  const note = value as Partial<Note>;
-  return (
-    typeof note.id === "string" &&
-    typeof note.content === "string" &&
-    Array.isArray(note.tags) &&
-    note.tags.every((tag) => typeof tag === "string") &&
-    (note.taskId === null || typeof note.taskId === "string") &&
-    (note.projectId === null || typeof note.projectId === "string") &&
-    typeof note.date === "string" &&
-    typeof note.createdAt === "string"
-  );
-}
-
-function isMaterialResponse(value: unknown): value is Material {
-  if (!value || typeof value !== "object") return false;
-  const material = value as Partial<Material>;
-  return (
-    typeof material.id === "string" &&
-    typeof material.title === "string" &&
-    typeof material.url === "string" &&
-    typeof material.type === "string" &&
-    typeof material.notes === "string" &&
-    (material.taskId === null || typeof material.taskId === "string") &&
-    (material.projectId === null || typeof material.projectId === "string") &&
-    typeof material.createdAt === "string"
   );
 }
 
@@ -543,14 +552,13 @@ export function Dashboard() {
   );
   const [newTask, setNewTask] = useState("");
   const [taskCreatePending, setTaskCreatePending] = useState(false);
-  const [newNote, setNewNote] = useState("");
-  const [noteTags, setNoteTags] = useState("");
-  const [noteProjectId, setNoteProjectId] = useState("");
+  const [noteDraft, setNoteDraft] = useState<NoteCaptureDraft>(
+    emptyNoteCaptureDraft
+  );
   const [noteSaving, setNoteSaving] = useState(false);
-  const [materialTitle, setMaterialTitle] = useState("");
-  const [materialUrl, setMaterialUrl] = useState("");
-  const [materialNotes, setMaterialNotes] = useState("");
-  const [materialProjectId, setMaterialProjectId] = useState("");
+  const [materialDraft, setMaterialDraft] = useState<MaterialCaptureDraft>(
+    emptyMaterialCaptureDraft
+  );
   const [materialSaving, setMaterialSaving] = useState(false);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [projectCreateOpen, setProjectCreateOpen] = useState(false);
@@ -652,7 +660,7 @@ export function Dashboard() {
   useEffect(() => {
     if (
       screen === "journal" &&
-      journalView === "notes" &&
+      (journalView === "notes" || journalView === "references") &&
       !noteHistory.loaded &&
       !noteHistory.loading &&
       !noteHistory.error
@@ -876,6 +884,31 @@ export function Dashboard() {
     );
     return options;
   }, [activityEditor?.original, data?.paletteTasks, data?.tasks, todayTasks]);
+  const journalTaskOptions = useMemo(() => {
+    const byId = new Map<string, JournalTaskOption>();
+    for (const task of [...(data?.paletteTasks ?? []), ...(data?.tasks ?? [])]) {
+      byId.set(task.id, {
+        id: task.id,
+        title: task.title,
+        projectId: task.projectId
+      });
+    }
+    return [...byId.values()].sort(
+      (left, right) =>
+        left.title.localeCompare(right.title, undefined, {
+          sensitivity: "base"
+        }) || left.id.localeCompare(right.id)
+    );
+  }, [data?.paletteTasks, data?.tasks]);
+  const journalNoteOptions = useMemo(
+    () =>
+      mergeHistoryReset(noteHistory.items, data?.notes ?? []).sort(
+        (left, right) =>
+          Date.parse(right.createdAt) - Date.parse(left.createdAt) ||
+          right.id.localeCompare(left.id)
+      ),
+    [data?.notes, noteHistory.items]
+  );
   const backlogTasks = useMemo(
     () =>
       (data?.tasks ?? [])
@@ -1085,7 +1118,9 @@ export function Dashboard() {
         openActivityCreate();
         return;
       case "draft-note":
-        applyPaletteDraft(item.intent.content, setNewNote);
+        applyPaletteDraft(item.intent.content, (content) =>
+          setNoteDraft((current) => ({ ...current, content }))
+        );
         navigate("journal");
         setJournalView("notes");
         window.setTimeout(
@@ -1094,7 +1129,9 @@ export function Dashboard() {
         );
         return;
       case "draft-reference":
-        applyPaletteDraft(item.intent.url, setMaterialUrl);
+        applyPaletteDraft(item.intent.url, (url) =>
+          setMaterialDraft((current) => ({ ...current, url }))
+        );
         navigate("journal");
         setJournalView("references");
         window.setTimeout(
@@ -1517,15 +1554,53 @@ export function Dashboard() {
     }
   }
 
+  function selectNoteTask(taskId: string) {
+    setNoteDraft((current) => ({
+      ...current,
+      taskId,
+      projectId: taskProjectIdFor(taskId, journalTaskOptions)
+        ? ""
+        : current.projectId
+    }));
+  }
+
+  function selectMaterialTask(taskId: string) {
+    setMaterialDraft((current) => ({
+      ...current,
+      taskId,
+      projectId: taskProjectIdFor(taskId, journalTaskOptions)
+        ? ""
+        : current.projectId
+    }));
+  }
+
   async function addNote() {
-    if (!newNote.trim() || noteSaving) return;
+    if (!noteDraft.content.trim() || noteSaving) return;
+    let tags: string[];
+    try {
+      tags = normalizeNoteTags(
+        noteDraft.tags.split(",").map((tag) => tag.trim())
+      );
+    } catch (error) {
+      setAppError(
+        error instanceof Error ? error.message : "Note tags are invalid."
+      );
+      noteCreateWasInError.current = true;
+      setAppAnnouncement("The note was not saved.");
+      return;
+    }
+    const selectedTaskProjectId = taskProjectIdFor(
+      noteDraft.taskId,
+      journalTaskOptions
+    );
+    const expectedProjectId = selectedTaskProjectId
+      ? null
+      : noteDraft.projectId || null;
     const payload = {
-      content: newNote.trim(),
-      tags: noteTags
-        .split(",")
-        .map((tag) => tag.trim())
-        .filter(Boolean),
-      projectId: noteProjectId || null
+      content: noteDraft.content.trim(),
+      tags,
+      taskId: noteDraft.taskId || null,
+      projectId: noteDraft.projectId || null
     };
     const mutationId = mutationIdFor(noteCreateMutation, payload);
     setNoteSaving(true);
@@ -1542,7 +1617,12 @@ export function Dashboard() {
       if (
         !response.ok ||
         !isNoteResponse(result) ||
-        result.content !== payload.content
+        result.content !== payload.content ||
+        !stringArraysEqual(result.tags, payload.tags) ||
+        result.taskId !== payload.taskId ||
+        result.projectId !== expectedProjectId ||
+        !data?.todayKey ||
+        localDateKey(new Date(result.date)) !== data.todayKey
       ) {
         setAppError(
           result && typeof result.error === "string"
@@ -1552,9 +1632,7 @@ export function Dashboard() {
         noteCreateWasInError.current = true;
         return;
       }
-      setNewNote("");
-      setNoteTags("");
-      setNoteProjectId("");
+      setNoteDraft(emptyNoteCaptureDraft);
       noteCreateMutation.current = null;
       setNoteHistory((current) => {
         const exists = current.items.some((item) => item.id === result.id);
@@ -1582,12 +1660,21 @@ export function Dashboard() {
   }
 
   async function addMaterial() {
-    if (!materialUrl.trim() || materialSaving) return;
+    if (!materialDraft.url.trim() || materialSaving) return;
+    const selectedTaskProjectId = taskProjectIdFor(
+      materialDraft.taskId,
+      journalTaskOptions
+    );
+    const expectedProjectId = selectedTaskProjectId
+      ? null
+      : materialDraft.projectId || null;
     const payload = {
-      title: materialTitle.trim(),
-      url: materialUrl.trim(),
-      notes: materialNotes.trim(),
-      projectId: materialProjectId || null
+      title: materialDraft.title.trim(),
+      url: materialDraft.url.trim(),
+      notes: materialDraft.notes.trim(),
+      taskId: materialDraft.taskId || null,
+      noteId: materialDraft.noteId || null,
+      projectId: materialDraft.projectId || null
     };
     const mutationId = mutationIdFor(materialCreateMutation, payload);
     setMaterialSaving(true);
@@ -1605,7 +1692,14 @@ export function Dashboard() {
         !response.ok ||
         !isMaterialResponse(result) ||
         result.url !== payload.url ||
-        result.title !== payload.title
+        result.title !==
+          (payload.title ||
+            inferMaterialTitle(inferMaterialType(payload.url))) ||
+        result.type !== inferMaterialType(payload.url) ||
+        result.notes !== payload.notes ||
+        result.taskId !== payload.taskId ||
+        result.noteId !== payload.noteId ||
+        result.projectId !== expectedProjectId
       ) {
         setAppError(
           result && typeof result.error === "string"
@@ -1615,10 +1709,7 @@ export function Dashboard() {
         materialCreateWasInError.current = true;
         return;
       }
-      setMaterialTitle("");
-      setMaterialUrl("");
-      setMaterialNotes("");
-      setMaterialProjectId("");
+      setMaterialDraft(emptyMaterialCaptureDraft);
       materialCreateMutation.current = null;
       setMaterialHistory((current) => {
         const exists = current.items.some((item) => item.id === result.id);
@@ -2446,6 +2537,8 @@ export function Dashboard() {
             }
             noteHistory={noteHistory}
             materialHistory={materialHistory}
+            tasks={journalTaskOptions}
+            noteOptions={journalNoteOptions}
             onLoadMoreNotes={() => void loadNoteHistory(false)}
             onRetryNotes={() => {
               setNoteHistory((current) => ({ ...current, error: "" }));
@@ -2461,23 +2554,19 @@ export function Dashboard() {
             onSaveDiary={saveDiary}
             onSaveError={reportDiarySaveFailure}
             onSaveRecovered={reportDiarySaveRecovery}
-            newNote={newNote}
-            noteTags={noteTags}
-            noteProjectId={noteProjectId}
+            noteDraft={noteDraft}
             noteSaving={noteSaving}
-            onNewNoteChange={setNewNote}
-            onNoteTagsChange={setNoteTags}
-            onNoteProjectChange={setNoteProjectId}
+            onNoteDraftChange={(field, value) =>
+              setNoteDraft((current) => ({ ...current, [field]: value }))
+            }
+            onNoteTaskChange={selectNoteTask}
             onAddNote={addNote}
-            materialTitle={materialTitle}
-            materialUrl={materialUrl}
-            materialNotes={materialNotes}
-            materialProjectId={materialProjectId}
+            materialDraft={materialDraft}
             materialSaving={materialSaving}
-            onMaterialTitleChange={setMaterialTitle}
-            onMaterialUrlChange={setMaterialUrl}
-            onMaterialNotesChange={setMaterialNotes}
-            onMaterialProjectChange={setMaterialProjectId}
+            onMaterialDraftChange={(field, value) =>
+              setMaterialDraft((current) => ({ ...current, [field]: value }))
+            }
+            onMaterialTaskChange={selectMaterialTask}
             onAddMaterial={addMaterial}
           />
         )}
@@ -4369,6 +4458,8 @@ function JournalPage({
   materials,
   noteHistory,
   materialHistory,
+  tasks,
+  noteOptions,
   onLoadMoreNotes,
   onRetryNotes,
   onLoadMoreMaterials,
@@ -4378,23 +4469,15 @@ function JournalPage({
   onSaveDiary,
   onSaveError,
   onSaveRecovered,
-  newNote,
-  noteTags,
-  noteProjectId,
+  noteDraft,
   noteSaving,
-  onNewNoteChange,
-  onNoteTagsChange,
-  onNoteProjectChange,
+  onNoteDraftChange,
+  onNoteTaskChange,
   onAddNote,
-  materialTitle,
-  materialUrl,
-  materialNotes,
-  materialProjectId,
+  materialDraft,
   materialSaving,
-  onMaterialTitleChange,
-  onMaterialUrlChange,
-  onMaterialNotesChange,
-  onMaterialProjectChange,
+  onMaterialDraftChange,
+  onMaterialTaskChange,
   onAddMaterial
 }: {
   today: string;
@@ -4405,6 +4488,8 @@ function JournalPage({
   materials: Material[];
   noteHistory: HistoryState<Note>;
   materialHistory: HistoryState<Material>;
+  tasks: JournalTaskOption[];
+  noteOptions: Note[];
   onLoadMoreNotes: () => void;
   onRetryNotes: () => void;
   onLoadMoreMaterials: () => void;
@@ -4414,23 +4499,21 @@ function JournalPage({
   onSaveDiary: (diary: Diary) => Promise<boolean>;
   onSaveError: () => void;
   onSaveRecovered: () => void;
-  newNote: string;
-  noteTags: string;
-  noteProjectId: string;
+  noteDraft: NoteCaptureDraft;
   noteSaving: boolean;
-  onNewNoteChange: (value: string) => void;
-  onNoteTagsChange: (value: string) => void;
-  onNoteProjectChange: (value: string) => void;
+  onNoteDraftChange: (
+    field: Exclude<keyof NoteCaptureDraft, "taskId">,
+    value: string
+  ) => void;
+  onNoteTaskChange: (value: string) => void;
   onAddNote: () => Promise<void>;
-  materialTitle: string;
-  materialUrl: string;
-  materialNotes: string;
-  materialProjectId: string;
+  materialDraft: MaterialCaptureDraft;
   materialSaving: boolean;
-  onMaterialTitleChange: (value: string) => void;
-  onMaterialUrlChange: (value: string) => void;
-  onMaterialNotesChange: (value: string) => void;
-  onMaterialProjectChange: (value: string) => void;
+  onMaterialDraftChange: (
+    field: Exclude<keyof MaterialCaptureDraft, "taskId">,
+    value: string
+  ) => void;
+  onMaterialTaskChange: (value: string) => void;
   onAddMaterial: () => Promise<void>;
 }) {
   const diarySave = useSaveState<Diary>({
@@ -4445,6 +4528,9 @@ function JournalPage({
     diarySave.setDraft({ ...diarySave.draft, [key]: value });
     onDiaryChange(key, value);
   }
+
+  const noteTaskProjectId = taskProjectIdFor(noteDraft.taskId, tasks);
+  const materialTaskProjectId = taskProjectIdFor(materialDraft.taskId, tasks);
 
   return (
     <div className="journal-page page-stack">
@@ -4524,12 +4610,21 @@ function JournalPage({
           </section>
           <aside className="journal-captured">
             <span className="eyebrow">Captured today</span>
-            <NoteCards notes={notes.slice(0, 2)} projects={projects} />
+            <NoteCards
+              notes={notes.slice(0, 2)}
+              projects={projects}
+              tasks={tasks}
+            />
             <button className="rail-link" onClick={() => onViewChange("notes")}>
               New note<span className="desktop-shortcut"> · ⌘K</span>
             </button>
             <span className="eyebrow references-label">References</span>
-            <ReferenceCards materials={materials.slice(0, 3)} projects={projects} />
+            <ReferenceCards
+              materials={materials.slice(0, 3)}
+              projects={projects}
+              tasks={tasks}
+              notes={noteOptions}
+            />
           </aside>
         </div>
       )}
@@ -4539,24 +4634,46 @@ function JournalPage({
             <h2>New note</h2>
             <textarea
               id="new-note"
-              value={newNote}
+              value={noteDraft.content}
               disabled={noteSaving}
-              onChange={(event) => onNewNoteChange(event.target.value)}
+              onChange={(event) =>
+                onNoteDraftChange("content", event.target.value)
+              }
               placeholder="Capture a thought, decision, or reminder."
             />
             <input
-              value={noteTags}
+              value={noteDraft.tags}
               disabled={noteSaving}
-              onChange={(event) => onNoteTagsChange(event.target.value)}
+              onChange={(event) =>
+                onNoteDraftChange("tags", event.target.value)
+              }
               placeholder="Tags, comma separated"
             />
+            <label>
+              Linked task
+              <select
+                aria-label="Note linked task"
+                value={noteDraft.taskId}
+                disabled={noteSaving}
+                onChange={(event) => onNoteTaskChange(event.target.value)}
+              >
+                <option value="">No linked task</option>
+                {tasks.map((task) => (
+                  <option key={task.id} value={task.id}>
+                    {task.title}
+                  </option>
+                ))}
+              </select>
+            </label>
             <label>
               Project
               <select
                 aria-label="Project"
-                value={noteProjectId}
-                disabled={noteSaving}
-                onChange={(event) => onNoteProjectChange(event.target.value)}
+                value={noteTaskProjectId ?? noteDraft.projectId}
+                disabled={noteSaving || Boolean(noteTaskProjectId)}
+                onChange={(event) =>
+                  onNoteDraftChange("projectId", event.target.value)
+                }
               >
                 <option value="">No Project</option>
                 {[...projects.values()].map((project) => (
@@ -4565,10 +4682,11 @@ function JournalPage({
                   </option>
                 ))}
               </select>
+              {noteTaskProjectId && <small>Inherited from linked task</small>}
             </label>
             <button
               className="primary-button"
-              disabled={noteSaving || !newNote.trim()}
+              disabled={noteSaving || !noteDraft.content.trim()}
               onClick={() => void onAddNote()}
             >
               <Plus size={14} />
@@ -4579,6 +4697,7 @@ function JournalPage({
             <NoteCards
               notes={notes}
               projects={projects}
+              tasks={tasks}
               emptyCopy={noteHistory.loading ? "" : "No notes saved yet."}
             />
             <HistoryFooter
@@ -4595,31 +4714,95 @@ function JournalPage({
           <section className="panel capture-form">
             <h2>Save reference</h2>
             <input
-              value={materialTitle}
+              value={materialDraft.title}
               disabled={materialSaving}
-              onChange={(event) => onMaterialTitleChange(event.target.value)}
+              onChange={(event) =>
+                onMaterialDraftChange("title", event.target.value)
+              }
               placeholder="Title"
             />
             <input
               id="material-url"
-              value={materialUrl}
+              value={materialDraft.url}
               disabled={materialSaving}
-              onChange={(event) => onMaterialUrlChange(event.target.value)}
+              onChange={(event) =>
+                onMaterialDraftChange("url", event.target.value)
+              }
               placeholder="URL"
             />
             <textarea
-              value={materialNotes}
+              value={materialDraft.notes}
               disabled={materialSaving}
-              onChange={(event) => onMaterialNotesChange(event.target.value)}
+              onChange={(event) =>
+                onMaterialDraftChange("notes", event.target.value)
+              }
               placeholder="Why this matters"
             />
+            <label>
+              Linked task
+              <select
+                aria-label="Reference linked task"
+                value={materialDraft.taskId}
+                disabled={materialSaving}
+                onChange={(event) => onMaterialTaskChange(event.target.value)}
+              >
+                <option value="">No linked task</option>
+                {tasks.map((task) => (
+                  <option key={task.id} value={task.id}>
+                    {task.title}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Linked note
+              <select
+                aria-label="Reference linked note"
+                value={materialDraft.noteId}
+                disabled={materialSaving || noteHistory.loading}
+                onChange={(event) =>
+                  onMaterialDraftChange("noteId", event.target.value)
+                }
+              >
+                <option value="">No linked note</option>
+                {noteOptions.map((note) => (
+                  <option key={note.id} value={note.id}>
+                    {noteOptionLabel(note)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {noteHistory.nextCursor && (
+              <button
+                className="text-button journal-note-options-more"
+                type="button"
+                disabled={noteHistory.loading || materialSaving}
+                onClick={onLoadMoreNotes}
+              >
+                {noteHistory.loading ? "Loading…" : "Load older notes"}
+              </button>
+            )}
+            {noteHistory.error && (
+              <div className="journal-note-options-error" role="alert">
+                <span>{noteHistory.error}</span>
+                <button
+                  className="text-button"
+                  type="button"
+                  onClick={onRetryNotes}
+                >
+                  Retry notes
+                </button>
+              </div>
+            )}
             <label>
               Project
               <select
                 aria-label="Project"
-                value={materialProjectId}
-                disabled={materialSaving}
-                onChange={(event) => onMaterialProjectChange(event.target.value)}
+                value={materialTaskProjectId ?? materialDraft.projectId}
+                disabled={materialSaving || Boolean(materialTaskProjectId)}
+                onChange={(event) =>
+                  onMaterialDraftChange("projectId", event.target.value)
+                }
               >
                 <option value="">No Project</option>
                 {[...projects.values()].map((project) => (
@@ -4628,10 +4811,13 @@ function JournalPage({
                   </option>
                 ))}
               </select>
+              {materialTaskProjectId && (
+                <small>Inherited from linked task</small>
+              )}
             </label>
             <button
               className="primary-button"
-              disabled={materialSaving || !materialUrl.trim()}
+              disabled={materialSaving || !materialDraft.url.trim()}
               onClick={() => void onAddMaterial()}
             >
               <LinkIcon size={14} />
@@ -4642,6 +4828,8 @@ function JournalPage({
             <ReferenceCards
               materials={materials}
               projects={projects}
+              tasks={tasks}
+              notes={noteOptions}
               emptyCopy={materialHistory.loading ? "" : "No references saved yet."}
             />
             <HistoryFooter
@@ -5368,25 +5556,34 @@ function ScoreDots({
 function NoteCards({
   notes,
   projects,
+  tasks,
   emptyCopy = "No notes captured today."
 }: {
   notes: Note[];
   projects: Map<string, ProjectSummary>;
+  tasks: JournalTaskOption[];
   emptyCopy?: string;
 }) {
+  const taskById = new Map(tasks.map((task) => [task.id, task]));
   return (
     <div className="note-list">
-      {notes.map((note) => (
-        <article className="note-card" key={note.id}>
-          <p>{note.content}</p>
-          <small>
-            {note.tags.map((tag) => `#${tag}`).join(" ")}
-            {note.projectId && projects.get(note.projectId)
-              ? ` · ${projects.get(note.projectId)?.name}`
-              : ""}
-          </small>
-        </article>
-      ))}
+      {notes.map((note) => {
+        const task = note.taskId ? taskById.get(note.taskId) : null;
+        const projectId = task?.projectId ?? note.projectId;
+        const details = [
+          note.tags.map((tag) => `#${tag}`).join(" "),
+          note.taskId ? `Task: ${task?.title ?? "Linked task"}` : "",
+          projectId && projects.get(projectId)
+            ? projects.get(projectId)?.name ?? ""
+            : ""
+        ].filter(Boolean);
+        return (
+          <article className="note-card" key={note.id}>
+            <p>{note.content}</p>
+            {details.length > 0 && <small>{details.join(" · ")}</small>}
+          </article>
+        );
+      })}
       {!notes.length && emptyCopy && <p className="empty-copy">{emptyCopy}</p>}
     </div>
   );
@@ -5395,36 +5592,61 @@ function NoteCards({
 function ReferenceCards({
   materials,
   projects,
+  tasks,
+  notes,
   emptyCopy = "No references saved yet."
 }: {
   materials: Material[];
   projects: Map<string, ProjectSummary>;
+  tasks: JournalTaskOption[];
+  notes: Note[];
   emptyCopy?: string;
 }) {
+  const taskById = new Map(tasks.map((task) => [task.id, task]));
+  const noteById = new Map(notes.map((note) => [note.id, note]));
   return (
     <div className="material-list">
-      {materials.map((material) => (
-        <a
-          className="material-item"
-          href={material.url}
-          target="_blank"
-          rel="noreferrer"
-          key={material.id}
-        >
-          <span>{material.type}</span>
-          <strong>{material.title}</strong>
-          <small>
-            {material.notes}
-            {material.projectId && projects.get(material.projectId)
-              ? ` · ${projects.get(material.projectId)?.name}`
-              : ""}
-          </small>
-          <ExternalLink size={13} />
-        </a>
-      ))}
+      {materials.map((material) => {
+        const task = material.taskId
+          ? taskById.get(material.taskId)
+          : null;
+        const note = material.noteId
+          ? noteById.get(material.noteId)
+          : null;
+        const projectId = task?.projectId ?? material.projectId;
+        const details = [
+          material.notes,
+          material.taskId ? `Task: ${task?.title ?? "Linked task"}` : "",
+          material.noteId
+            ? `Note: ${note ? noteOptionLabel(note) : "Linked note"}`
+            : "",
+          projectId && projects.get(projectId)
+            ? projects.get(projectId)?.name ?? ""
+            : ""
+        ].filter(Boolean);
+        return (
+          <a
+            className="material-item"
+            href={material.url}
+            target="_blank"
+            rel="noreferrer"
+            key={material.id}
+          >
+            <span>{material.type}</span>
+            <strong>{material.title}</strong>
+            {details.length > 0 && <small>{details.join(" · ")}</small>}
+            <ExternalLink size={13} />
+          </a>
+        );
+      })}
       {!materials.length && emptyCopy && <p className="empty-copy">{emptyCopy}</p>}
     </div>
   );
+}
+
+function noteOptionLabel(note: Note) {
+  const summary = note.content.replace(/\s+/g, " ").trim();
+  return summary.length > 72 ? `${summary.slice(0, 71).trimEnd()}…` : summary;
 }
 
 function HistoryFooter<T>({

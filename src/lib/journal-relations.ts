@@ -31,6 +31,20 @@ export async function resolveJournalAttribution(
     );
   }
 
+  const project = input.projectId
+    ? await transaction.project.findUnique({
+        where: { id: input.projectId },
+        select: { id: true }
+      })
+    : null;
+  if (input.projectId && !project) {
+    throw new JournalRequestError(
+      "RELATIONSHIP_NOT_FOUND",
+      "The linked project could not be found.",
+      404
+    );
+  }
+
   if (
     task?.projectId &&
     input.projectId &&
@@ -44,19 +58,6 @@ export async function resolveJournalAttribution(
   }
 
   const projectId = task?.projectId ? null : input.projectId;
-  if (projectId) {
-    const project = await transaction.project.findUnique({
-      where: { id: projectId },
-      select: { id: true }
-    });
-    if (!project) {
-      throw new JournalRequestError(
-        "RELATIONSHIP_NOT_FOUND",
-        "The linked project could not be found.",
-        404
-      );
-    }
-  }
 
   return {
     taskId: input.taskId,

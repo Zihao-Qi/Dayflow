@@ -43,6 +43,10 @@ The manual Activity correction contract is:
 
 - `docs/specs/ACTIVITY_EDITING_V1.md` — implemented July 28
 
+The portable analysis-export contract is:
+
+- `docs/specs/CSV_EXPORT_V1.md` — implemented July 28
+
 The canonical workspace navigation decision is:
 
 - `docs/adr/0001-six-destination-workspace.md`
@@ -127,6 +131,9 @@ Funemployment Day has a narrower and immediately understandable promise around r
 - Keeps Notes and References completely reachable with stable cursor
   pagination and snapshot-consistent totals.
 - Provides a complete, versioned JSON export without dashboard preview caps.
+- Provides complete, formula-safe Task and Activity CSV downloads with stable
+  columns, deterministic ordering, portable local calendar fields, and exact
+  Activity timestamps.
 - Uses checked-in migrations for supported upgrades and tests every prior
   schema fixture.
 - Adds atomic, checksummed `db:backup` and conservative `db:restore` commands.
@@ -270,7 +277,8 @@ Funemployment Day has a narrower and immediately understandable promise around r
   handing a draft to its canonical form.
 - Supports arrow-key selection, Enter activation, Escape focus restoration,
   honest invalid-command states, and the same capture flow on phone layouts.
-- Moves compact density and agent export into a Tools menu for progressive disclosure.
+- Keeps secondary data and display controls outside the six primary
+  destinations for progressive disclosure.
 - Uses five mobile tabs—Today, Log, Projects, Review, and More—with Backlog and
   Journal available under More.
 - Task control layout now uses wrapping flex behavior to avoid overlap between deadline, status, estimate, urgency, and importance controls.
@@ -300,8 +308,22 @@ Funemployment Day has a narrower and immediately understandable promise around r
 The versioned endpoint exports complete Tasks, schedule changes, Projects,
 Phases, Focus Sessions, Notes, Diary entries, Materials, Time Blocks, and
 Activities for analysis or a future integration such as Hermes. It is exposed
-through the Tools menu instead of primary navigation. It is supplemental; the
+as a local API rather than primary navigation. It is supplemental; the
 checksummed database artifact is the lossless restore format.
+
+### CSV Export
+
+- Downloads complete Task history from `/api/exports/tasks`.
+- Downloads complete Manual and Focus Activity history from
+  `/api/exports/activities`.
+- Uses stable v1 columns, deterministic row ordering, UTF-8 with CRLF records,
+  canonical UTC timestamps, explicit local Activity date/time/timezone fields,
+  relationship identifiers and names, and formula-safe text cells.
+- Exposes separate Task and Activity controls in **Data & backups**, validates
+  response metadata and filenames before download, and surfaces malformed or
+  rejected responses without creating a file.
+- Remains supplemental for spreadsheet analysis; checksummed database backup
+  remains the lossless recovery format.
 
 ## Data and Local Setup
 
@@ -371,6 +393,12 @@ changed Project attribution, protected Focus evidence, optimistic conflicts,
 derived Log and Review totals, retry convergence, and complete draft retention
 through rejected or ambiguous responses.
 
+CSV Export coverage verifies complete historical Task and Activity retrieval,
+stable columns and ordering, Manual and Focus Activity inclusion, exact and
+local time semantics, relationships, Unicode and CSV escaping, spreadsheet
+formula safety, canonical response metadata and filenames, real browser
+downloads, and refusal of malformed responses.
+
 The app has also been opened and visually checked in Chrome at:
 
 ```bash
@@ -407,8 +435,9 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
 - Complete JSON export and lossless database backup/restore are available from
   local commands and a managed local UI. UI restore is intentionally applied
   on the next Dayflow startup rather than against a live Prisma connection.
-  CSV export, printable summaries, structured JSON import, arbitrary-path
-  browser import, and automatic rolling backups are not implemented.
+  Task and Activity CSV exports are also available for analysis. Printable
+  summaries, structured JSON import, arbitrary-path browser import, and
+  automatic rolling backups are not implemented.
 - The app is responsive but is not yet configured as an installable PWA.
 - Notes and materials have fields for task linking, but the UI for attaching them to tasks is still limited.
 - PDF upload/storage is not implemented yet; materials currently store reference URLs and notes.
@@ -464,7 +493,6 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
 - Add opt-in rolling automatic backups around the validated manual UI.
 - Consider structured JSON import only after conflict and replacement semantics
   are specified; keep database backup as the lossless recovery path.
-- Add CSV export for activity and task history alongside the existing JSON agent export.
 - Add a printable or shareable weekly summary.
 
 ### 7. Improve the App-Like Experience
@@ -489,11 +517,10 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
    daily use before widening those workflows.
 3. Replace the remaining visible placeholder controls with working manual
    planning actions or remove them until specified.
-4. Add CSV export.
-5. Specify custom Activity categories and retrospective capture.
-6. Improve task-to-note and task-to-material linking.
-7. Add installable PWA metadata and verify offline/local behavior.
-8. Keep the handoff convention:
+4. Specify custom Activity categories and retrospective capture.
+5. Improve task-to-note and task-to-material linking.
+6. Add installable PWA metadata and verify offline/local behavior.
+7. Keep the handoff convention:
    - Gemini records front-end design and UI changes in `DAYFLOW_CHANGELOG.md`.
    - This file records product status, implementation status, limitations, and development plan.
-9. Expand the README with the core Decide → Plan → Record → Capture → Review workflow as the app shape stabilizes.
+8. Expand the README with the core Decide → Plan → Record → Capture → Review workflow as the app shape stabilizes.

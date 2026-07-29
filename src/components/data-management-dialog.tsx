@@ -4,6 +4,7 @@ import {
   ArchiveRestore,
   CheckCircle2,
   Download,
+  FileSpreadsheet,
   HardDriveDownload,
   LoaderCircle,
   RefreshCw,
@@ -18,6 +19,10 @@ import {
   useRef,
   useState
 } from "react";
+import {
+  parseCsvExportResponseMetadata,
+  type CsvExportKind
+} from "@/lib/csv-export-contract";
 
 type BackupRecord = {
   id: string;
@@ -70,6 +75,8 @@ export function DataManagementDialog({
   const [backupIndex, setBackupIndex] = useState<BackupIndex | null>(null);
   const [selectedBackupId, setSelectedBackupId] = useState("");
   const [busy, setBusy] = useState<BusyAction | null>(null);
+  const [exportBusy, setExportBusy] =
+    useState<CsvExportKind[]>([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [restoreConfirmOpen, setRestoreConfirmOpen] = useState(false);
@@ -272,6 +279,57 @@ export function DataManagementDialog({
     }
   }
 
+  async function downloadCsvExport(kind: CsvExportKind) {
+    if (exportBusy.includes(kind)) return;
+    const label = kind === "tasks" ? "Task" : "Activity";
+    setExportBusy((current) => [...new Set([...current, kind])]);
+    setError("");
+    setNotice(`Preparing complete ${label} history…`);
+    try {
+      const response = await fetch(`/api/exports/${kind}`, {
+        cache: "no-store"
+      });
+      if (!response.ok) {
+        const result = await readJson(response);
+        throw new Error(
+          errorMessage(
+            result,
+            `${label} CSV could not be downloaded.`
+          )
+        );
+      }
+
+      const metadata = parseCsvExportResponseMetadata(
+        kind,
+        response.headers
+      );
+      if (!metadata) {
+        throw new Error(
+          `Dayflow returned an invalid ${label} CSV. Try again.`
+        );
+      }
+
+      const blob = await response.blob();
+      triggerDownload(blob, metadata.fileName);
+      setNotice(
+        `${label} CSV downloaded with ${metadata.recordCount.toLocaleString()} records.`
+      );
+      onAnnounce(`${label} CSV downloaded.`);
+    } catch (exportError) {
+      setError(
+        messageFrom(
+          exportError,
+          `${label} CSV could not be downloaded.`
+        )
+      );
+      setNotice("");
+    } finally {
+      setExportBusy((current) =>
+        current.filter((candidate) => candidate !== kind)
+      );
+    }
+  }
+
   function openRestoreConfirmation() {
     if (!selectedBackup || !backupCanRestore(selectedBackup) || busy) return;
     setConfirmation("");
@@ -421,11 +479,11 @@ export function DataManagementDialog({
       >
         <header className="data-management-heading">
           <div>
-            <span className="eyebrow">Local recovery</span>
+            <span className="eyebrow">Local data</span>
             <h2 id="data-management-title">Data &amp; backups</h2>
             <p id="data-management-description">
-              Create verified copies of every Dayflow record and schedule a
-              conservative restore.
+              Download portable history, create verified recovery copies, and
+              schedule a conservative restore.
             </p>
           </div>
           <button
@@ -437,6 +495,54 @@ export function DataManagementDialog({
             <X size={16} />
           </button>
         </header>
+
+        <section
+          className="data-export-panel"
+          aria-labelledby="data-export-title"
+        >
+          <div className="data-export-copy">
+            <span className="data-export-icon" aria-hidden="true">
+              <FileSpreadsheet size={18} />
+            </span>
+            <div>
+              <strong id="data-export-title">Portable CSV exports</strong>
+              <small>
+                Complete history for spreadsheets and analysis. CSV is not a
+                recovery backup.
+              </small>
+            </div>
+          </div>
+          <div className="data-export-actions">
+            <button
+              className="secondary-button"
+              disabled={exportBusy.includes("tasks")}
+              onClick={() => void downloadCsvExport("tasks")}
+            >
+              {exportBusy.includes("tasks") ? (
+                <LoaderCircle className="spin" size={14} />
+              ) : (
+                <Download size={14} />
+              )}
+              {exportBusy.includes("tasks")
+                ? "Preparing Tasks…"
+                : "Download Tasks CSV"}
+            </button>
+            <button
+              className="secondary-button"
+              disabled={exportBusy.includes("activities")}
+              onClick={() => void downloadCsvExport("activities")}
+            >
+              {exportBusy.includes("activities") ? (
+                <LoaderCircle className="spin" size={14} />
+              ) : (
+                <Download size={14} />
+              )}
+              {exportBusy.includes("activities")
+                ? "Preparing Activities…"
+                : "Download Activities CSV"}
+            </button>
+          </div>
+        </section>
 
         <div className="data-management-toolbar">
           <div>
@@ -895,6 +1001,17 @@ function RestoreStatusCard({
 
 async function readJson(response: Response) {
   return response.json().catch(() => null) as Promise<unknown>;
+}
+
+function triggerDownload(blob: Blob, fileName: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 function isBackupCreateResponse(

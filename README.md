@@ -37,7 +37,8 @@ lucide-react. The app runs locally without accounts or hosted services.
   URL and Note intent recognition, and draft-preserving handoff to the owning
   workspace.
 - Deadline-aware urgency that increases as a due date approaches.
-- Advanced tools such as compact density and agent export are kept in the Tools menu.
+- Portable, formula-safe CSV downloads for complete Task and Activity history,
+  alongside a versioned JSON export for agents.
 
 Product and corrective specifications:
 
@@ -47,6 +48,7 @@ Product and corrective specifications:
 - [Command Palette v1](./docs/specs/COMMAND_PALETTE_V1.md)
 - [Manual Time Blocks v1](./docs/specs/TIME_BLOCKS_V1.md)
 - [Activity Editing v1](./docs/specs/ACTIVITY_EDITING_V1.md)
+- [CSV Export v1](./docs/specs/CSV_EXPORT_V1.md)
 - [Six-destination workspace decision](./docs/adr/0001-six-destination-workspace.md)
 
 ## Local Setup
@@ -161,7 +163,9 @@ does not mutate application records.
 The same recovery path is available from **Data & backups** in Dayflow. The
 dialog creates backups in the managed `backups` directory, verifies their
 checksums before offering restore, shows schema and record-count details, and
-provides a download link for keeping a copy elsewhere.
+provides a download link for keeping a copy elsewhere. The dialog also
+downloads complete Task and Activity history as separate UTF-8 CSV files for
+spreadsheets and analysis. CSV is portable but is not a restore format.
 
 For safety, the UI does not replace SQLite while the running app has database
 connections open. After an explicit `RESTORE` confirmation it schedules the
@@ -196,13 +200,18 @@ The backup and migration commands require the `sqlite3` command-line tool.
 `npm run dev` binds to `127.0.0.1` so the local data controls are not exposed
 to the network by default.
 
-The Tools menu also exposes `/api/agent-export`, a versioned JSON export for
-analysis and external agents. Unlike the dashboard bootstrap payload, this
-export is not windowed: it includes every Task, schedule change, Project,
-Phase, Focus Session, Note, Diary entry, Review, Material, Time Block, and
-Activity.
-It is supplemental and is not a restore format; use `db:backup` and
-`db:restore` for lossless recovery.
+The local API exposes `/api/agent-export`, a versioned JSON export for analysis
+and external agents. Unlike the dashboard bootstrap payload, this export is not
+windowed: it includes every Task, schedule change, Project, Phase, Focus
+Session, Note, Diary entry, Review, Material, Time Block, and Activity.
+
+Complete human-readable CSV exports are available at `/api/exports/tasks` and
+`/api/exports/activities`, as well as through **Data & backups**. They use
+stable v1 columns, deterministic ordering, exact UTC timestamps where
+applicable, local calendar fields, and formula-safe text cells.
+
+JSON and CSV exports are supplemental and are not restore formats; use
+`db:backup` and `db:restore` for lossless recovery.
 
 ## Project Notes
 

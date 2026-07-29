@@ -43,6 +43,9 @@ lucide-react. The app runs locally without accounts or hosted services.
 - First-run guidance for genuinely empty workspaces, with complete-history
   readiness, durable first-Task recovery, working Project and Capture
   handoffs, and a phone-safe explanation of the core workflow.
+- Browser-installable Dayflow identity with a standalone launch surface,
+  deterministic branded icons, and explicit desktop and Apple metadata. The
+  installed app still requires the local Dayflow server.
 - Deadline-aware urgency that increases as a due date approaches.
 - Portable, formula-safe CSV downloads for complete Task and Activity history,
   alongside a versioned JSON export for agents.
@@ -60,6 +63,7 @@ Product and corrective specifications:
 - [Journal Search & Filtering v1](./docs/specs/JOURNAL_SEARCH_FILTERING_V1.md)
 - [CSV Export v1](./docs/specs/CSV_EXPORT_V1.md)
 - [First-Run Onboarding v1](./docs/specs/FIRST_RUN_ONBOARDING_V1.md)
+- [PWA Installability v1](./docs/specs/PWA_INSTALLABILITY_V1.md)
 - [Six-destination workspace decision](./docs/adr/0001-six-destination-workspace.md)
 
 ## Core Workflow
@@ -90,6 +94,13 @@ npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000).
+
+Supported browsers can install Dayflow from their browser-managed install or
+home-screen menu. Installation is bound to that exact local origin and does
+not package or start Next.js, copy SQLite, or add offline behavior. Keep
+`npm run dev` running to use the installed app. The default `127.0.0.1`
+binding is reachable only from the same machine, not from a phone or another
+device.
 
 `npm run db:setup` creates and seeds the local SQLite database at
 `prisma/dev.db` so a new dashboard has example data immediately. If the
@@ -150,6 +161,13 @@ Then run the end-to-end suite:
 
 ```bash
 npm run test:e2e
+```
+
+The checked-in PWA icons are generated from deterministic geometric artwork.
+Regenerate them after an intentional brand change with:
+
+```bash
+npm run pwa:icons
 ```
 
 The suite starts Dayflow on `http://127.0.0.1:3100` and uses a disposable

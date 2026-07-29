@@ -456,6 +456,13 @@ exclusion, and phone usability. The complete July 29, 2026 reliability gate
 passed with 137 unit tests, 14 backup/integration tests, all migration fixtures,
 the production build, and 100 Chromium browser tests.
 
+PWA Installability coverage verifies the typed public manifest, exact PNG media
+types and dimensions, rendered head metadata, and Chromium manifest discovery.
+The installed identity uses deterministic geometric artwork and deliberately
+adds no service worker or offline claim. The complete July 29, 2026 reliability
+gate passed with 137 unit tests, 14 backup/integration tests, all migration
+fixtures, the production build, and 103 Chromium browser tests.
+
 CSV Export coverage verifies complete historical Task and Activity retrieval,
 stable columns and ordering, Manual and Focus Activity inclusion, exact and
 local time semantics, relationships, Unicode and CSV escaping, spreadsheet
@@ -499,7 +506,9 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
   Task and Activity CSV exports are also available for analysis. Printable
   summaries, structured JSON import, arbitrary-path browser import, and
   automatic rolling backups are not implemented.
-- The app is responsive but is not yet configured as an installable PWA.
+- Dayflow is installable where supported, but installation remains bound to
+  the exact local origin and does not start the local server, copy SQLite, or
+  provide offline behavior.
 - PDF upload/storage is not implemented yet; materials currently store reference URLs and notes.
 - There is no hosted sync, authentication, or multi-device support yet.
 - There is no live Hermes integration yet; the local export endpoint is the
@@ -552,7 +561,7 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
 
 ### 7. Improve the App-Like Experience
 
-- Add a web app manifest, icons, and installable PWA behavior.
+- Validate installed launch behavior in supported desktop and mobile browsers.
 - Define useful offline behavior and make local data status visible.
 - Keep Dayflow’s quiet notebook visual identity instead of adopting a generic SaaS dashboard style.
 
@@ -569,7 +578,8 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
    resumes.
 2. Validate Manual Time Blocks, Activity editing, and the weekly Review through
    daily use before widening those workflows.
-3. Add installable PWA metadata and verify offline/local behavior.
+3. Validate installed launch behavior and specify useful offline semantics as
+   a separate reliability contract.
 4. Keep the handoff convention:
    - Gemini records front-end design and UI changes in `DAYFLOW_CHANGELOG.md`.
    - This file records product status, implementation status, limitations, and development plan.

@@ -23,7 +23,8 @@
     "db:init": "prisma migrate deploy",
     "prisma:seed": "tsx prisma/seed.ts",
     "db:setup": "npm run db:migrate && npm run prisma:seed",
-    "db:reset-demo": "DAYFLOW_SEED_RESET=1 npm run prisma:seed"
+    "db:reset-demo": "DAYFLOW_SEED_RESET=1 npm run prisma:seed",
+    "pwa:icons": "node --import tsx scripts/generate-pwa-icons.ts"
   },
   "dependencies": {
     "@prisma/client": "6.19.3",

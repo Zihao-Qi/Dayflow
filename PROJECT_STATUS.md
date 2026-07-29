@@ -39,6 +39,10 @@ The manual planning contract is:
 
 - `docs/specs/TIME_BLOCKS_V1.md` — implemented July 28
 
+The manual Activity correction contract is:
+
+- `docs/specs/ACTIVITY_EDITING_V1.md` — implemented July 28
+
 The canonical workspace navigation decision is:
 
 - `docs/adr/0001-six-destination-workspace.md`
@@ -176,6 +180,14 @@ Funemployment Day has a narrower and immediately understandable promise around r
 
 - Supports manually recording what happened during the day.
 - Stores activity time, duration, category, accomplishment note, and an optional linked task.
+- Supports correcting Manual Activities from Log without changing their
+  identity or original local calendar day.
+- Revalidates deliberately changed Task and Project relationships while
+  preserving historical Project attribution when those relationships stay
+  unchanged.
+- Keeps Focus-generated Activity evidence protected behind the Focus workflow.
+- Preserves the complete Activity edit draft through rejected, malformed, or
+  mismatched responses.
 - Includes calm default categories for deep work, learning, administration, health, and rest.
 - Uses activity durations as the source for Daily Pulse spent time and weekly actual-time charts.
 - Supports deleting activity entries.
@@ -353,6 +365,12 @@ covers backup/restore round trips, checksum changes after staging, interrupted
 restore markers, a real staged Next startup before first bootstrap, and corrupt
 artifacts in its own temporary directory.
 
+Activity Editing coverage verifies in-place Manual Activity correction,
+original-day and creation-identity preservation, historical and deliberately
+changed Project attribution, protected Focus evidence, optimistic conflicts,
+derived Log and Review totals, retry convergence, and complete draft retention
+through rejected or ambiguous responses.
+
 The app has also been opened and visually checked in Chrome at:
 
 ```bash
@@ -384,10 +402,8 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
 - Touch-specific drag behavior still needs manual verification on a physical mobile device.
 - Focus Timer sessions are single-device and depend on the local Dayflow process; there is no menu-bar or system-wide macOS timer yet.
 - Focus and break lengths are chosen per session; configurable default presets and long-break cycles are not implemented yet.
-- Activity entries cannot be edited yet.
 - Activity categories use a fixed default list; user-defined categories are not implemented yet.
 - Activity entry is currently focused on today rather than retrospective logging for another date.
-- The review flow does not yet produce a complete weekly evidence-of-progress summary.
 - Complete JSON export and lossless database backup/restore are available from
   local commands and a managed local UI. UI restore is intentionally applied
   on the next Dayflow startup rather than against a live Prisma connection.
@@ -418,7 +434,7 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
 
 ### 3. Extend Activity and Time Logging
 
-- Add editing for activity entries.
+- Validate Manual Activity editing through daily use.
 - Validate Focus Timer defaults and break suggestions through daily use.
 - Explore a small macOS companion only after the web timer workflow is stable.
 - Add custom activity category management.
@@ -436,11 +452,12 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
 
 ### 5. Improve Reviews and Charts
 
-- Add a weekly evidence-of-progress summary combining completed tasks, activity time, notes, materials, mood, and energy.
-- Show time distribution by activity category.
-- Add a cleaner planned vs actual time breakdown.
+- Validate the seven-day evidence summary and period-bound narrative through
+  repeated weekly use.
+- Add browsing for earlier Review Periods.
 - Add mood and energy correlation with completion trends.
-- Let users write or edit a short weekly narrative about what moved forward.
+- Explore comparison between consecutive Review Periods without turning Review
+  into a scorecard.
 
 ### 6. Add Local-First Durability and Portability
 
@@ -468,12 +485,12 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
 
 1. Keep the reliability, migration, and backup gates mandatory as feature work
    resumes.
-2. Build the first weekly evidence-of-progress summary from tasks, activities,
-   diary state, notes, and materials.
+2. Validate Manual Time Blocks, Activity editing, and the weekly Review through
+   daily use before widening those workflows.
 3. Replace the remaining visible placeholder controls with working manual
    planning actions or remove them until specified.
 4. Add CSV export.
-5. Add activity editing and custom categories.
+5. Specify custom Activity categories and retrospective capture.
 6. Improve task-to-note and task-to-material linking.
 7. Add installable PWA metadata and verify offline/local behavior.
 8. Keep the handoff convention:

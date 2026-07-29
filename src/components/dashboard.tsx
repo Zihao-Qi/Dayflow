@@ -26,6 +26,7 @@ import {
   Menu,
   NotebookPen,
   Pause,
+  Pencil,
   Play,
   Plus,
   RefreshCw,
@@ -105,6 +106,18 @@ type TimeBlockEditor = {
   linkedTask: TimeBlockTaskSummary | null;
   draft: TimeBlockEditorDraft;
 };
+type ActivityDraft = {
+  time: string;
+  duration: string;
+  category: string;
+  taskId: string;
+  projectId: string;
+  note: string;
+};
+type ActivityEditor = {
+  original: ActivityEntry;
+  draft: ActivityDraft;
+};
 type HistoryState<T> = {
   items: T[];
   nextCursor: string | null;
@@ -142,6 +155,7 @@ type PaletteTaskRecord = Pick<
   | "focusQueuePosition"
   | "projectId"
 >;
+type ActivityTaskOption = Pick<Task, "id" | "title" | "projectId">;
 
 type Note = {
   id: string;
@@ -191,9 +205,13 @@ type ActivityEntry = {
   durationMinutes: number;
   category: string;
   note: string;
+  origin: "MANUAL" | "FOCUS";
   taskId: string | null;
   projectId: string | null;
+  attributedProjectId: string | null;
+  focusSessionId: string | null;
   createdAt: string;
+  updatedAt: string;
 };
 
 type DayStat = {
@@ -367,9 +385,17 @@ function isActivityResponse(value: unknown): value is ActivityEntry {
     Number.isInteger(activity.durationMinutes) &&
     typeof activity.category === "string" &&
     typeof activity.note === "string" &&
+    ["MANUAL", "FOCUS"].includes(String(activity.origin)) &&
     (activity.taskId === null || typeof activity.taskId === "string") &&
     (activity.projectId === null || typeof activity.projectId === "string") &&
-    typeof activity.createdAt === "string"
+    (activity.attributedProjectId === null ||
+      typeof activity.attributedProjectId === "string") &&
+    (activity.focusSessionId === null ||
+      typeof activity.focusSessionId === "string") &&
+    typeof activity.createdAt === "string" &&
+    Number.isFinite(Date.parse(activity.createdAt)) &&
+    typeof activity.updatedAt === "string" &&
+    Number.isFinite(Date.parse(activity.updatedAt))
   );
 }
 
@@ -525,12 +551,17 @@ export function Dashboard() {
   const [projectCreateOpen, setProjectCreateOpen] = useState(false);
   const [focusDraft, setFocusDraft] = useState<FocusDraft | null>(null);
   const [activityOpen, setActivityOpen] = useState(false);
-  const [activityTime, setActivityTime] = useState("");
-  const [activityDuration, setActivityDuration] = useState("30");
-  const [activityCategory, setActivityCategory] = useState(activityCategories[0]);
-  const [activityTaskId, setActivityTaskId] = useState("");
-  const [activityProjectId, setActivityProjectId] = useState("");
-  const [activityNote, setActivityNote] = useState("");
+  const [activityCreateDraft, setActivityCreateDraft] =
+    useState<ActivityDraft>({
+      time: "",
+      duration: "30",
+      category: activityCategories[0],
+      taskId: "",
+      projectId: "",
+      note: ""
+    });
+  const [activityEditor, setActivityEditor] =
+    useState<ActivityEditor | null>(null);
   const [activityError, setActivityError] = useState("");
   const [activitySaving, setActivitySaving] = useState(false);
   const [timeBlockEditor, setTimeBlockEditor] =
@@ -552,6 +583,7 @@ export function Dashboard() {
   const noteCreateWasInError = useRef(false);
   const materialCreateWasInError = useRef(false);
   const activityCreateWasInError = useRef(false);
+  const activityEditWasInError = useRef(false);
   const taskCreateMutation = useRef<PendingMutation | null>(null);
   const noteCreateMutation = useRef<PendingMutation | null>(null);
   const materialCreateMutation = useRef<PendingMutation | null>(null);
@@ -581,7 +613,10 @@ export function Dashboard() {
       }, millisecondsUntilNextLocalDay() + 100);
     }
 
-    setActivityTime(formatTimeInput(new Date()));
+    setActivityCreateDraft((current) => ({
+      ...current,
+      time: formatTimeInput(new Date())
+    }));
     setFirstRunSeen(window.localStorage.getItem("dayflow-first-run-seen") === "1");
     void refresh();
     scheduleDayRefresh();
@@ -677,7 +712,9 @@ export function Dashboard() {
       typeof result.todayKey !== "string" ||
       !/^\d{4}-\d{2}-\d{2}$/.test(result.todayKey) ||
       !Array.isArray(result.timeBlocks) ||
-      !result.timeBlocks.every(isTimeBlockRecord)
+      !result.timeBlocks.every(isTimeBlockRecord) ||
+      !Array.isArray(result.activities) ||
+      !result.activities.every(isActivityResponse)
     ) {
       throw new Error("Dayflow could not refresh its latest data.");
     }
@@ -798,6 +835,37 @@ export function Dashboard() {
 
   const openTodayTasks = todayTasks.filter((task) => task.status !== "DONE");
   const doneTodayTasks = todayTasks.filter((task) => task.status === "DONE");
+  const activeActivityDraft =
+    activityEditor?.draft ?? activityCreateDraft;
+  const activityDialogTasks = useMemo(() => {
+    const options: ActivityTaskOption[] = todayTasks.map(
+      ({ id, title, projectId }) => ({ id, title, projectId })
+    );
+    const original = activityEditor?.original;
+    if (!original?.taskId || options.some(({ id }) => id === original.taskId)) {
+      return options;
+    }
+    const task =
+      data?.tasks.find(({ id }) => id === original.taskId) ??
+      data?.paletteTasks.find(({ id }) => id === original.taskId);
+    options.push(
+      task
+        ? {
+            id: task.id,
+            title: task.title,
+            projectId: task.projectId
+          }
+        : {
+            id: original.taskId,
+            title: "Previously linked task",
+            projectId:
+              original.projectId === null
+                ? original.attributedProjectId
+                : null
+          }
+    );
+    return options;
+  }, [activityEditor?.original, data?.paletteTasks, data?.tasks, todayTasks]);
   const backlogTasks = useMemo(
     () =>
       (data?.tasks ?? [])
@@ -915,6 +983,48 @@ export function Dashboard() {
     setRailExpanded(true);
   }
 
+  function openActivityCreate() {
+    setActivityEditor(null);
+    setActivityError("");
+    setActivityOpen(true);
+  }
+
+  function openActivityEdit(activity: ActivityEntry) {
+    if (activity.origin !== "MANUAL" || activity.focusSessionId) return;
+    setActivityEditor({
+      original: activity,
+      draft: {
+        time: formatTimeInput(new Date(activity.startedAt)),
+        duration: String(activity.durationMinutes),
+        category: activity.category,
+        taskId: activity.taskId ?? "",
+        projectId: activity.projectId ?? "",
+        note: activity.note
+      }
+    });
+    setActivityError("");
+    setActivityOpen(true);
+  }
+
+  function changeActivityDraft(patch: Partial<ActivityDraft>) {
+    if (activityEditor) {
+      setActivityEditor((current) =>
+        current
+          ? { ...current, draft: { ...current.draft, ...patch } }
+          : current
+      );
+    } else {
+      setActivityCreateDraft((current) => ({ ...current, ...patch }));
+    }
+    setActivityError("");
+  }
+
+  function closeActivityDialog() {
+    setActivityOpen(false);
+    setActivityEditor(null);
+    setActivityError("");
+  }
+
   function activatePaletteItem(item: PaletteItem) {
     closeCommandPaletteForHandoff();
 
@@ -952,7 +1062,7 @@ export function Dashboard() {
         focusTaskDraft();
         return;
       case "draft-activity":
-        setActivityOpen(true);
+        openActivityCreate();
         return;
       case "draft-note":
         applyPaletteDraft(item.intent.content, setNewNote);
@@ -1637,10 +1747,12 @@ export function Dashboard() {
     setAppError("");
   }
 
-  async function addActivity() {
+  async function saveActivity() {
     if (activitySaving) return;
-    const minutes = Number(activityDuration);
-    if (!activityNote.trim()) {
+    const editor = activityEditor;
+    const draft = editor?.draft ?? activityCreateDraft;
+    const minutes = Number(draft.duration);
+    if (!draft.note.trim()) {
       setActivityError("Add a short note about what happened.");
       return;
     }
@@ -1648,56 +1760,123 @@ export function Dashboard() {
       setActivityError("Duration must be between 1 and 1440 minutes.");
       return;
     }
-    const payload = {
-      date: data?.today,
-      startTime: activityTime,
+    const editable = {
+      startTime: draft.time,
       durationMinutes: minutes,
-      category: activityCategory,
-      taskId: activityTaskId || null,
-      projectId: activityProjectId || null,
-      note: activityNote.trim()
+      category: draft.category,
+      taskId: draft.taskId || null,
+      projectId: draft.projectId || null,
+      note: draft.note.trim()
     };
-    const mutationId = mutationIdFor(activityCreateMutation, payload);
+    const payload = editor
+      ? editable
+      : { ...editable, date: data?.today };
+    const mutationId = editor
+      ? null
+      : mutationIdFor(activityCreateMutation, payload);
     setActivitySaving(true);
     try {
-      const response = await fetch("/api/activities", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Dayflow-Mutation-Id": mutationId
-        },
-        body: JSON.stringify(payload)
-      });
+      const response = await fetch(
+        editor
+          ? `/api/activities/${encodeURIComponent(editor.original.id)}`
+          : "/api/activities",
+        {
+          method: editor ? "PUT" : "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(mutationId
+              ? { "X-Dayflow-Mutation-Id": mutationId }
+              : {})
+          },
+          body: JSON.stringify(payload)
+        }
+      );
       const result = await response.json().catch(() => null);
+      const expectedDate = editor
+        ? localDateKey(new Date(editor.original.startedAt))
+        : data?.todayKey;
       if (
         !response.ok ||
         !isActivityResponse(result) ||
+        (editor && result.id !== editor.original.id) ||
+        (editor && result.createdAt !== editor.original.createdAt) ||
+        (editor &&
+          Date.parse(result.updatedAt) <=
+            Date.parse(editor.original.updatedAt)) ||
+        result.origin !== "MANUAL" ||
+        result.focusSessionId !== null ||
+        localDateKey(new Date(result.startedAt)) !== expectedDate ||
+        formatTimeInput(new Date(result.startedAt)) !== editable.startTime ||
         result.note !== payload.note ||
         result.durationMinutes !== payload.durationMinutes ||
-        result.category !== payload.category
+        result.category !== payload.category ||
+        result.taskId !== editable.taskId ||
+        result.projectId !== editable.projectId
       ) {
         setActivityError(
           result && typeof result.error === "string"
             ? result.error
-            : "Activity could not be saved. Your draft is still here."
+            : editor
+              ? "Activity could not be updated. Your draft is still here."
+              : "Activity could not be saved. Your draft is still here."
         );
-        activityCreateWasInError.current = true;
+        if (editor) {
+          activityEditWasInError.current = true;
+        } else {
+          activityCreateWasInError.current = true;
+        }
         return;
       }
-      setActivityNote("");
-      setActivityTaskId("");
-      setActivityProjectId("");
-      activityCreateMutation.current = null;
+      if (editor) {
+        setData((current) =>
+          current
+            ? {
+                ...current,
+                activities: current.activities
+                  .map((activity) =>
+                    activity.id === result.id ? result : activity
+                  )
+                  .sort(
+                    (left, right) =>
+                      new Date(right.startedAt).getTime() -
+                      new Date(left.startedAt).getTime()
+                  )
+              }
+            : current
+        );
+        setActivityEditor(null);
+      } else {
+        setActivityCreateDraft((current) => ({
+          ...current,
+          note: "",
+          taskId: "",
+          projectId: ""
+        }));
+        activityCreateMutation.current = null;
+      }
       setActivityError("");
       setActivityOpen(false);
-      if (activityCreateWasInError.current) {
+      if (
+        editor
+          ? activityEditWasInError.current
+          : activityCreateWasInError.current
+      ) {
+        activityEditWasInError.current = false;
         activityCreateWasInError.current = false;
         setAppAnnouncement("Saved.");
       }
       await refreshAfterConfirmedMutation();
     } catch {
-      setActivityError("Activity could not be saved. Your draft is still here.");
-      activityCreateWasInError.current = true;
+      setActivityError(
+        editor
+          ? "Activity could not be updated. Your draft is still here."
+          : "Activity could not be saved. Your draft is still here."
+      );
+      if (editor) {
+        activityEditWasInError.current = true;
+      } else {
+        activityCreateWasInError.current = true;
+      }
     } finally {
       setActivitySaving(false);
     }
@@ -2161,6 +2340,7 @@ export function Dashboard() {
             onOpenPalette={openCommandPalette}
             onCreateTimeBlock={openTimeBlockEditor}
             onEditTimeBlock={editTimeBlock}
+            onEditActivity={openActivityEdit}
           />
         )}
 
@@ -2373,32 +2553,22 @@ export function Dashboard() {
 
       {activityOpen && (
         <ActivityDialog
-          tasks={todayTasks}
+          mode={activityEditor ? "edit" : "create"}
+          tasks={activityDialogTasks}
           projects={data.projects}
-          time={activityTime}
-          duration={activityDuration}
-          category={activityCategory}
-          taskId={activityTaskId}
-          projectId={activityProjectId}
-          note={activityNote}
+          draft={activeActivityDraft}
+          originalTaskId={activityEditor?.original.taskId ?? null}
+          originalInheritedProjectId={
+            activityEditor?.original.taskId &&
+            activityEditor.original.projectId === null
+              ? activityEditor.original.attributedProjectId
+              : null
+          }
           error={activityError}
           saving={activitySaving}
-          onTimeChange={setActivityTime}
-          onDurationChange={setActivityDuration}
-          onCategoryChange={setActivityCategory}
-          onTaskChange={(value) => {
-            setActivityTaskId(value);
-            if (todayTasks.find((task) => task.id === value)?.projectId) {
-              setActivityProjectId("");
-            }
-          }}
-          onProjectChange={setActivityProjectId}
-          onNoteChange={(value) => {
-            setActivityNote(value);
-            setActivityError("");
-          }}
-          onClose={() => setActivityOpen(false)}
-          onSave={addActivity}
+          onDraftChange={changeActivityDraft}
+          onClose={closeActivityDialog}
+          onSave={saveActivity}
         />
       )}
       {dataManagementOpen && (
@@ -3269,7 +3439,8 @@ function DayPage({
   onFocusTransition,
   onOpenPalette,
   onCreateTimeBlock,
-  onEditTimeBlock
+  onEditTimeBlock,
+  onEditActivity
 }: {
   view: DayView;
   today: string;
@@ -3291,6 +3462,7 @@ function DayPage({
   onOpenPalette: () => void;
   onCreateTimeBlock: (task?: Task | null) => void;
   onEditTimeBlock: (block: TimeBlock) => void;
+  onEditActivity: (activity: ActivityEntry) => void;
 }) {
   return (
     <div className="day-page log-page page-stack">
@@ -3329,6 +3501,7 @@ function DayPage({
           onQueueTask={onQueueTask}
           onFocusTransition={onFocusTransition}
           onOpenPalette={onOpenPalette}
+          onEditActivity={onEditActivity}
         />
       )}
       {view === "timeline" && (
@@ -3357,7 +3530,8 @@ function DayStream({
   onStartFocus,
   onQueueTask,
   onFocusTransition,
-  onOpenPalette
+  onOpenPalette,
+  onEditActivity
 }: {
   tasks: Task[];
   activities: ActivityEntry[];
@@ -3369,6 +3543,7 @@ function DayStream({
   onQueueTask: (task: Task, placement: QueuePlacement) => Promise<boolean>;
   onFocusTransition: ReturnType<typeof useFocusSession>["transition"];
   onOpenPalette: () => void;
+  onEditActivity: (activity: ActivityEntry) => void;
 }) {
   let cursor = new Date();
   const idleNext = !activeFocus ? tasks[0] ?? null : null;
@@ -3382,21 +3557,39 @@ function DayStream({
         part you can still change.
       </p>
       <div className="day-stream">
-        {[...activities].reverse().map((activity) => (
-          <article className="stream-row complete" key={activity.id}>
-            <time>{formatActivityTime(activity.startedAt)}</time>
-            <div>
-              <i />
-              <strong>
-                {activity.durationMinutes}m · {activity.category}
-              </strong>
-              <p>{activity.note}</p>
-              {activity.projectId && projects.get(activity.projectId) && (
-                <span>{projects.get(activity.projectId)?.name}</span>
-              )}
-            </div>
-          </article>
-        ))}
+        {[...activities].reverse().map((activity) => {
+          const projectId =
+            activity.attributedProjectId ?? activity.projectId;
+          return (
+            <article className="stream-row complete" key={activity.id}>
+              <time>{formatActivityTime(activity.startedAt)}</time>
+              <div>
+                <i />
+                <div className="stream-activity-heading">
+                  <strong>
+                    {activity.durationMinutes}m · {activity.category}
+                  </strong>
+                  {activity.origin === "MANUAL" &&
+                    activity.focusSessionId === null && (
+                      <button
+                        aria-label={`Edit activity: ${activity.note}`}
+                        className="stream-activity-edit"
+                        onClick={() => onEditActivity(activity)}
+                        type="button"
+                      >
+                        <Pencil size={13} />
+                        Edit
+                      </button>
+                    )}
+                </div>
+                <p>{activity.note}</p>
+                {projectId && projects.get(projectId) && (
+                  <span>{projects.get(projectId)?.name}</span>
+                )}
+              </div>
+            </article>
+          );
+        })}
         {activeFocus && (
           <article className="stream-row now">
             <time>now</time>
@@ -4727,46 +4920,41 @@ function ReviewPage({
 }
 
 function ActivityDialog({
+  mode,
   tasks,
   projects,
-  time,
-  duration,
-  category,
-  taskId,
-  projectId,
-  note,
+  draft,
+  originalTaskId,
+  originalInheritedProjectId,
   error,
   saving,
-  onTimeChange,
-  onDurationChange,
-  onCategoryChange,
-  onTaskChange,
-  onProjectChange,
-  onNoteChange,
+  onDraftChange,
   onClose,
   onSave
 }: {
-  tasks: Task[];
+  mode: "create" | "edit";
+  tasks: ActivityTaskOption[];
   projects: ProjectSummary[];
-  time: string;
-  duration: string;
-  category: string;
-  taskId: string;
-  projectId: string;
-  note: string;
+  draft: ActivityDraft;
+  originalTaskId: string | null;
+  originalInheritedProjectId: string | null;
   error: string;
   saving: boolean;
-  onTimeChange: (value: string) => void;
-  onDurationChange: (value: string) => void;
-  onCategoryChange: (value: string) => void;
-  onTaskChange: (value: string) => void;
-  onProjectChange: (value: string) => void;
-  onNoteChange: (value: string) => void;
+  onDraftChange: (patch: Partial<ActivityDraft>) => void;
   onClose: () => void;
   onSave: () => Promise<void>;
 }) {
-  const linkedTaskProjectId =
+  const { time, duration, category, taskId, projectId, note } = draft;
+  const currentTaskProjectId =
     tasks.find((task) => task.id === taskId)?.projectId ?? null;
+  const usingHistoricalAttribution =
+    mode === "edit" &&
+    taskId === originalTaskId &&
+    Boolean(originalInheritedProjectId);
+  const linkedTaskProjectId = usingHistoricalAttribution
+    ? originalInheritedProjectId
+    : currentTaskProjectId;
+  const title = mode === "edit" ? "Edit activity" : "Log activity";
   return (
     <div
       className="palette-overlay"
@@ -4777,21 +4965,33 @@ function ActivityDialog({
         className="activity-dialog panel"
         role="dialog"
         aria-modal="true"
-        aria-label="Log activity"
+        aria-label={title}
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="dialog-heading">
           <div>
-            <span className="eyebrow">Captured today</span>
-            <h2>Log activity</h2>
+            <span className="eyebrow">
+              {mode === "edit" ? "Correct recorded evidence" : "Captured today"}
+            </span>
+            <h2>{title}</h2>
           </div>
-          <button className="text-button" disabled={saving} onClick={onClose}>Close</button>
+          <button
+            className="text-button"
+            disabled={saving}
+            onClick={onClose}
+            type="button"
+          >
+            Close
+          </button>
         </div>
         <textarea
+          aria-label="Activity note"
           autoFocus
           value={note}
           disabled={saving}
-          onChange={(event) => onNoteChange(event.target.value)}
+          onChange={(event) =>
+            onDraftChange({ note: event.target.value })
+          }
           placeholder="Record a small win or what moved forward."
         />
         <div className="activity-dialog-grid">
@@ -4801,7 +5001,9 @@ function ActivityDialog({
               type="time"
               value={time}
               disabled={saving}
-              onChange={(event) => onTimeChange(event.target.value)}
+              onChange={(event) =>
+                onDraftChange({ time: event.target.value })
+              }
             />
           </label>
           <label>
@@ -4812,28 +5014,48 @@ function ActivityDialog({
               max="1440"
               value={duration}
               disabled={saving}
-              onChange={(event) => onDurationChange(event.target.value)}
+              onChange={(event) =>
+                onDraftChange({ duration: event.target.value })
+              }
             />
           </label>
           <label>
             Category
             <select
+              aria-label="Category"
               value={category}
               disabled={saving}
-              onChange={(event) => onCategoryChange(event.target.value)}
+              onChange={(event) =>
+                onDraftChange({ category: event.target.value })
+              }
             >
-              {activityCategories.map((item) => <option key={item}>{item}</option>)}
+              {activityCategories.map((item) => (
+                <option key={item}>{item}</option>
+              ))}
             </select>
           </label>
           <label>
             Linked task
             <select
+              aria-label="Linked task"
               value={taskId}
               disabled={saving}
-              onChange={(event) => onTaskChange(event.target.value)}
+              onChange={(event) => {
+                const value = event.target.value;
+                onDraftChange({
+                  taskId: value,
+                  ...(tasks.find((task) => task.id === value)?.projectId
+                    ? { projectId: "" }
+                    : {})
+                });
+              }}
             >
               <option value="">No linked task</option>
-              {tasks.map((task) => <option key={task.id} value={task.id}>{task.title}</option>)}
+              {tasks.map((task) => (
+                <option key={task.id} value={task.id}>
+                  {task.title}
+                </option>
+              ))}
             </select>
           </label>
           <label>
@@ -4842,7 +5064,9 @@ function ActivityDialog({
               aria-label="Project"
               value={linkedTaskProjectId ?? projectId}
               disabled={saving || Boolean(linkedTaskProjectId)}
-              onChange={(event) => onProjectChange(event.target.value)}
+              onChange={(event) =>
+                onDraftChange({ projectId: event.target.value })
+              }
             >
               <option value="">No Project</option>
               {projects.map((project) => (
@@ -4851,13 +5075,32 @@ function ActivityDialog({
                 </option>
               ))}
             </select>
-            {linkedTaskProjectId && <small>Inherited from linked task</small>}
+            {linkedTaskProjectId && (
+              <small>
+                {usingHistoricalAttribution
+                  ? "Recorded from linked task"
+                  : "Inherited from linked task"}
+              </small>
+            )}
           </label>
         </div>
-        {error && <p className="form-error">{error}</p>}
-        <button className="primary-button" disabled={saving} onClick={() => void onSave()}>
-          <Plus size={14} />
-          {saving ? "Saving…" : "Add activity"}
+        {error && (
+          <p className="form-error" role="alert">
+            {error}
+          </p>
+        )}
+        <button
+          className="primary-button"
+          disabled={saving}
+          onClick={() => void onSave()}
+          type="button"
+        >
+          {mode === "edit" ? <Save size={14} /> : <Plus size={14} />}
+          {saving
+            ? "Saving…"
+            : mode === "edit"
+              ? "Save changes"
+              : "Add activity"}
         </button>
       </section>
     </div>

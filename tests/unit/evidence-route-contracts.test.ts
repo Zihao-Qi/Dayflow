@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { NextRequest } from "next/server";
 import { POST as createActivity } from "../../src/app/api/activities/route";
+import { PUT as updateActivity } from "../../src/app/api/activities/[id]/route";
 import { PUT as saveDiary } from "../../src/app/api/diary/route";
 import { POST as createMaterial } from "../../src/app/api/materials/route";
 import { POST as createNote } from "../../src/app/api/notes/route";
@@ -82,6 +83,46 @@ test("evidence routes expose typed validation errors", async () => {
   assert.deepEqual(await materialResponse.json(), {
     error: "Add a URL before saving this reference.",
     code: "VALIDATION_ERROR"
+  });
+});
+
+test("Activity replacement route validates the path and full body before writing", async () => {
+  const invalidIdResponse = await updateActivity(
+    jsonRequest("http://localhost/api/activities/invalid", "PUT", {}),
+    { params: Promise.resolve({ id: " " }) }
+  );
+  assert.equal(invalidIdResponse.status, 400);
+  assert.deepEqual(await invalidIdResponse.json(), {
+    error: "Activity identifier is invalid.",
+    code: "VALIDATION_ERROR",
+    field: "id"
+  });
+
+  const invalidJsonResponse = await updateActivity(
+    invalidJsonRequest("http://localhost/api/activities/activity-1", "PUT"),
+    { params: Promise.resolve({ id: "activity-1" }) }
+  );
+  assert.equal(invalidJsonResponse.status, 400);
+  assert.deepEqual(await invalidJsonResponse.json(), {
+    error: "Request body must be valid JSON.",
+    code: "INVALID_JSON",
+    field: "body"
+  });
+
+  const partialBodyResponse = await updateActivity(
+    jsonRequest("http://localhost/api/activities/activity-1", "PUT", {
+      startTime: "09:05",
+      durationMinutes: 25,
+      category: "Deep Work",
+      note: "Corrected Activity evidence."
+    }),
+    { params: Promise.resolve({ id: "activity-1" }) }
+  );
+  assert.equal(partialBodyResponse.status, 400);
+  assert.deepEqual(await partialBodyResponse.json(), {
+    error: "Task relationship is required.",
+    code: "VALIDATION_ERROR",
+    field: "taskId"
   });
 });
 

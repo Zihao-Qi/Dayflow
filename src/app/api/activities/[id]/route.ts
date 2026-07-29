@@ -1,5 +1,15 @@
 import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import {
+  activityMutationErrorResponse
+} from "@/lib/activity-http";
+import {
+  replaceManualActivity
+} from "@/lib/activity-persistence";
+import {
+  parseActivityReplaceMutation,
+  readEvidenceMutationBody
+} from "@/lib/evidence-mutations";
 import { prisma } from "@/lib/prisma";
 import {
   WorkflowMutationRequestError,
@@ -7,6 +17,27 @@ import {
 } from "@/lib/workflow-mutations";
 
 type Params = { params: Promise<{ id: string }> };
+
+export async function PUT(request: NextRequest, { params }: Params) {
+  try {
+    const routeParams = await params;
+    const id = parseWorkflowId(
+      routeParams.id,
+      "id",
+      "Activity identifier is invalid."
+    );
+    const body = await readEvidenceMutationBody(request);
+    const input = parseActivityReplaceMutation(body);
+    const activity = await replaceManualActivity(id, input);
+    return NextResponse.json(activity);
+  } catch (error) {
+    return activityMutationErrorResponse(
+      error,
+      "Activity update failed.",
+      "Activity could not be updated."
+    );
+  }
+}
 
 export async function DELETE(_request: NextRequest, { params }: Params) {
   try {

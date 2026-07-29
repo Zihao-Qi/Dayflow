@@ -31,6 +31,15 @@ export type ActivityCreateMutation = {
   projectId: string | null;
 };
 
+export type ActivityReplaceMutation = {
+  startTime: string;
+  durationMinutes: number;
+  category: string;
+  note: string;
+  taskId: string | null;
+  projectId: string | null;
+};
+
 export type DiaryUpsertMutation = {
   date: Date;
   content: string;
@@ -85,6 +94,26 @@ export function parseActivityCreateMutation(
     note: parseActivityNote(body.note),
     taskId: parseRelationshipId(body.taskId, "taskId", "Task"),
     projectId: parseRelationshipId(body.projectId, "projectId", "Project")
+  };
+}
+
+export function parseActivityReplaceMutation(
+  value: unknown
+): ActivityReplaceMutation {
+  const body = requireObject(value);
+  return {
+    startTime: parseRequiredActivityTime(body.startTime),
+    durationMinutes: parseBoundedInteger(
+      body.durationMinutes,
+      "durationMinutes",
+      1,
+      ACTIVITY_DURATION_MAX_MINUTES,
+      `Duration must be between 1 and ${ACTIVITY_DURATION_MAX_MINUTES} minutes.`
+    ),
+    category: parseRequiredActivityCategory(body.category),
+    note: parseActivityNote(body.note),
+    taskId: parseRequiredRelationshipId(body, "taskId", "Task"),
+    projectId: parseRequiredRelationshipId(body, "projectId", "Project")
   };
 }
 
@@ -150,6 +179,14 @@ function parseActivityTime(value: unknown, now: Date) {
   if (value === undefined || value === null || value === "") {
     return { hours: now.getHours(), minutes: now.getMinutes() };
   }
+  const startTime = parseRequiredActivityTime(value);
+  return {
+    hours: Number(startTime.slice(0, 2)),
+    minutes: Number(startTime.slice(3, 5))
+  };
+}
+
+function parseRequiredActivityTime(value: unknown) {
   if (typeof value !== "string") {
     throw new EvidenceMutationRequestError(
       "Activity start time is invalid.",
@@ -163,7 +200,7 @@ function parseActivityTime(value: unknown, now: Date) {
       "startTime"
     );
   }
-  return { hours: Number(match[1]), minutes: Number(match[2]) };
+  return value;
 }
 
 function parseActivityCategory(value: unknown) {
@@ -177,6 +214,29 @@ function parseActivityCategory(value: unknown) {
     );
   }
   const category = value.trim() || "Deep Work";
+  if (category.length > ACTIVITY_CATEGORY_MAX_LENGTH) {
+    throw new EvidenceMutationRequestError(
+      `Activity category must be ${ACTIVITY_CATEGORY_MAX_LENGTH} characters or fewer.`,
+      "category"
+    );
+  }
+  return category;
+}
+
+function parseRequiredActivityCategory(value: unknown) {
+  if (typeof value !== "string") {
+    throw new EvidenceMutationRequestError(
+      "Activity category must be text.",
+      "category"
+    );
+  }
+  const category = value.trim();
+  if (!category) {
+    throw new EvidenceMutationRequestError(
+      "Choose an Activity category.",
+      "category"
+    );
+  }
   if (category.length > ACTIVITY_CATEGORY_MAX_LENGTH) {
     throw new EvidenceMutationRequestError(
       `Activity category must be ${ACTIVITY_CATEGORY_MAX_LENGTH} characters or fewer.`,
@@ -227,6 +287,28 @@ function parseRelationshipId(
     );
   }
   return id;
+}
+
+function parseRequiredRelationshipId(
+  body: JsonObject,
+  field: "taskId" | "projectId",
+  label: "Task" | "Project"
+) {
+  if (!Object.prototype.hasOwnProperty.call(body, field)) {
+    throw new EvidenceMutationRequestError(
+      `${label} relationship is required.`,
+      field
+    );
+  }
+  const value = body[field];
+  if (value === null) return null;
+  if (typeof value !== "string" || !value.trim()) {
+    throw new EvidenceMutationRequestError(
+      `${label} identifier is invalid.`,
+      field
+    );
+  }
+  return parseRelationshipId(value, field, label);
 }
 
 function parseOptionalText(

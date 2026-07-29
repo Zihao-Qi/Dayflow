@@ -3,6 +3,7 @@ BEGIN IMMEDIATE;
 
 ALTER TABLE "Task" RENAME TO "legacy_Task";
 ALTER TABLE "Note" RENAME TO "legacy_Note";
+ALTER TABLE "DiaryEntry" RENAME TO "legacy_DiaryEntry";
 ALTER TABLE "Material" RENAME TO "legacy_Material";
 ALTER TABLE "TimeBlock" RENAME TO "legacy_TimeBlock";
 ALTER TABLE "ActivityEntry" RENAME TO "legacy_ActivityEntry";
@@ -92,6 +93,26 @@ INSERT INTO "Note" (
 SELECT
   "id", "content", "tags", "date", "taskId", "createdAt", "updatedAt"
 FROM "legacy_Note";
+
+CREATE TABLE "DiaryEntry" (
+  "id" TEXT NOT NULL PRIMARY KEY,
+  "date" DATETIME NOT NULL,
+  "content" TEXT NOT NULL DEFAULT '',
+  "reflection" TEXT NOT NULL DEFAULT '',
+  "mood" INTEGER NOT NULL DEFAULT 3,
+  "energy" INTEGER NOT NULL DEFAULT 3,
+  "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" DATETIME NOT NULL
+);
+
+INSERT INTO "DiaryEntry" (
+  "id", "date", "content", "reflection", "mood", "energy",
+  "createdAt", "updatedAt"
+)
+SELECT
+  "id", "date", "content", "reflection", "mood", "energy",
+  "createdAt", "updatedAt"
+FROM "legacy_DiaryEntry";
 
 CREATE TABLE "Material" (
   "id" TEXT NOT NULL PRIMARY KEY,
@@ -215,6 +236,7 @@ CREATE TABLE "TaskScheduleChange" (
 
 DROP TABLE "legacy_Material";
 DROP TABLE "legacy_Note";
+DROP TABLE "legacy_DiaryEntry";
 DROP TABLE "legacy_ActivityEntry";
 DROP TABLE "legacy_TimeBlock";
 DROP TABLE "legacy_Task";
@@ -227,6 +249,7 @@ CREATE INDEX "Task_focusQueuePosition_idx" ON "Task"("focusQueuePosition");
 CREATE INDEX "Task_projectId_idx" ON "Task"("projectId");
 CREATE INDEX "Task_phaseId_idx" ON "Task"("phaseId");
 CREATE INDEX "Note_projectId_idx" ON "Note"("projectId");
+CREATE UNIQUE INDEX "DiaryEntry_date_key" ON "DiaryEntry"("date");
 CREATE INDEX "Material_projectId_idx" ON "Material"("projectId");
 CREATE INDEX "ActivityEntry_startedAt_idx" ON "ActivityEntry"("startedAt");
 CREATE INDEX "ActivityEntry_taskId_idx" ON "ActivityEntry"("taskId");

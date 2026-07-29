@@ -6,6 +6,7 @@ import {
   existsSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   statSync,
   truncateSync
@@ -88,6 +89,14 @@ test(
       assert.match(
         restore.stdout,
         /No active database existed; no safety backup was needed/
+      );
+      assert.match(
+        restore.stdout,
+        /not needed \(validated disposable restore copy\)/i
+      );
+      assert.deepEqual(
+        migrationSafetyArtifacts(temporaryDirectory),
+        []
       );
       assert.match(restore.stdout, /Dayflow restore complete/);
       assert.deepEqual(recordCounts(activeDatabase), expectedCounts);
@@ -362,4 +371,15 @@ function queryValue(databasePath: string, sql: string) {
 
 function fileHash(path: string) {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+function migrationSafetyArtifacts(directory: string) {
+  const backupDirectory = join(directory, "backups");
+  return existsSync(backupDirectory)
+    ? readdirSync(backupDirectory)
+        .filter((name) =>
+          name.startsWith("dayflow-safety-before-migration-")
+        )
+        .sort()
+    : [];
 }

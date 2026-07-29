@@ -55,6 +55,7 @@ Product and corrective specifications:
 - [Evidence Integrity v1](./docs/specs/EVIDENCE_INTEGRITY_V1.md)
 - [Weekly Evidence Review v1](./docs/specs/WEEKLY_EVIDENCE_REVIEW_V1.md)
 - [Local Data Reliability v1](./docs/specs/LOCAL_DATA_RELIABILITY_V1.md)
+- [Migration Safety Backups v1](./docs/specs/MIGRATION_SAFETY_BACKUPS_V1.md)
 - [Command Palette v1](./docs/specs/COMMAND_PALETTE_V1.md)
 - [Manual Time Blocks v1](./docs/specs/TIME_BLOCKS_V1.md)
 - [Activity Capture v1](./docs/specs/ACTIVITY_CAPTURE_V1.md)
@@ -122,8 +123,13 @@ When updating an existing local checkout after a schema change, run:
 npm run db:migrate
 ```
 
-This applies checked-in migrations and repeatable evidence reconciliation
-without reseeding personal data.
+For a recognized existing Dayflow database, this first creates and verifies a
+retained `dayflow-safety-before-migration-…dayflow-backup` artifact beside the
+database, then applies checked-in migrations and repeatable Evidence
+reconciliation without reseeding personal data. A genuinely fresh database
+does not need a safety artifact. If migration fails after protection is
+established, the command reports the retained artifact and an explicit
+`db:restore` recovery command; it does not claim or attempt automatic rollback.
 
 ## Checks
 

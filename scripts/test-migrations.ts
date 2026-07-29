@@ -1,14 +1,27 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import {
+  copyFileSync,
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { inspectDatabaseBackup } from "./database-backup";
 
 const repositoryRoot = process.cwd();
 const temporaryDirectory = mkdtempSync(
   join(tmpdir(), "dayflow-migration-test-")
 );
 const freshDatabase = join(temporaryDirectory, "fresh.db");
+const emptyDatabase = join(temporaryDirectory, "empty.db");
 const legacyDatabase = join(temporaryDirectory, "legacy.db");
 const currentSetupDatabase = join(temporaryDirectory, "current-setup.db");
 const preProjectDatabase = join(temporaryDirectory, "pre-project.db");
@@ -17,12 +30,97 @@ const projectEraDatabase = join(temporaryDirectory, "project-era.db");
 const focusEraDatabase = join(temporaryDirectory, "focus-era.db");
 const existingSetupDatabase = join(temporaryDirectory, "existing-setup.db");
 const seededSetupDatabase = join(temporaryDirectory, "seeded-setup.db");
+const corruptDatabase = join(temporaryDirectory, "corrupt.db");
+const unrelatedDatabase = join(temporaryDirectory, "unrelated.db");
+const symbolicLinkDatabase = join(temporaryDirectory, "symbolic-link.db");
+const brokenSymbolicLinkDatabase = join(
+  temporaryDirectory,
+  "broken-symbolic-link.db"
+);
+const unsupportedDatabase = join(temporaryDirectory, "unsupported.db");
+const futureColumnDatabase = join(
+  temporaryDirectory,
+  "future-column.db"
+);
+const futureMigrationDatabase = join(
+  temporaryDirectory,
+  "future-migration.db"
+);
+const missingIndexDatabase = join(
+  temporaryDirectory,
+  "missing-index.db"
+);
+const missingForeignKeyDatabase = join(
+  temporaryDirectory,
+  "missing-foreign-key.db"
+);
+const missingLegacyIndexDatabase = join(
+  temporaryDirectory,
+  "missing-legacy-index.db"
+);
+const unsupportedPreProjectColumnsDatabase = join(
+  temporaryDirectory,
+  "unsupported-pre-project-columns.db"
+);
+const generatedColumnDatabase = join(
+  temporaryDirectory,
+  "generated-column.db"
+);
+const outOfOrderHistoryDatabase = join(
+  temporaryDirectory,
+  "out-of-order-history.db"
+);
+const orphanedPreProjectRelationshipDatabase = join(
+  temporaryDirectory,
+  "orphaned-pre-project-relationship.db"
+);
+const generatedKnownColumnDatabase = join(
+  temporaryDirectory,
+  "generated-known-column.db"
+);
+const duplicateLegacyDiaryDateDatabase = join(
+  temporaryDirectory,
+  "duplicate-legacy-diary-date.db"
+);
+const nullLegacyTaskTitleDatabase = join(
+  temporaryDirectory,
+  "null-legacy-task-title.db"
+);
 
 try {
   runMigration(freshDatabase);
   assert.equal(query(freshDatabase, "PRAGMA integrity_check;"), "ok");
   assert.equal(appliedMigrationCount(freshDatabase), "5");
   assertReviewSchema(freshDatabase);
+  assert.deepEqual(migrationSafetyBackups(), []);
+
+  runMigration(freshDatabase);
+  assert.equal(migrationSafetyBackups().length, 1);
+
+  execFileSync("sqlite3", [emptyDatabase, "VACUUM;"]);
+  const artifactsBeforeEmptyMigration = migrationSafetyBackups();
+  runMigration(emptyDatabase);
+  assert.deepEqual(
+    migrationSafetyBackups(),
+    artifactsBeforeEmptyMigration
+  );
+
+  const beforePathOnlyBypassHash = fileSha256(freshDatabase);
+  const artifactsBeforePathOnlyBypass = migrationSafetyBackups();
+  const pathOnlyBypass = runMigrationArgumentsCaptured(
+    freshDatabase,
+    ["--disposable-restore-copy", freshDatabase]
+  );
+  assert.notEqual(pathOnlyBypass.status, 0);
+  assert.match(
+    pathOnlyBypass.stderr,
+    /migration helper received invalid arguments/i
+  );
+  assert.equal(fileSha256(freshDatabase), beforePathOnlyBypassHash);
+  assert.deepEqual(
+    migrationSafetyBackups(),
+    artifactsBeforePathOnlyBypass
+  );
 
   execFileSync("sqlite3", [legacyDatabase], {
     input: readFileSync(
@@ -380,6 +478,415 @@ try {
   assert.equal(appliedMigrationCount(currentSetupDatabase), "5");
   assertReviewSchema(currentSetupDatabase);
 
+  writeFileSync(corruptDatabase, "not a SQLite database");
+  assertRejectedBeforeMutation(corruptDatabase);
+
+  execFileSync("sqlite3", [
+    unrelatedDatabase,
+    `CREATE TABLE "Task" ("id" TEXT PRIMARY KEY);
+     CREATE TABLE "Note" ("id" TEXT PRIMARY KEY);
+     CREATE TABLE "DiaryEntry" ("id" TEXT PRIMARY KEY);
+     CREATE TABLE "Material" ("id" TEXT PRIMARY KEY);
+     CREATE TABLE "TimeBlock" ("id" TEXT PRIMARY KEY);`
+  ]);
+  assertRejectedBeforeMutation(unrelatedDatabase);
+
+  symlinkSync(currentSetupDatabase, symbolicLinkDatabase);
+  assertRejectedBeforeMutation(symbolicLinkDatabase);
+
+  symlinkSync(
+    join(temporaryDirectory, "missing-symbolic-link-target.db"),
+    brokenSymbolicLinkDatabase
+  );
+  assertRejectedBeforeMutation(brokenSymbolicLinkDatabase);
+
+  execFileSync("sqlite3", [unsupportedDatabase], {
+    input: historicalSchema("5b64c3f")
+  });
+  execFileSync("sqlite3", [
+    unsupportedDatabase,
+    `ALTER TABLE "Task"
+       ADD COLUMN "focusQueuePosition" INTEGER;`
+  ]);
+  assertRejectedBeforeMutation(unsupportedDatabase);
+
+  execFileSync("sqlite3", [unsupportedPreProjectColumnsDatabase], {
+    input: historicalSchema("7c8fa9a")
+  });
+  execFileSync("sqlite3", [
+    unsupportedPreProjectColumnsDatabase,
+    `ALTER TABLE "Task" ADD COLUMN "projectId" TEXT;
+     UPDATE "Task" SET "projectId" = 'orphan-project';`
+  ]);
+  const unsupportedPreProjectColumnsRejection =
+    assertRejectedBeforeMutation(
+      unsupportedPreProjectColumnsDatabase
+    );
+  assert.match(
+    unsupportedPreProjectColumnsRejection.stderr,
+    /Project relationship columns are present without the Project table/
+  );
+
+  copyFileSync(freshDatabase, generatedColumnDatabase);
+  execFileSync("sqlite3", [
+    generatedColumnDatabase,
+    `ALTER TABLE "Task"
+       ADD COLUMN "futureGenerated" TEXT
+       GENERATED ALWAYS AS ("title" || '!') VIRTUAL;`
+  ]);
+  const generatedColumnRejection =
+    assertRejectedBeforeMutation(generatedColumnDatabase);
+  assert.match(
+    generatedColumnRejection.stderr,
+    /unexpected column Task\.futureGenerated/
+  );
+
+  execFileSync("sqlite3", [generatedKnownColumnDatabase], {
+    input: historicalSchema("7c8fa9a")
+  });
+  execFileSync("sqlite3", [
+    generatedKnownColumnDatabase,
+    `ALTER TABLE "Task"
+       ADD COLUMN "projectId" TEXT
+       GENERATED ALWAYS AS ('future-project') VIRTUAL;`
+  ]);
+  const generatedKnownColumnRejection =
+    assertRejectedBeforeMutation(generatedKnownColumnDatabase);
+  assert.match(
+    generatedKnownColumnRejection.stderr,
+    /unexpected column Task\.projectId.*generated/
+  );
+
+  copyFileSync(freshDatabase, outOfOrderHistoryDatabase);
+  execFileSync("sqlite3", [
+    outOfOrderHistoryDatabase,
+    `UPDATE "_prisma_migrations"
+        SET "started_at" = CASE "migration_name"
+          WHEN '20260723000000_initial' THEN 200
+          WHEN '20260727000000_evidence_integrity' THEN 100
+          ELSE "started_at"
+        END;`
+  ]);
+  const outOfOrderHistoryRejection =
+    assertRejectedBeforeMutation(outOfOrderHistoryDatabase);
+  assert.match(
+    outOfOrderHistoryRejection.stderr,
+    /applied Prisma migrations are not a supported prefix/
+  );
+
+  execFileSync("sqlite3", [
+    orphanedPreProjectRelationshipDatabase
+  ], {
+    input: historicalSchema("7c8fa9a")
+  });
+  execFileSync("sqlite3", [
+    orphanedPreProjectRelationshipDatabase,
+    `PRAGMA foreign_keys=OFF;
+     BEGIN IMMEDIATE;
+     CREATE TABLE "new_Note" (
+       "id" TEXT NOT NULL PRIMARY KEY,
+       "content" TEXT NOT NULL,
+       "tags" TEXT NOT NULL DEFAULT '[]',
+       "date" DATETIME NOT NULL,
+       "taskId" TEXT,
+       "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+       "updatedAt" DATETIME NOT NULL
+     );
+     INSERT INTO "new_Note" (
+       "id", "content", "tags", "date", "taskId",
+       "createdAt", "updatedAt"
+     )
+     SELECT
+       "id", "content", "tags", "date", "taskId",
+       "createdAt", "updatedAt"
+     FROM "Note";
+     DROP TABLE "Note";
+     ALTER TABLE "new_Note" RENAME TO "Note";
+     INSERT INTO "Note" (
+       "id", "content", "date", "taskId", "createdAt", "updatedAt"
+     ) VALUES (
+       'orphan-note', 'Do not silently discard this relationship',
+       1785000000000, 'missing-task', 1785000000000, 1785000000000
+     );
+     COMMIT;
+     PRAGMA foreign_keys=ON;`
+  ]);
+  const orphanedRelationshipRejection =
+    assertRejectedBeforeMutation(
+      orphanedPreProjectRelationshipDatabase
+    );
+  assert.match(
+    orphanedRelationshipRejection.stderr,
+    /Note\.taskId relationship validation failed/
+  );
+
+  execFileSync("sqlite3", [duplicateLegacyDiaryDateDatabase], {
+    input: historicalSchema("7c8fa9a")
+  });
+  execFileSync("sqlite3", [
+    duplicateLegacyDiaryDateDatabase,
+    `DROP INDEX "DiaryEntry_date_key";
+     INSERT INTO "DiaryEntry" (
+       "id", "date", "createdAt", "updatedAt"
+     ) VALUES
+       ('duplicate-diary-1', 1785000000000, 1785000000000, 1785000000000),
+       ('duplicate-diary-2', 1785000000000, 1785000000000, 1785000000000);`
+  ]);
+  const duplicateLegacyDiaryRejection =
+    assertRejectedBeforeMutation(
+      duplicateLegacyDiaryDateDatabase
+    );
+  assert.match(
+    duplicateLegacyDiaryRejection.stderr,
+    /pre-Project upgrade preflight failed/
+  );
+
+  execFileSync("sqlite3", [nullLegacyTaskTitleDatabase], {
+    input: historicalSchema("7c8fa9a")
+  });
+  execFileSync("sqlite3", [
+    nullLegacyTaskTitleDatabase,
+    `PRAGMA foreign_keys=OFF;
+     BEGIN IMMEDIATE;
+     CREATE TABLE "new_Task" (
+       "id" TEXT NOT NULL PRIMARY KEY,
+       "title" TEXT,
+       "date" DATETIME NOT NULL,
+       "status" TEXT NOT NULL DEFAULT 'TODO',
+       "priority" TEXT NOT NULL DEFAULT 'MEDIUM',
+       "urgentScore" INTEGER NOT NULL DEFAULT 2,
+       "importanceScore" INTEGER NOT NULL DEFAULT 3,
+       "deadline" DATETIME,
+       "estimateMinutes" INTEGER NOT NULL DEFAULT 30,
+       "actualMinutes" INTEGER NOT NULL DEFAULT 0,
+       "sortOrder" INTEGER NOT NULL DEFAULT 0,
+       "completedAt" DATETIME,
+       "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+       "updatedAt" DATETIME NOT NULL
+     );
+     INSERT INTO "new_Task"
+     SELECT * FROM "Task";
+     DROP TABLE "Task";
+     ALTER TABLE "new_Task" RENAME TO "Task";
+     INSERT INTO "Task" (
+       "id", "title", "date", "createdAt", "updatedAt"
+     ) VALUES (
+       'null-title-task', NULL, 1785000000000,
+       1785000000000, 1785000000000
+     );
+     COMMIT;
+     PRAGMA foreign_keys=ON;`
+  ]);
+  const nullLegacyTaskTitleRejection =
+    assertRejectedBeforeMutation(nullLegacyTaskTitleDatabase);
+  assert.match(
+    nullLegacyTaskTitleRejection.stderr,
+    /pre-Project upgrade preflight failed/
+  );
+
+  copyFileSync(freshDatabase, futureColumnDatabase);
+  execFileSync("sqlite3", [
+    futureColumnDatabase,
+    `ALTER TABLE "Task" ADD COLUMN "futureOnly" TEXT;`
+  ]);
+  assertRejectedBeforeMutation(futureColumnDatabase);
+
+  copyFileSync(freshDatabase, futureMigrationDatabase);
+  execFileSync("sqlite3", [
+    futureMigrationDatabase,
+    `INSERT INTO "_prisma_migrations" (
+       "id", "checksum", "finished_at", "migration_name",
+       "logs", "rolled_back_at", "started_at", "applied_steps_count"
+     ) VALUES (
+       'future-migration', '${"0".repeat(64)}', 1785000000000,
+       '20990101000000_future', NULL, NULL, 1785000000000, 1
+     );`
+  ]);
+  assertRejectedBeforeMutation(futureMigrationDatabase);
+
+  copyFileSync(freshDatabase, missingIndexDatabase);
+  execFileSync("sqlite3", [
+    missingIndexDatabase,
+    `DROP INDEX "Task_date_idx";`
+  ]);
+  const missingIndexRejection =
+    assertRejectedBeforeMutation(missingIndexDatabase);
+  assert.match(
+    missingIndexRejection.stderr,
+    /Task has unexpected indexes/
+  );
+
+  copyFileSync(freshDatabase, missingForeignKeyDatabase);
+  execFileSync("sqlite3", [
+    missingForeignKeyDatabase,
+    `PRAGMA foreign_keys=OFF;
+     BEGIN IMMEDIATE;
+     ALTER TABLE "TimeBlock" RENAME TO "legacy_TimeBlock";
+     CREATE TABLE "TimeBlock" (
+       "id" TEXT NOT NULL PRIMARY KEY,
+       "date" DATETIME NOT NULL,
+       "startTime" TEXT NOT NULL,
+       "endTime" TEXT NOT NULL,
+       "title" TEXT NOT NULL,
+       "taskId" TEXT,
+       "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+       "updatedAt" DATETIME NOT NULL
+     );
+     INSERT INTO "TimeBlock" (
+       "id", "date", "startTime", "endTime", "title", "taskId",
+       "createdAt", "updatedAt"
+     )
+     SELECT
+       "id", "date", "startTime", "endTime", "title", "taskId",
+       "createdAt", "updatedAt"
+     FROM "legacy_TimeBlock";
+     DROP TABLE "legacy_TimeBlock";
+     COMMIT;
+     PRAGMA foreign_keys=ON;`
+  ]);
+  const missingForeignKeyRejection =
+    assertRejectedBeforeMutation(missingForeignKeyDatabase);
+  assert.match(
+    missingForeignKeyRejection.stderr,
+    /TimeBlock has unexpected foreignKeys/
+  );
+
+  execFileSync("sqlite3", [missingLegacyIndexDatabase], {
+    input: historicalSchema("5b64c3f")
+  });
+  execFileSync("sqlite3", [
+    missingLegacyIndexDatabase,
+    `DROP INDEX "Task_date_idx";`
+  ]);
+  const missingLegacyIndexRejection =
+    assertRejectedBeforeMutation(missingLegacyIndexDatabase);
+  assert.match(
+    missingLegacyIndexRejection.stderr,
+    /Task has unexpected indexes/
+  );
+
+  const backupFailureDirectory = join(
+    temporaryDirectory,
+    "backup-failure"
+  );
+  const backupFailureDatabase = join(
+    backupFailureDirectory,
+    "active.db"
+  );
+  mkdirSync(backupFailureDirectory);
+  copyFileSync(freshDatabase, backupFailureDatabase);
+  const blockedBackupDirectory = join(
+    backupFailureDirectory,
+    "backups"
+  );
+  writeFileSync(blockedBackupDirectory, "blocked");
+  const beforeBackupFailure = fileSha256(backupFailureDatabase);
+  const backupFailure = runMigrationCaptured(backupFailureDatabase);
+  assert.notEqual(backupFailure.status, 0);
+  assert.match(backupFailure.stderr, /Dayflow migration failed:/);
+  assert.doesNotMatch(
+    backupFailure.stderr,
+    /database may be partially changed/i
+  );
+  assert.equal(fileSha256(backupFailureDatabase), beforeBackupFailure);
+  assert.equal(readFileSync(blockedBackupDirectory, "utf8"), "blocked");
+
+  const postBackupFailureDirectory = join(
+    temporaryDirectory,
+    "post-backup-failure"
+  );
+  const postBackupFailureDatabase = join(
+    postBackupFailureDirectory,
+    "active.db"
+  );
+  mkdirSync(postBackupFailureDirectory);
+  copyFileSync(freshDatabase, postBackupFailureDatabase);
+  execFileSync("sqlite3", [
+    postBackupFailureDatabase,
+    `INSERT INTO "Task" (
+       "id", "title", "createdAt", "updatedAt"
+     ) VALUES (
+       'recovery-sentinel', 'Recover the protected task',
+       1785000000000, 1785000000000
+     );`
+  ]);
+  const postBackupFailure = runMigrationCaptured(
+    postBackupFailureDatabase,
+    {
+      PRISMA_SCHEMA_ENGINE_BINARY: join(
+        postBackupFailureDirectory,
+        "missing-schema-engine"
+      )
+    }
+  );
+  assert.notEqual(postBackupFailure.status, 0);
+  const retainedArtifacts = migrationSafetyBackupsIn(
+    postBackupFailureDirectory
+  );
+  assert.equal(retainedArtifacts.length, 1);
+  const retainedArtifact = join(
+    postBackupFailureDirectory,
+    "backups",
+    retainedArtifacts[0]
+  );
+  const retainedInspection = inspectDatabaseBackup(retainedArtifact);
+  assert.equal(retainedInspection.checksumVerified, true);
+  assert.match(postBackupFailure.stdout, /Migration safety backup verified/);
+  assert.match(
+    postBackupFailure.stdout,
+    new RegExp(escapeRegExp(retainedArtifact))
+  );
+  assert.match(
+    postBackupFailure.stdout,
+    new RegExp(retainedInspection.manifest.payloadSha256)
+  );
+  assert.match(
+    postBackupFailure.stdout,
+    new RegExp(retainedInspection.manifest.schemaVersion)
+  );
+  assert.match(postBackupFailure.stdout, /Task: 1/);
+  assert.match(
+    postBackupFailure.stderr,
+    new RegExp(`Safety backup retained: ${escapeRegExp(retainedArtifact)}`)
+  );
+  assert.match(
+    postBackupFailure.stderr,
+    /database may be partially changed; no automatic rollback was attempted/i
+  );
+  assert.match(
+    postBackupFailure.stderr,
+    new RegExp(
+      `npm run db:restore -- --from .*${escapeRegExp(
+        retainedArtifacts[0]
+      )}.* --confirm-replace`
+    )
+  );
+  const recoveredPostBackupDatabase = join(
+    postBackupFailureDirectory,
+    "recovered.db"
+  );
+  const recovery = runRestoreCaptured(
+    recoveredPostBackupDatabase,
+    retainedArtifact
+  );
+  assert.equal(
+    recovery.status,
+    0,
+    `Recovery failed\nstdout:\n${recovery.stdout}\nstderr:\n${recovery.stderr}`
+  );
+  assert.equal(
+    query(
+      recoveredPostBackupDatabase,
+      `SELECT "title" FROM "Task"
+        WHERE "id" = 'recovery-sentinel';`
+    ),
+    "Recover the protected task"
+  );
+  assert.deepEqual(
+    migrationSafetyBackupsIn(postBackupFailureDirectory),
+    retainedArtifacts
+  );
+
   execFileSync("sqlite3", [preProjectDatabase], {
     input: `
       CREATE TABLE "Task" (
@@ -438,7 +945,30 @@ try {
       );
     `
   });
-  runMigration(preProjectDatabase);
+  const expectedPreProjectSnapshot =
+    canonicalDatabaseSnapshot(preProjectDatabase);
+  const preProjectSafetyBackup =
+    runMigrationWithSafety(preProjectDatabase);
+  assert.deepEqual(
+    backupPayloadSnapshot(
+      preProjectSafetyBackup,
+      join(temporaryDirectory, "pre-project-artifact.db")
+    ),
+    expectedPreProjectSnapshot
+  );
+  const preProjectInspection = inspectDatabaseBackup(
+    preProjectSafetyBackup
+  );
+  assert.equal(preProjectInspection.checksumVerified, true);
+  assert.equal(
+    preProjectInspection.manifest.schemaVersion,
+    "legacy-unversioned"
+  );
+  assert.equal(preProjectInspection.manifest.recordCounts.Task, 1);
+  assert.equal(
+    preProjectInspection.manifest.recordCounts.ActivityEntry,
+    1
+  );
   assert.equal(appliedMigrationCount(preProjectDatabase), "5");
   assertReviewSchema(preProjectDatabase);
   assert.equal(
@@ -463,6 +993,42 @@ try {
     ),
     "0"
   );
+  const restoredPreProjectDatabase = join(
+    temporaryDirectory,
+    "restored-pre-project.db"
+  );
+  const artifactsBeforePreProjectRestore =
+    migrationSafetyBackups();
+  const preProjectRestore = runRestoreCaptured(
+    restoredPreProjectDatabase,
+    preProjectSafetyBackup
+  );
+  assert.equal(
+    preProjectRestore.status,
+    0,
+    `Pre-Project recovery failed\nstdout:\n${preProjectRestore.stdout}\nstderr:\n${preProjectRestore.stderr}`
+  );
+  assert.deepEqual(
+    migrationSafetyBackups(),
+    artifactsBeforePreProjectRestore
+  );
+  assertReviewSchema(restoredPreProjectDatabase);
+  assert.equal(
+    query(
+      restoredPreProjectDatabase,
+      `SELECT "title" FROM "Task"
+        WHERE "id" = 'pre-project-task';`
+    ),
+    "Preserve pre-Project task"
+  );
+  assert.equal(
+    query(
+      restoredPreProjectDatabase,
+      `SELECT "note" FROM "ActivityEntry"
+        WHERE "id" = 'pre-project-activity';`
+    ),
+    "Preserve pre-Project activity"
+  );
 
   execFileSync("sqlite3", [earliestDatabase], {
     input: historicalSchema("7c8fa9a")
@@ -476,7 +1042,17 @@ try {
        1785000000000, 1785000000000
      );`
   ]);
-  runMigration(earliestDatabase);
+  const expectedEarliestSnapshot =
+    canonicalDatabaseSnapshot(earliestDatabase);
+  const earliestSafetyBackup =
+    runMigrationWithSafety(earliestDatabase);
+  assert.deepEqual(
+    backupPayloadSnapshot(
+      earliestSafetyBackup,
+      join(temporaryDirectory, "earliest-artifact.db")
+    ),
+    expectedEarliestSnapshot
+  );
   assert.equal(appliedMigrationCount(earliestDatabase), "5");
   assertReviewSchema(earliestDatabase);
   assert.equal(
@@ -493,6 +1069,34 @@ try {
        WHERE "name" = 'focusSessionId';`
     ),
     "1"
+  );
+  const restoredEarliestDatabase = join(
+    temporaryDirectory,
+    "restored-earliest.db"
+  );
+  const artifactsBeforeHistoricalRestore = migrationSafetyBackups();
+  const historicalRestore = runRestoreCaptured(
+    restoredEarliestDatabase,
+    earliestSafetyBackup
+  );
+  assert.equal(
+    historicalRestore.status,
+    0,
+    `Historical recovery failed\nstdout:\n${historicalRestore.stdout}\nstderr:\n${historicalRestore.stderr}`
+  );
+  assert.deepEqual(
+    migrationSafetyBackups(),
+    artifactsBeforeHistoricalRestore
+  );
+  assert.equal(appliedMigrationCount(restoredEarliestDatabase), "5");
+  assertReviewSchema(restoredEarliestDatabase);
+  assert.equal(
+    query(
+      restoredEarliestDatabase,
+      `SELECT "title" FROM "Task"
+        WHERE "id" = 'earliest-task';`
+    ),
+    "Preserve earliest task"
   );
 
   execFileSync("sqlite3", [projectEraDatabase], {
@@ -597,6 +1201,86 @@ function runMigration(databasePath: string) {
   });
 }
 
+function runMigrationCaptured(
+  databasePath: string,
+  environment: Record<string, string | undefined> = {}
+) {
+  return spawnSync("npm", ["run", "db:migrate"], {
+    cwd: repositoryRoot,
+    env: {
+      ...process.env,
+      ...environment,
+      DATABASE_URL: `file:${databasePath}`
+    },
+    encoding: "utf8"
+  });
+}
+
+function runMigrationArgumentsCaptured(
+  databasePath: string,
+  args: string[]
+) {
+  return spawnSync(
+    "npm",
+    ["run", "db:migrate", "--", ...args],
+    {
+      cwd: repositoryRoot,
+      env: {
+        ...process.env,
+        DATABASE_URL: `file:${databasePath}`
+      },
+      encoding: "utf8"
+    }
+  );
+}
+
+function runRestoreCaptured(
+  databasePath: string,
+  backupPath: string
+) {
+  return spawnSync(
+    process.execPath,
+    [
+      "--import",
+      "tsx",
+      join(repositoryRoot, "scripts", "restore-database.ts"),
+      "--from",
+      backupPath,
+      "--confirm-replace"
+    ],
+    {
+      cwd: repositoryRoot,
+      env: {
+        ...process.env,
+        DATABASE_URL: `file:${databasePath}`
+      },
+      encoding: "utf8",
+      maxBuffer: 16 * 1024 * 1024
+    }
+  );
+}
+
+function assertRejectedBeforeMutation(databasePath: string) {
+  const beforeHash = existsSync(databasePath)
+    ? fileSha256(databasePath)
+    : null;
+  const beforeArtifacts = migrationSafetyBackups();
+  const result = runMigrationCaptured(databasePath);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Dayflow migration failed:/);
+  assert.doesNotMatch(
+    result.stderr,
+    /database may be partially changed/i
+  );
+  if (beforeHash) {
+    assert.equal(fileSha256(databasePath), beforeHash);
+  } else {
+    assert.equal(existsSync(databasePath), false);
+  }
+  assert.deepEqual(migrationSafetyBackups(), beforeArtifacts);
+  return result;
+}
+
 function runSetup(databasePath: string) {
   execFileSync("npm", ["run", "db:setup"], {
     cwd: repositoryRoot,
@@ -606,6 +1290,112 @@ function runSetup(databasePath: string) {
     },
     stdio: "inherit"
   });
+}
+
+function runMigrationWithSafety(databasePath: string) {
+  const before = new Set(migrationSafetyBackups());
+  runMigration(databasePath);
+  const created = migrationSafetyBackups().filter(
+    (name) => !before.has(name)
+  );
+  assert.equal(
+    created.length,
+    1,
+    `Expected one migration safety artifact for ${databasePath}.`
+  );
+  return join(temporaryDirectory, "backups", created[0]);
+}
+
+function migrationSafetyBackups() {
+  return migrationSafetyBackupsIn(temporaryDirectory);
+}
+
+function migrationSafetyBackupsIn(directory: string) {
+  const backupDirectory = join(directory, "backups");
+  return existsSync(backupDirectory)
+    ? readdirSync(backupDirectory)
+        .filter((name) =>
+          name.startsWith("dayflow-safety-before-migration-")
+        )
+        .sort()
+    : [];
+}
+
+function fileSha256(path: string) {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+function backupPayloadSnapshot(
+  backupPath: string,
+  extractedDatabasePath: string
+) {
+  const inspection = inspectDatabaseBackup(backupPath);
+  const artifact = readFileSync(backupPath);
+  const magic = Buffer.from("DAYFLOW-BACKUP\n", "utf8");
+  assert.equal(
+    artifact.subarray(0, magic.length).equals(magic),
+    true
+  );
+  const manifestLength = artifact.readUInt32BE(magic.length);
+  const payloadOffset = magic.length + 4 + manifestLength;
+  const payload = artifact.subarray(payloadOffset);
+  assert.equal(payload.length, inspection.manifest.payloadBytes);
+  writeFileSync(extractedDatabasePath, payload);
+  assert.equal(
+    fileSha256(extractedDatabasePath),
+    inspection.manifest.payloadSha256
+  );
+  try {
+    return canonicalDatabaseSnapshot(extractedDatabasePath);
+  } finally {
+    rmSync(extractedDatabasePath, { force: true });
+  }
+}
+
+function canonicalDatabaseSnapshot(databasePath: string) {
+  const schema = queryJson(
+    databasePath,
+    `SELECT type, name, tbl_name, sql
+       FROM sqlite_schema
+      WHERE name NOT LIKE 'sqlite_%'
+      ORDER BY type, name;`
+  );
+  const tableNames = queryJson(
+    databasePath,
+    `SELECT name
+       FROM sqlite_schema
+      WHERE type = 'table'
+        AND name NOT LIKE 'sqlite_%'
+      ORDER BY name;`
+  ).map((row) => String(row.name));
+  const records = Object.fromEntries(
+    tableNames.map((tableName) => [
+      tableName,
+      queryJson(
+        databasePath,
+        `SELECT *
+           FROM "${tableName.replaceAll('"', '""')}"
+          ORDER BY rowid;`
+      )
+    ])
+  );
+  return { schema, records };
+}
+
+function queryJson(
+  databasePath: string,
+  sql: string
+): Array<Record<string, unknown>> {
+  const output = execFileSync(
+    "sqlite3",
+    ["-readonly", "-json", databasePath, sql],
+    { encoding: "utf8" }
+  ).trim();
+  return output ? JSON.parse(output) : [];
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function historicalSchema(revision: string) {

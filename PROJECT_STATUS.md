@@ -31,6 +31,10 @@ The July 27 independent review produced two corrective specifications:
 - `docs/specs/EVIDENCE_INTEGRITY_V1.md` — implemented July 27
 - `docs/specs/LOCAL_DATA_RELIABILITY_V1.md` — implemented July 27
 
+The migration recovery contract is:
+
+- `docs/specs/MIGRATION_SAFETY_BACKUPS_V1.md` — implemented July 29
+
 The global capture contract is:
 
 - `docs/specs/COMMAND_PALETTE_V1.md` — implemented July 28
@@ -167,6 +171,11 @@ Funemployment Day has a narrower and immediately understandable promise around r
   Activity timestamps.
 - Uses checked-in migrations for supported upgrades and tests every prior
   schema fixture.
+- Creates and verifies a retained safety artifact before mutating any
+  recognized existing database during migration, rejects unsupported shapes
+  before mutation, and reports an explicit restore command after any
+  post-backup failure. Fresh databases and validated disposable restore copies
+  avoid redundant artifacts.
 - Adds atomic, checksummed `db:backup` and conservative `db:restore` commands.
   Restore verifies data, relationships, the exact schema, and migration
   checksums, recreates a missing working database, and retains a safety backup

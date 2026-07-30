@@ -28,14 +28,64 @@ const MANIFEST_LENGTH_BYTES = 4;
 const MAX_MANIFEST_BYTES = 1024 * 1024;
 const BACKUP_FORMAT = "dayflow-sqlite";
 const BACKUP_FORMAT_VERSION = 1;
-const MANIFEST_TABLES = [
-  "Task",
-  "Note",
-  "DiaryEntry",
-  "Material",
-  "TimeBlock",
-  "FocusSession"
-] as const;
+const OLDEST_SUPPORTED_DAYFLOW_COLUMNS = {
+  Task: [
+    "id",
+    "title",
+    "date",
+    "status",
+    "priority",
+    "urgentScore",
+    "importanceScore",
+    "deadline",
+    "estimateMinutes",
+    "actualMinutes",
+    "sortOrder",
+    "completedAt",
+    "createdAt",
+    "updatedAt"
+  ],
+  Note: [
+    "id",
+    "content",
+    "tags",
+    "date",
+    "taskId",
+    "createdAt",
+    "updatedAt"
+  ],
+  DiaryEntry: [
+    "id",
+    "date",
+    "content",
+    "reflection",
+    "mood",
+    "energy",
+    "createdAt",
+    "updatedAt"
+  ],
+  Material: [
+    "id",
+    "title",
+    "url",
+    "type",
+    "notes",
+    "taskId",
+    "noteId",
+    "createdAt",
+    "updatedAt"
+  ],
+  TimeBlock: [
+    "id",
+    "date",
+    "startTime",
+    "endTime",
+    "title",
+    "taskId",
+    "createdAt",
+    "updatedAt"
+  ]
+} as const;
 const CURRENT_TABLE_COLUMNS: Record<string, string[]> = {
   Project: [
     "id",
@@ -215,6 +265,18 @@ export type BackupInspection = {
   checksumVerified: true;
 };
 
+export type ApplicationSchemaDifference = {
+  tableName: string;
+  differingParts: Array<
+    "columns" | "foreignKeys" | "indexes"
+  >;
+};
+
+export type BackupPurpose =
+  | "manual"
+  | "restore-safety"
+  | "migration-safety";
+
 export type RestoreResult = {
   activeDatabasePath: string;
   sourceBackupPath: string;
@@ -289,17 +351,18 @@ export function sqlitePathFromDatabaseUrl(
 
 export function defaultBackupPath(
   databasePath: string,
-  purpose: "manual" | "restore-safety" = "manual",
+  purpose: BackupPurpose = "manual",
   now = new Date()
 ) {
-  const label =
-    purpose === "restore-safety"
-      ? "dayflow-safety-before-restore"
-      : "dayflow";
+  const label: Record<BackupPurpose, string> = {
+    manual: "dayflow",
+    "restore-safety": "dayflow-safety-before-restore",
+    "migration-safety": "dayflow-safety-before-migration"
+  };
   return join(
     dirname(databasePath),
     "backups",
-    `${label}-${timestampForFile(now)}-${randomUUID().slice(0, 8)}.dayflow-backup`
+    `${label[purpose]}-${timestampForFile(now)}-${randomUUID().slice(0, 8)}.dayflow-backup`
   );
 }
 
@@ -359,6 +422,39 @@ export function createDatabaseBackup(options: {
   } finally {
     removeTemporaryFile(snapshotPath);
     removeTemporaryFile(artifactPath);
+  }
+}
+
+export function assertRecognizedDayflowDatabase(databasePath: string) {
+  const resolvedDatabasePath = resolve(databasePath);
+  assertExistingRegularFile(resolvedDatabasePath, "Dayflow database");
+  const tableNames = databaseTableNames(resolvedDatabasePath);
+  validateRecognizedDayflowSchema(resolvedDatabasePath, tableNames);
+  validateSemanticRelationships(resolvedDatabasePath, tableNames);
+}
+
+export function assertDatabaseMatchesBackupPayload(options: {
+  databasePath: string;
+  backupPath: string;
+  expectedPayloadSha256: string;
+}) {
+  if (!/^[a-f0-9]{64}$/.test(options.expectedPayloadSha256)) {
+    throw new Error("The expected backup payload checksum is invalid.");
+  }
+  const inspection = inspectDatabaseBackup(options.backupPath);
+  if (
+    inspection.manifest.payloadSha256 !==
+    options.expectedPayloadSha256
+  ) {
+    throw new Error(
+      "The retained source backup does not match the expected payload checksum."
+    );
+  }
+  const databasePayload = hashFile(resolve(options.databasePath));
+  if (databasePayload.sha256 !== options.expectedPayloadSha256) {
+    throw new Error(
+      "The disposable restore copy does not exactly match the retained source backup."
+    );
   }
 }
 
@@ -499,7 +595,10 @@ export async function restoreDatabaseBackup(options: {
       `Validated SQLite snapshot (${sumCounts(extractedMetadata.recordCounts)} records).`
     );
 
-    runMigrations(temporaryRestorePath, repositoryRoot);
+    runMigrations(temporaryRestorePath, repositoryRoot, {
+      sourceBackupPath,
+      expectedPayloadSha256: inspection.manifest.payloadSha256
+    });
     const migratedMetadata = validateSqliteDatabase(temporaryRestorePath, {
       requireCurrentSchema: true
     });
@@ -644,22 +743,8 @@ function validateSqliteDatabase(
     throw new Error(`SQLite integrity_check failed: ${integrityResult}`);
   }
 
-  const tableNames = queryJson<{ name: string }>(
-    databasePath,
-    `SELECT name
-       FROM sqlite_schema
-      WHERE type = 'table'
-        AND name NOT LIKE 'sqlite_%'
-      ORDER BY name;`
-  ).map((row) => row.name);
-
-  for (const tableName of MANIFEST_TABLES) {
-    if (!tableNames.includes(tableName)) {
-      throw new Error(
-        `The snapshot is not a recognized Dayflow database: missing table ${tableName}.`
-      );
-    }
-  }
+  const tableNames = databaseTableNames(databasePath);
+  validateRecognizedDayflowSchema(databasePath, tableNames);
 
   if (options.requireCurrentSchema) {
     for (const [tableName, requiredColumns] of Object.entries(
@@ -757,6 +842,71 @@ function validateSqliteDatabase(
   };
 }
 
+function databaseTableNames(databasePath: string) {
+  return queryJson<{ name: string }>(
+    databasePath,
+    `SELECT name
+       FROM sqlite_schema
+      WHERE type = 'table'
+        AND name NOT LIKE 'sqlite_%'
+      ORDER BY name;`
+  ).map((row) => row.name);
+}
+
+function validateRecognizedDayflowSchema(
+  databasePath: string,
+  tableNames: string[]
+) {
+  const unknownTable = tableNames.find(
+    (tableName) => !(tableName in CURRENT_TABLE_COLUMNS)
+  );
+  if (unknownTable) {
+    throw new Error(
+      `The snapshot has an unsupported Dayflow schema: unexpected table ${unknownTable}.`
+    );
+  }
+
+  for (const [tableName, requiredColumns] of Object.entries(
+    OLDEST_SUPPORTED_DAYFLOW_COLUMNS
+  )) {
+    if (!tableNames.includes(tableName)) {
+      throw new Error(
+        `The snapshot is not a recognized Dayflow database: missing table ${tableName}.`
+      );
+    }
+    const columns = tableColumns(databasePath, tableName);
+    const missingColumn = requiredColumns.find(
+      (column) => !columns.includes(column)
+    );
+    if (missingColumn) {
+      throw new Error(
+        `The snapshot is not a recognized Dayflow database: missing column ${tableName}.${missingColumn}.`
+      );
+    }
+  }
+
+  for (const tableName of tableNames) {
+    const supportedColumns = CURRENT_TABLE_COLUMNS[tableName];
+    const columnInfo = tableColumnInfo(databasePath, tableName);
+    const hiddenColumn = columnInfo.find(
+      (column) => column.hidden !== 0
+    );
+    if (hiddenColumn) {
+      throw new Error(
+        `The snapshot has an unsupported Dayflow schema: unexpected column ${tableName}.${hiddenColumn.name} (generated or hidden columns are not supported).`
+      );
+    }
+    const unexpectedColumn = columnInfo
+      .map((column) => column.name)
+      .find((column) => !supportedColumns.includes(column));
+    if (unexpectedColumn) {
+      throw new Error(
+        `The snapshot has an unsupported Dayflow schema: unexpected column ${tableName}.${unexpectedColumn}.`
+      );
+    }
+  }
+}
+
 function validateSemanticRelationships(
   databasePath: string,
   tableNames: string[]
@@ -765,6 +915,46 @@ function validateSemanticRelationships(
   const hasColumns = (tableName: string, columns: string[]) =>
     hasTable(tableName) &&
     columns.every((column) => tableColumns(databasePath, tableName).includes(column));
+
+  const directRelationships = [
+    ["ProjectPhase", "projectId", "Project"],
+    ["Task", "projectId", "Project"],
+    ["Task", "phaseId", "ProjectPhase"],
+    ["Note", "taskId", "Task"],
+    ["Note", "projectId", "Project"],
+    ["Material", "taskId", "Task"],
+    ["Material", "noteId", "Note"],
+    ["Material", "projectId", "Project"],
+    ["TimeBlock", "taskId", "Task"],
+    ["ActivityEntry", "taskId", "Task"],
+    ["ActivityEntry", "projectId", "Project"],
+    ["ActivityEntry", "attributedProjectId", "Project"],
+    ["ActivityEntry", "focusSessionId", "FocusSession"],
+    ["FocusSession", "taskId", "Task"],
+    ["FocusSession", "projectId", "Project"],
+    ["TaskScheduleChange", "taskId", "Task"]
+  ] as const;
+  for (const [
+    sourceTable,
+    sourceColumn,
+    targetTable
+  ] of directRelationships) {
+    if (
+      hasColumns(sourceTable, [sourceColumn]) &&
+      hasColumns(targetTable, ["id"])
+    ) {
+      assertZeroCount(
+        databasePath,
+        `${sourceTable}.${sourceColumn} relationship`,
+        `SELECT COUNT(*) AS count
+           FROM ${sqlIdentifier(sourceTable)} AS source
+           LEFT JOIN ${sqlIdentifier(targetTable)} AS target
+             ON target.id = source.${sqlIdentifier(sourceColumn)}
+          WHERE source.${sqlIdentifier(sourceColumn)} IS NOT NULL
+            AND target.id IS NULL;`
+      );
+    }
+  }
 
   if (
     hasColumns("Task", ["id", "projectId", "phaseId"]) &&
@@ -915,10 +1105,18 @@ function assertZeroCount(
 }
 
 function tableColumns(databasePath: string, tableName: string) {
-  return queryJson<{ name: string }>(
+  return tableColumnInfo(databasePath, tableName).map(
+    (column) => column.name
+  );
+}
+
+function tableColumnInfo(databasePath: string, tableName: string) {
+  return queryJson<{ name: string; hidden: number }>(
     databasePath,
-    `SELECT name FROM pragma_table_info(${sqlString(tableName)}) ORDER BY cid;`
-  ).map((row) => row.name);
+    `SELECT name, hidden
+       FROM pragma_table_xinfo(${sqlString(tableName)})
+      ORDER BY cid;`
+  );
 }
 
 function compareManifestToSnapshot(
@@ -1197,7 +1395,14 @@ function extractBackupPayload(
   }
 }
 
-function runMigrations(databasePath: string, repositoryRoot: string) {
+function runMigrations(
+  databasePath: string,
+  repositoryRoot: string,
+  proof: {
+    sourceBackupPath: string;
+    expectedPayloadSha256: string;
+  }
+) {
   const migrationScript = join(
     repositoryRoot,
     "scripts",
@@ -1209,7 +1414,17 @@ function runMigrations(databasePath: string, repositoryRoot: string) {
   try {
     execFileSync(
       process.execPath,
-      ["--import", "tsx", migrationScript],
+      [
+        "--import",
+        "tsx",
+        migrationScript,
+        "--disposable-restore-copy",
+        databasePath,
+        "--source-backup",
+        proof.sourceBackupPath,
+        "--expected-payload-sha256",
+        proof.expectedPayloadSha256
+      ],
       {
         cwd: repositoryRoot,
         env: {
@@ -1304,37 +1519,13 @@ function validateCurrentApplicationSchema(
       false,
       "create the current schema reference"
     );
-    const expected = applicationSchemaDescriptor(referenceDatabase);
-    const actual = applicationSchemaDescriptor(databasePath);
-    if (JSON.stringify(actual) !== JSON.stringify(expected)) {
-      const differingTable =
-        [...new Set([
-          ...expected.map((entry) => entry.tableName),
-          ...actual.map((entry) => entry.tableName)
-        ])].find((tableName) => {
-          const expectedEntry = expected.find(
-            (entry) => entry.tableName === tableName
-          );
-          const actualEntry = actual.find(
-            (entry) => entry.tableName === tableName
-          );
-          return JSON.stringify(expectedEntry) !== JSON.stringify(actualEntry);
-        }) ?? "unknown";
-      const expectedEntry = expected.find(
-        (entry) => entry.tableName === differingTable
-      );
-      const actualEntry = actual.find(
-        (entry) => entry.tableName === differingTable
-      );
-      const differingParts = (
-        ["columns", "foreignKeys", "indexes"] as const
-      ).filter(
-        (part) =>
-          JSON.stringify(expectedEntry?.[part]) !==
-          JSON.stringify(actualEntry?.[part])
-      );
+    const difference = findApplicationSchemaDifference(
+      referenceDatabase,
+      databasePath
+    );
+    if (difference) {
       throw new Error(
-        `Restored database schema does not exactly match this Dayflow release (first difference: ${differingTable} ${differingParts.join("/") || "table inventory"}).`
+        `Restored database schema does not exactly match this Dayflow release (first difference: ${difference.tableName} ${difference.differingParts.join("/") || "table inventory"}).`
       );
     }
   } finally {
@@ -1342,7 +1533,7 @@ function validateCurrentApplicationSchema(
   }
 }
 
-function applicationSchemaDescriptor(databasePath: string) {
+export function describeApplicationSchema(databasePath: string) {
   const tables = queryJson<{ name: string }>(
     databasePath,
     `SELECT name
@@ -1360,10 +1551,11 @@ function applicationSchemaDescriptor(databasePath: string) {
       notnull: number;
       dflt_value: string | null;
       pk: number;
+      hidden: number;
     }>(
       databasePath,
-      `SELECT name, type, "notnull", dflt_value, pk
-         FROM pragma_table_info(${sqlString(tableName)})
+      `SELECT name, type, "notnull", dflt_value, pk, hidden
+         FROM pragma_table_xinfo(${sqlString(tableName)})
         ORDER BY name;`
     );
     const foreignKeys = queryJson<{
@@ -1405,6 +1597,48 @@ function applicationSchemaDescriptor(databasePath: string) {
       );
     return { tableName, columns, foreignKeys, indexes };
   });
+}
+
+export function findApplicationSchemaDifference(
+  expectedDatabasePath: string,
+  actualDatabasePath: string
+): ApplicationSchemaDifference | null {
+  const expected = describeApplicationSchema(expectedDatabasePath);
+  const actual = describeApplicationSchema(actualDatabasePath);
+  if (JSON.stringify(actual) === JSON.stringify(expected)) {
+    return null;
+  }
+
+  const tableName =
+    [...new Set([
+      ...expected.map((entry) => entry.tableName),
+      ...actual.map((entry) => entry.tableName)
+    ])].find((candidate) => {
+      const expectedEntry = expected.find(
+        (entry) => entry.tableName === candidate
+      );
+      const actualEntry = actual.find(
+        (entry) => entry.tableName === candidate
+      );
+      return (
+        JSON.stringify(expectedEntry) !==
+        JSON.stringify(actualEntry)
+      );
+    }) ?? "unknown";
+  const expectedEntry = expected.find(
+    (entry) => entry.tableName === tableName
+  );
+  const actualEntry = actual.find(
+    (entry) => entry.tableName === tableName
+  );
+  const differingParts = (
+    ["columns", "foreignKeys", "indexes"] as const
+  ).filter(
+    (part) =>
+      JSON.stringify(expectedEntry?.[part]) !==
+      JSON.stringify(actualEntry?.[part])
+  );
+  return { tableName, differingParts };
 }
 
 function assertNoSqliteSidecars(databasePath: string) {

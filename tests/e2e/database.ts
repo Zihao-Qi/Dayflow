@@ -159,19 +159,50 @@ export function seedMalformedJournalTags() {
   );
 }
 
+/**
+ * Give a Focus Session a known elapsed time.
+ *
+ * The generated Activity inherits the session's startedAt, and a RUNNING
+ * session's elapsed time is measured against the wall clock. Backdating
+ * startedAt from "now" therefore couples the fixture's duration to its
+ * calendar day: run this within `minutes` of local midnight and the Activity
+ * lands on yesterday, which is what made the Focus suite fail whenever a run
+ * crossed midnight.
+ *
+ * Pausing the session decouples the two. Elapsed time becomes
+ * pausedAt - startedAt regardless of the wall clock, so the window can be held
+ * inside today without changing the duration under test.
+ */
 export function setFocusSessionElapsedMinutes(id: string, minutes: number) {
   if (!/^[A-Za-z0-9_-]+$/.test(id)) {
     throw new Error("Focus session id contains unexpected characters.");
   }
   const safeMinutes = Math.max(1, Math.floor(minutes));
-  const pausedAt = Date.now();
-  const startedAt = pausedAt - safeMinutes * 60_000;
+  const elapsedMs = safeMinutes * 60_000;
+  const dayStart = new Date();
+  dayStart.setHours(0, 0, 0, 0);
+
+  let pausedAt = Date.now();
+  let startedAt = pausedAt - elapsedMs;
+
+  // Away from midnight the session stays RUNNING and this behaves exactly as
+  // it always has, so the running-finish path keeps its coverage. Only when
+  // backdating would leave today do we hold the window inside the day and
+  // pause, which makes elapsed time independent of the wall clock.
+  const crossesMidnight = startedAt < dayStart.getTime();
+  if (crossesMidnight) {
+    startedAt = dayStart.getTime();
+    pausedAt = startedAt + elapsedMs;
+  }
+
   runPrismaDbExecute(
     ["--stdin"],
     `UPDATE "FocusSession"
      SET "startedAt" = ${startedAt},
          "pausedAt" = ${pausedAt},
-         "accumulatedPauseSeconds" = 0
+         "accumulatedPauseSeconds" = 0${
+           crossesMidnight ? `,\n         "status" = 'PAUSED'` : ""
+         }
      WHERE "id" = '${id}';`
   );
 }

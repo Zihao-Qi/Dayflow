@@ -56,6 +56,7 @@ Product and corrective specifications:
 - [Weekly Evidence Review v1](./docs/specs/WEEKLY_EVIDENCE_REVIEW_V1.md)
 - [Local Data Reliability v1](./docs/specs/LOCAL_DATA_RELIABILITY_V1.md)
 - [Migration Safety Backups v1](./docs/specs/MIGRATION_SAFETY_BACKUPS_V1.md)
+- [Rolling Automatic Backups v1](./docs/specs/ROLLING_BACKUPS_V1.md)
 - [Command Palette v1](./docs/specs/COMMAND_PALETTE_V1.md)
 - [Manual Time Blocks v1](./docs/specs/TIME_BLOCKS_V1.md)
 - [Activity Capture v1](./docs/specs/ACTIVITY_CAPTURE_V1.md)
@@ -211,6 +212,18 @@ with its creation time, schema migration version, per-table record counts,
 payload size, and checksum. It is written to a temporary file, validated, and
 atomically renamed only when complete. Backup creation reads a snapshot and
 does not mutate application records.
+
+Dayflow can also create backups on its own schedule. Automatic backups are
+off until you turn them on in **Data & backups**, where you choose an interval
+and how many copies you want to keep. Dayflow creates and verifies them through
+exactly the same path as a manual backup, and reports when the last one ran and
+when the next is due.
+
+Automatic backups never delete anything. When more copies exist than you asked
+to keep, Dayflow says so and names the directory; removing them stays your
+choice. They are created while Dayflow is running, so a machine that never
+starts Dayflow is never backed up, and they live beside your database rather
+than off the machine. Use the download button to keep a copy elsewhere.
 
 The same recovery path is available from **Data & backups** in Dayflow. The
 dialog creates backups in the managed `backups` directory, verifies their

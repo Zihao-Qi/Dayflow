@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   closeSync,
   constants as fsConstants,
+  existsSync,
   fstatSync,
   fsyncSync,
   lstatSync,
@@ -20,8 +21,19 @@ import {
   defaultBackupPath,
   inspectOpenDatabaseBackup,
   resolveActiveDatabase,
-  restoreDatabaseBackup
+  restoreDatabaseBackup,
+  type BackupPurpose
 } from "../../scripts/database-backup";
+import {
+  DEFAULT_AUTOMATIC_BACKUP_POLICY,
+  buildRetentionReport,
+  parseAutomaticBackupPolicy,
+  readStoredAutomaticBackupPolicy,
+  resolveAutomaticBackupSchedule,
+  type AutomaticBackupPolicy,
+  type AutomaticBackupSchedule,
+  type RetentionReport
+} from "@/lib/backup-schedule";
 
 const BACKUP_FILE_PATTERN =
   /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}\.dayflow-backup$/;
@@ -30,6 +42,8 @@ const PENDING_FILE = ".dayflow-restore-pending.json";
 const APPLYING_FILE = ".dayflow-restore-applying.json";
 const STATUS_FILE = ".dayflow-restore-status.json";
 const OWNER_FILE = ".dayflow-restore-owner.json";
+const AUTOMATIC_POLICY_FILE = ".dayflow-automatic-backups.json";
+const AUTOMATIC_STATUS_FILE = ".dayflow-automatic-status.json";
 const METADATA_VERSION = 1;
 const RESTORE_OWNER_POLL_MS = 100;
 const RESTORE_OWNER_WAIT_MS = 10 * 60 * 1000;
@@ -39,6 +53,7 @@ const MAX_PERSISTED_ERROR_LENGTH = 600;
 
 export type ManagedBackupSummary = {
   id: string;
+  purpose: BackupPurpose;
   fileName: string;
   path: string;
   createdAt: string | null;
@@ -78,6 +93,7 @@ export type RestoreStatus = {
 
 export type ManagedBackupIndex = {
   directory: string;
+  automatic: AutomaticBackupState;
   backups: ManagedBackupSummary[];
   pendingRestore: Record<string, unknown> | null;
   lastRestore: Record<string, unknown> | null;
@@ -127,9 +143,11 @@ export function getManagedBackupIndex(
   options: BackupManagementOptions = {}
 ): ManagedBackupIndex {
   const context = resolveBackupContext(options, "read");
+  const backups = listBackupFiles(context);
   return {
     directory: context.directory,
-    backups: listBackupFiles(context),
+    automatic: automaticStateFor(context, backups, options.now),
+    backups,
     pendingRestore: readMetadataForDisplay(
       join(context.directory, PENDING_FILE),
       "Pending restore metadata could not be read. Cancel it before scheduling another restore."
@@ -139,6 +157,238 @@ export function getManagedBackupIndex(
       "The last restore status could not be read."
     )
   };
+}
+
+export type AutomaticBackupAttempt = {
+  status: "succeeded" | "failed" | "skipped";
+  at: string;
+  fileName?: string;
+  reason?: string;
+};
+
+export type AutomaticBackupState = {
+  policy: AutomaticBackupPolicy;
+  schedule: AutomaticBackupSchedule;
+  retention: RetentionReport;
+  lastSuccessAt: string | null;
+  lastAttempt: AutomaticBackupAttempt | null;
+};
+
+export function getAutomaticBackupState(
+  options: BackupManagementOptions = {}
+): AutomaticBackupState {
+  const context = resolveBackupContext(options, "read");
+  return automaticStateFor(context, listBackupFiles(context), options.now);
+}
+
+/**
+ * Persist a deliberate policy change.
+ *
+ * Changing the policy never creates or removes an artifact. In v1 nothing
+ * deletes a backup at all, so lowering the retention preference only changes
+ * what is reported.
+ */
+export function setAutomaticBackupPolicy(
+  input: unknown,
+  options: BackupManagementOptions = {}
+): AutomaticBackupState {
+  const policy = parseAutomaticBackupPolicy(input);
+  return withOperation(() => {
+    const context = resolveBackupContext(options, "mutation");
+    writeJsonAtomically(join(context.directory, AUTOMATIC_POLICY_FILE), {
+      version: METADATA_VERSION,
+      ...policy
+    });
+    return automaticStateFor(context, listBackupFiles(context), options.now);
+  });
+}
+
+/**
+ * Create an Automatic Backup if one is due.
+ *
+ * This is the unattended path, so it declines rather than forces: a disabled
+ * policy, a pending restore, or another operation already running all mean
+ * "not now". Nothing here deletes an artifact.
+ */
+export function runDueAutomaticBackup(
+  options: BackupManagementOptions = {}
+): AutomaticBackupAttempt {
+  const now = options.now ?? new Date();
+  let context: BackupContext;
+  try {
+    context = resolveBackupContext(options, "read");
+  } catch (error) {
+    return {
+      status: "skipped",
+      at: now.toISOString(),
+      reason: describeAutomaticFailure(error)
+    };
+  }
+
+  const state = automaticStateFor(context, listBackupFiles(context), now);
+  if (!state.policy.enabled) {
+    return { status: "skipped", at: now.toISOString(), reason: "disabled" };
+  }
+  if (!state.schedule.due) {
+    return { status: "skipped", at: now.toISOString(), reason: "not due" };
+  }
+  if (restoreIsInFlight(context)) {
+    return {
+      status: "skipped",
+      at: now.toISOString(),
+      reason: "a restore is pending"
+    };
+  }
+  if (operationInProgress) {
+    return {
+      status: "skipped",
+      at: now.toISOString(),
+      reason: "another backup operation is running"
+    };
+  }
+
+  let attempt: AutomaticBackupAttempt;
+  try {
+    attempt = withOperation(() => {
+      const mutable = resolveBackupContext(options, "mutation");
+      const result = createDatabaseBackup({
+        databasePath: mutable.databasePath,
+        outputPath: join(
+          mutable.directory,
+          basename(defaultBackupPath(mutable.databasePath, "automatic", now))
+        ),
+        repositoryRoot: mutable.repositoryRoot,
+        now
+      });
+      return {
+        status: "succeeded" as const,
+        at: now.toISOString(),
+        fileName: basename(result.destinationPath)
+      };
+    });
+  } catch (error) {
+    attempt = {
+      status: "failed",
+      at: now.toISOString(),
+      reason: describeAutomaticFailure(error)
+    };
+  }
+
+  recordAutomaticAttempt(context, attempt);
+  return attempt;
+}
+
+function automaticStateFor(
+  context: BackupContext,
+  backups: ManagedBackupSummary[],
+  now = new Date()
+): AutomaticBackupState {
+  const policy = readAutomaticPolicy(context);
+  const automatic = backups.filter((backup) => backup.purpose === "automatic");
+  const stored = readAutomaticStatus(context);
+  const lastSuccessAt = stored?.lastSuccessAt ?? null;
+  const lastSuccessDate = lastSuccessAt ? new Date(lastSuccessAt) : null;
+  return {
+    policy,
+    schedule: resolveAutomaticBackupSchedule(policy, lastSuccessDate, now),
+    retention: buildRetentionReport(automatic.length, policy.retainCount),
+    lastSuccessAt,
+    lastAttempt: stored?.lastAttempt ?? null
+  };
+}
+
+function readAutomaticPolicy(context: BackupContext): AutomaticBackupPolicy {
+  if (!context.directoryExists) {
+    return { ...DEFAULT_AUTOMATIC_BACKUP_POLICY };
+  }
+  const stored = readMetadataForDisplay(
+    join(context.directory, AUTOMATIC_POLICY_FILE),
+    "Automatic backup settings could not be read."
+  );
+  if (!stored) return { ...DEFAULT_AUTOMATIC_BACKUP_POLICY };
+  const { version: _version, error: _error, ...rest } = stored as Record<
+    string,
+    unknown
+  >;
+  return readStoredAutomaticBackupPolicy(rest);
+}
+
+type StoredAutomaticStatus = {
+  lastSuccessAt: string | null;
+  lastAttempt: AutomaticBackupAttempt | null;
+};
+
+function readAutomaticStatus(
+  context: BackupContext
+): StoredAutomaticStatus | null {
+  if (!context.directoryExists) return null;
+  const stored = readMetadataForDisplay(
+    join(context.directory, AUTOMATIC_STATUS_FILE),
+    "The last automatic backup status could not be read."
+  ) as Record<string, unknown> | null;
+  if (!stored) return null;
+  const lastSuccessAt =
+    typeof stored.lastSuccessAt === "string" &&
+    !Number.isNaN(new Date(stored.lastSuccessAt).getTime())
+      ? stored.lastSuccessAt
+      : null;
+  const attempt = stored.lastAttempt as Record<string, unknown> | undefined;
+  const lastAttempt =
+    attempt &&
+    (attempt.status === "succeeded" ||
+      attempt.status === "failed" ||
+      attempt.status === "skipped") &&
+    typeof attempt.at === "string"
+      ? ({
+          status: attempt.status,
+          at: attempt.at,
+          ...(typeof attempt.fileName === "string"
+            ? { fileName: attempt.fileName }
+            : {}),
+          ...(typeof attempt.reason === "string"
+            ? { reason: attempt.reason }
+            : {})
+        } as AutomaticBackupAttempt)
+      : null;
+  return { lastSuccessAt, lastAttempt };
+}
+
+/**
+ * Persist the attempt so a failure is still visible after a restart.
+ * A status write that fails must not turn a good backup into a bad outcome.
+ */
+function recordAutomaticAttempt(
+  context: BackupContext,
+  attempt: AutomaticBackupAttempt
+) {
+  if (attempt.status === "skipped") return;
+  try {
+    const previous = readAutomaticStatus(context);
+    writeJsonAtomically(join(context.directory, AUTOMATIC_STATUS_FILE), {
+      version: METADATA_VERSION,
+      lastSuccessAt:
+        attempt.status === "succeeded" ? attempt.at : previous?.lastSuccessAt ?? null,
+      lastAttempt: attempt
+    });
+  } catch (error) {
+    console.error(
+      "[Dayflow backup] The automatic backup status could not be recorded.",
+      error
+    );
+  }
+}
+
+function restoreIsInFlight(context: BackupContext) {
+  if (!context.directoryExists) return false;
+  return (
+    existsSync(join(context.directory, PENDING_FILE)) ||
+    existsSync(join(context.directory, APPLYING_FILE))
+  );
+}
+
+function describeAutomaticFailure(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.slice(0, MAX_PERSISTED_ERROR_LENGTH);
 }
 
 export function createManagedBackup(
@@ -487,6 +737,24 @@ function listBackupFiles(context: BackupContext) {
     });
 }
 
+/**
+ * Resolve a backup's purpose from its own filename label.
+ *
+ * Order matters: every label starts with "dayflow-", so the specific prefixes
+ * must be tested before falling back to manual. Purpose is never inferred from
+ * age, size, or position in the directory.
+ */
+function backupPurposeForFileName(fileName: string): BackupPurpose {
+  if (fileName.startsWith("dayflow-automatic-")) return "automatic";
+  if (fileName.startsWith("dayflow-safety-before-restore-")) {
+    return "restore-safety";
+  }
+  if (fileName.startsWith("dayflow-safety-before-migration-")) {
+    return "migration-safety";
+  }
+  return "manual";
+}
+
 function summarizeBackup(path: string): ManagedBackupSummary {
   const fileName = basename(path);
   let sizeBytes = 0;
@@ -500,6 +768,7 @@ function summarizeBackup(path: string): ManagedBackupSummary {
   } catch {
     return {
       id: backupIdForFileName(fileName),
+      purpose: backupPurposeForFileName(fileName),
       fileName,
       path,
       createdAt: null,
@@ -554,6 +823,7 @@ function summaryFromInspection(
   const recordCounts = { ...inspection.manifest.recordCounts };
   return {
     id: backupIdForFileName(basename(path)),
+    purpose: backupPurposeForFileName(basename(path)),
     fileName: basename(path),
     path: inspection.sourcePath,
     createdAt: inspection.manifest.createdAt,

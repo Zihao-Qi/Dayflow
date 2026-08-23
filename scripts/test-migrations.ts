@@ -1185,6 +1185,11 @@ try {
     "0"
   );
 
+  // A seeded database must satisfy the Evidence Integrity invariants that
+  // backup validation enforces. Seeding a Note with both a project-bearing
+  // Task and its own projectId once made db:backup fail on every fresh setup.
+  assertSeededDatabaseIsBackupable(seededSetupDatabase);
+
   console.log("Migration tests passed.");
 } finally {
   rmSync(temporaryDirectory, { recursive: true, force: true });
@@ -1279,6 +1284,29 @@ function assertRejectedBeforeMutation(databasePath: string) {
   }
   assert.deepEqual(migrationSafetyBackups(), beforeArtifacts);
   return result;
+}
+
+function assertSeededDatabaseIsBackupable(databasePath: string) {
+  const backupDirectory = join(temporaryDirectory, "seeded-setup-backups");
+  const result = spawnSync(
+    process.execPath,
+    ["--import", "tsx", join(repositoryRoot, "scripts/backup-database.ts")],
+    {
+      cwd: repositoryRoot,
+      env: {
+        ...process.env,
+        DATABASE_URL: `file:${databasePath}`,
+        DAYFLOW_BACKUP_DIRECTORY: backupDirectory
+      },
+      encoding: "utf8",
+      maxBuffer: 16 * 1024 * 1024
+    }
+  );
+  assert.equal(
+    result.status,
+    0,
+    `A freshly seeded database must be backupable. ${result.stderr}`
+  );
 }
 
 function runSetup(databasePath: string) {

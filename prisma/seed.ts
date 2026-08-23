@@ -192,8 +192,10 @@ async function main() {
         content: "Keep the dashboard calm. The core loop should be add, complete, reflect, plan.",
         tags: JSON.stringify(["product", "design"]),
         date: today,
-        taskId: tasks[1].id,
-        projectId: project.id
+        // Project context is inherited through the linked Task. Setting
+        // projectId here as well is the redundant attribution that Evidence
+        // Integrity rejects, and it made db:backup fail on a seeded database.
+        taskId: tasks[1].id
       },
       {
         content: "Try a short review ritual before dinner.",

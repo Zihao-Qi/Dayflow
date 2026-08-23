@@ -4,8 +4,8 @@ Dayflow is a local-first personal productivity dashboard for planning tasks,
 capturing notes and diary entries, saving reference materials, and reviewing
 daily progress.
 
-It is built with Next.js, TypeScript, SQLite, Prisma, Recharts, and
-lucide-react. The app runs locally without accounts or hosted services.
+It is built with Next.js, TypeScript, SQLite, Prisma, and lucide-react. The
+app runs locally without accounts or hosted services.
 
 ## Features
 
@@ -86,7 +86,8 @@ even when the current day itself has nothing scheduled.
 
 ## Local Setup
 
-Prerequisite: Node.js 20 or newer.
+Prerequisite: Node.js 20.18 or newer. The seed step loads `.env` with
+Node's `--env-file-if-exists` flag, which older 20.x releases do not have.
 
 ```bash
 npm install

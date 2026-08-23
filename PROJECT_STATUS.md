@@ -284,8 +284,7 @@ Funemployment Day has a narrower and immediately understandable promise around r
 ### Backlog
 
 - Keeps unscheduled work in one Backlog destination.
-- Places its four arrangements behind Arrange: Priority, Quadrant, Project,
-  and Due.
+- Places its arrangements behind Arrange: Quadrant, Project, and Due.
 - Adds Figure on larger screens as the read-oriented presentation of the same
   urgency/importance matrix; Quadrant remains the action-oriented table view.
 - Keeps Today scheduling, day picking, focus, and Project scoping attached to
@@ -314,13 +313,19 @@ Funemployment Day has a narrower and immediately understandable promise around r
 - Displays saved materials in a library-style list.
 - Searches complete Reference history across title, URL, and notes.
 
-### Charts and Visualization
+### Review Evidence Presentation
 
 - Lives in Review rather than competing with today's work.
-- Shows completion rate over recent days.
-- Shows tasks completed.
-- Shows planned vs actual time.
-- Shows mood and energy trends.
+- Shows recorded time, Focus-origin time, completed tasks, and saved Diary
+  days for the Review Period.
+- Shows Activity distribution by category with each category's share of
+  recorded time.
+- Shows average mood and energy across saved Diary days only, and says
+  explicitly that missing days stay missing.
+- Uses plain typographic readouts rather than a charting library. The earlier
+  Recharts bar charts for completion rate, tasks completed, planned versus
+  actual time, and mood and energy trends were removed when the weekly
+  evidence Review shipped and have not been reintroduced.
 
 ### Front-End Polish and Responsiveness
 
@@ -347,9 +352,16 @@ Funemployment Day has a narrower and immediately understandable promise around r
 
 ### Review View
 
-- Summarizes today’s completion.
-- Shows unfinished tasks.
-- Provides a reflection area for planning tomorrow.
+- Summarizes the seven local calendar days ending today as a derived Review
+  Summary that never overwrites the Evidence it reads.
+- Shows recorded and Focus-origin minutes, completed tasks, saved Diary days,
+  captured Notes and References, and Projects moved forward.
+- Separates Review-Period Invested Time from all-time Invested Time for each
+  Project and compares the weekly budget only with the former.
+- Provides a period-bound narrative and next-period intention saved separately
+  from the Journal.
+- Accepts a saved Review only for the current Review Period; browsing earlier
+  periods is not implemented yet.
 
 ### Agent Export
 
@@ -530,6 +542,10 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
 - There is no hosted sync, authentication, or multi-device support yet.
 - There is no live Hermes integration yet; the local export endpoint is the
   integration boundary.
+- `src/app/globals.css` still defines rules for surfaces that no longer render,
+  including `.task-panel`, `.matrix-panel`, `.notes-panel`, `.materials-panel`,
+  `.range-row`, `.pulse-grid`, and `.review-stack`. The chart rules were removed
+  on August 22, 2026; the rest have not been audited.
 
 ## Near-Term Plan
 
@@ -564,7 +580,11 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
 
 - Validate the seven-day evidence summary and period-bound narrative through
   repeated weekly use.
-- Add browsing for earlier Review Periods.
+- Add browsing for earlier Review Periods. Only the current period can be
+  saved today; the route rejects any other period.
+- Reintroduce a charting dependency before any of the visualization items
+  below. Review currently renders typographic readouts only, and Recharts was
+  dropped once the last chart was removed.
 - Add mood and energy correlation with completion trends.
 - Explore comparison between consecutive Review Periods without turning Review
   into a scorecard.

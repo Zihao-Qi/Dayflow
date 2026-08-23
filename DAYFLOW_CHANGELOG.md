@@ -26,9 +26,10 @@ This document records the updates, bug fixes, and design enhancements implemente
 - **One-Page Projects**: Project metrics, next step, plan, phases, tasks,
   Backlog access, and collapsible evidence stay in one detail page rather than
   separate Overview, Plan, and Evidence tabs.
-- **Backlog Behind Arrange**: Priority, Quadrant, Project, and Due are the four
-  arrangements; larger screens also offer Figure as the read-oriented
-  presentation of the urgency/importance matrix.
+- **Backlog Behind Arrange**: Quadrant, Project, and Due are the arrangements;
+  larger screens also offer Figure as the read-oriented presentation of the
+  urgency/importance matrix. (Corrected: an earlier revision of this entry
+  listed a Priority arrangement, which was never implemented.)
 
 ## Latest: Usability Stabilization
 

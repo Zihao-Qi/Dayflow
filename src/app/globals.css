@@ -118,7 +118,6 @@ button {
 .date-line,
 .panel-title span,
 .metric span,
-.chart-box > span,
 .time-block span,
 .time-block small,
 .material-item small,
@@ -226,7 +225,6 @@ h1 {
 }
 
 .task-panel,
-.charts-panel,
 .matrix-panel {
   grid-column: span 1;
 }
@@ -915,25 +913,6 @@ button:disabled {
   font-size: 13px;
 }
 
-.chart-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.chart-box {
-  min-height: 188px;
-  padding: 12px;
-  background: #fffefb;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-}
-
-.recharts-text {
-  fill: var(--muted);
-  font-size: 12px;
-}
-
 .note-card {
   padding: 13px;
   border: 1px solid var(--line);
@@ -1071,8 +1050,7 @@ html[data-layout-mode="phone"] {
   .activity-form-grid,
   .range-row,
   .pulse-grid,
-  .review-stack,
-  .chart-grid {
+  .review-stack {
     grid-template-columns: 1fr;
   }
 
@@ -3039,8 +3017,7 @@ html[data-layout-mode="phone"] {
 
   .activity-form-grid,
   .secondary-fields,
-  .range-row,
-  .chart-grid {
+  .range-row {
     grid-template-columns: 1fr;
   }
 

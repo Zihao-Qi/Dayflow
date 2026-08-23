@@ -21,7 +21,7 @@
     "db:backup": "node --import tsx scripts/backup-database.ts",
     "db:restore": "node --import tsx scripts/restore-database.ts",
     "db:init": "prisma migrate deploy",
-    "prisma:seed": "tsx prisma/seed.ts",
+    "prisma:seed": "node --env-file-if-exists=.env --import tsx prisma/seed.ts",
     "db:setup": "npm run db:migrate && npm run prisma:seed",
     "db:reset-demo": "DAYFLOW_SEED_RESET=1 npm run prisma:seed",
     "pwa:icons": "node --import tsx scripts/generate-pwa-icons.ts"
@@ -32,8 +32,7 @@
     "next": "15.5.18",
     "prisma": "6.19.3",
     "react": "19.0.0",
-    "react-dom": "19.0.0",
-    "recharts": "2.15.1"
+    "react-dom": "19.0.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",

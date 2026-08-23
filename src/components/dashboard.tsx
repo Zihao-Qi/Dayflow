@@ -41,6 +41,8 @@ import { ProjectsWorkspace } from "@/components/projects-workspace";
 import { FocusDraft, FocusRail } from "@/components/focus-timer";
 import { useFocusSession } from "@/components/focus-session-provider";
 import { SaveStateChip, useSaveState } from "@/components/save-state";
+import { useReviewHistory } from "@/components/use-review-history";
+import type { PastReviewRecord } from "@/lib/review-records";
 import {
   useJournalEvidenceHistory,
   type JournalHistoryResult,
@@ -4776,22 +4778,84 @@ function ReviewPage({
   onSaveRecovered: () => void;
   onOpenProject: (id: string) => void;
 }) {
-  const reviewSave = useSaveState<Review>({
-    value: review,
-    save: onSaveReview,
-    normalize: normalizeReview,
-    isEqual: reviewsEqual,
-    isValid: hasReviewContent,
-    onFinalError: onSaveError,
-    onRecovered: onSaveRecovered
-  });
+  const history = useReviewHistory();
+  const past = history.selected;
+  const activeSummary: ReviewSummary = past ? past.reviewSummary : summary;
+  const activeProjects: ReviewMovedProject[] = past ? past.projects : projects;
+  const activePeriodEnd = past ? past.review.periodEnd : review.periodEnd;
+
+  return (
+    <div className="review-page page-stack">
+      <PageHeader
+        eyebrow={`${
+          past ? "Past review \u00b7 seven days ending" : "Seven days ending"
+        } ${formatReviewPeriodEnd(activePeriodEnd)}`}
+        title="Review"
+        actions={
+          <button
+            type="button"
+            className="secondary-button"
+            aria-expanded={history.open}
+            onClick={history.open ? history.closeHistory : history.openHistory}
+          >
+            <BookOpen size={14} />
+            {history.open ? "Hide earlier reviews" : "Earlier reviews"}
+          </button>
+        }
+      />
+
+      {history.open && (
+        <ReviewHistoryPanel history={history} />
+      )}
+
+      <ReviewEvidenceSections
+        summary={activeSummary}
+        projects={activeProjects}
+        onOpenProject={onOpenProject}
+      />
+
+      {past ? (
+        <PastReviewCard
+          review={past.review}
+          onReturnToCurrent={history.clearSelection}
+        />
+      ) : (
+        <CurrentReviewEditor
+          review={review}
+          onSaveReview={onSaveReview}
+          onSaveError={onSaveError}
+          onSaveRecovered={onSaveRecovered}
+        />
+      )}
+    </div>
+  );
+}
+
+type ReviewMovedProject = {
+  id: string;
+  name: string;
+  taskCount: number;
+  completedTaskCount: number;
+  progressPercent: number | null;
+  reviewPeriodInvestedMinutes: number;
+  movedDuringReviewPeriod: boolean;
+};
+
+function ReviewEvidenceSections({
+  summary,
+  projects,
+  onOpenProject
+}: {
+  summary: ReviewSummary;
+  projects: ReviewMovedProject[];
+  onOpenProject: (id: string) => void;
+}) {
   const moved = projects.filter(
     (project) => project.movedDuringReviewPeriod
   );
   const categories = summary.categoryMinutes.filter(
     (item) => item.minutes > 0
   );
-  const hasDraft = hasReviewContent(reviewSave.draft);
   const diaryAverageNote =
     summary.diaryDayCount === 0
       ? "no saved Diary days"
@@ -4800,12 +4864,7 @@ function ReviewPage({
         }`;
 
   return (
-    <div className="review-page page-stack">
-      <PageHeader
-        eyebrow={`Seven days ending ${formatReviewPeriodEnd(review.periodEnd)}`}
-        title="Review"
-      />
-
+    <>
       <dl className="review-metrics" aria-label="Review period totals">
         <ReviewMetric
           label="Recorded"
@@ -4979,7 +5038,33 @@ function ReviewPage({
           )}
         </div>
       </section>
+    </>
+  );
+}
 
+function CurrentReviewEditor({
+  review,
+  onSaveReview,
+  onSaveError,
+  onSaveRecovered
+}: {
+  review: Review;
+  onSaveReview: (review: Review) => Promise<boolean>;
+  onSaveError: () => void;
+  onSaveRecovered: () => void;
+}) {
+  const reviewSave = useSaveState<Review>({
+    value: review,
+    save: onSaveReview,
+    normalize: normalizeReview,
+    isEqual: reviewsEqual,
+    isValid: hasReviewContent,
+    onFinalError: onSaveError,
+    onRecovered: onSaveRecovered
+  });
+  const hasDraft = hasReviewContent(reviewSave.draft);
+
+  return (
       <section
         className="panel review-editor-card"
         aria-labelledby="review-editor-heading"
@@ -5077,7 +5162,155 @@ function ReviewPage({
           </div>
         </form>
       </section>
-    </div>
+  );
+}
+
+function PastReviewCard({
+  review,
+  onReturnToCurrent
+}: {
+  review: PastReviewRecord;
+  onReturnToCurrent: () => void;
+}) {
+  return (
+    <section
+      className="panel review-editor-card review-past-card"
+      aria-labelledby="review-past-heading"
+    >
+      <div className="review-editor-heading">
+        <div>
+          <span className="eyebrow">Saved for this period</span>
+          <h2 id="review-past-heading">Your review</h2>
+        </div>
+        <button
+          type="button"
+          className="secondary-button"
+          onClick={onReturnToCurrent}
+        >
+          Back to this week
+        </button>
+      </div>
+      <p className="review-editor-intro">
+        This review belongs to a period that has already ended, so it is shown
+        as it was written. The evidence above is derived from your records as
+        they exist now.
+      </p>
+      <div className="review-past-writing">
+        <section aria-labelledby="review-past-narrative-heading">
+          <span className="eyebrow">Looking back</span>
+          <h3 id="review-past-narrative-heading">What moved forward?</h3>
+          {review.narrative ? (
+            <p className="review-past-text">{review.narrative}</p>
+          ) : (
+            <p className="review-empty-copy">
+              Nothing was written for this field.
+            </p>
+          )}
+        </section>
+        <section aria-labelledby="review-past-intention-heading">
+          <span className="eyebrow">Looking ahead</span>
+          <h3 id="review-past-intention-heading">
+            What deserves protection next?
+          </h3>
+          {review.nextPeriodIntention ? (
+            <p className="review-past-text">{review.nextPeriodIntention}</p>
+          ) : (
+            <p className="review-empty-copy">
+              Nothing was written for this field.
+            </p>
+          )}
+        </section>
+      </div>
+    </section>
+  );
+}
+
+function ReviewHistoryPanel({
+  history
+}: {
+  history: ReturnType<typeof useReviewHistory>;
+}) {
+  return (
+    <section
+      className="panel review-history-panel"
+      aria-labelledby="review-history-heading"
+    >
+      <div className="review-panel-heading">
+        <div>
+          <span className="eyebrow">Saved reviews</span>
+          <h2 id="review-history-heading">Earlier reviews</h2>
+        </div>
+        {history.totalCount !== null && (
+          <strong>{history.totalCount}</strong>
+        )}
+      </div>
+
+      {history.error ? (
+        <p className="review-history-error" role="alert">
+          <span>{history.error}</span>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={history.retry}
+          >
+            Try again
+          </button>
+        </p>
+      ) : !history.loaded && history.loading ? (
+        <p className="review-empty-copy" role="status">
+          Loading earlier reviews\u2026
+        </p>
+      ) : history.loaded && !history.items.length ? (
+        <p className="review-empty-copy">
+          No earlier review has been saved yet. A review joins this list once
+          its seven-day period has ended.
+        </p>
+      ) : (
+        <>
+          <ul
+            className="review-history-list"
+            aria-label="Reviews saved for earlier periods"
+          >
+            {history.items.map((item) => {
+              const selected = history.selected?.review.id === item.id;
+              return (
+                <li key={item.id}>
+                  <button
+                    type="button"
+                    aria-current={selected ? "true" : undefined}
+                    onClick={() => void history.select(item.id)}
+                  >
+                    <strong>
+                      Seven days ending {formatReviewPeriodEnd(item.periodEnd)}
+                    </strong>
+                    <small>
+                      {item.narrative ||
+                        item.nextPeriodIntention ||
+                        "No writing saved"}
+                    </small>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          {history.selectionError && (
+            <p className="review-history-error" role="alert">
+              {history.selectionError}
+            </p>
+          )}
+          {history.nextCursor && (
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={history.loading}
+              onClick={history.loadNext}
+            >
+              {history.loading ? "Loading\u2026" : "Show older reviews"}
+            </button>
+          )}
+        </>
+      )}
+    </section>
   );
 }
 

@@ -552,10 +552,11 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
 - There is no hosted sync, authentication, or multi-device support yet.
 - There is no live Hermes integration yet; the local export endpoint is the
   integration boundary.
-- `src/app/globals.css` still defines rules for surfaces that no longer render,
-  including `.task-panel`, `.matrix-panel`, `.notes-panel`, `.materials-panel`,
-  `.range-row`, `.pulse-grid`, and `.review-stack`. The chart rules were removed
-  on August 22, 2026; the rest have not been audited.
+- `src/app/globals.css` was audited on August 23, 2026 and no longer defines
+  rules for surfaces that never render. Selectors are classified by whether the
+  class appears anywhere in `src`, `tests`, `scripts`, or `prisma`; those built
+  by concatenation, such as `matrix-layout-${'{'}layout{'}'}`, are matched by stem and
+  deliberately kept.
 
 ## Near-Term Plan
 

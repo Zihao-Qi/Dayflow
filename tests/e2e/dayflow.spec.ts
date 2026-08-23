@@ -46,6 +46,13 @@ async function addBacklogTask(page: Page, title: string) {
   await expect(page.getByRole("heading", { name: /blocks? left$/ })).toBeVisible();
 }
 
+/**
+ * The running Focus rail labels this "Finish"; the paused rail labels it
+ * "Finish 3m". A fixture created near local midnight is paused so its elapsed
+ * time stays independent of the wall clock, so accept either label.
+ */
+const FINISH_BUTTON = /^Finish( \d+m)?$/;
+
 function taskRow(page: Page, title: string) {
   return page.getByRole("article", { name: `Task: ${title}`, exact: true });
 }
@@ -1003,7 +1010,7 @@ test("persists a focus session in the rail and collapses it to a strip", async (
 
   setFocusSessionElapsedMinutes(session.id, 2);
   await reloadedRail.getByRole("button", { name: "Resume", exact: true }).click();
-  await reloadedRail.getByRole("button", { name: "Finish", exact: true }).click();
+  await reloadedRail.getByRole("button", { name: FINISH_BUTTON }).click();
 
   await expect(reloadedRail.getByRole("heading", { name: "2m counted" })).toBeVisible();
   await reloadedRail
@@ -1619,7 +1626,7 @@ test("counts completed focus immediately while completion details remain optiona
   setFocusSessionElapsedMinutes(session.id, 3);
 
   const rail = page.getByRole("complementary", { name: "Focus rail" });
-  await rail.getByRole("button", { name: "Finish", exact: true }).click();
+  await rail.getByRole("button", { name: FINISH_BUTTON }).click();
   await expect(rail.getByRole("heading", { name: "3m counted" })).toBeVisible();
   await expect(
     rail.getByRole("button", { name: "Finish without details" })
@@ -1745,7 +1752,7 @@ test("keeps completed evidence committed when the next Focus start fails", async
   await page.reload();
 
   const rail = page.getByRole("complementary", { name: "Focus rail" });
-  await rail.getByRole("button", { name: "Finish", exact: true }).click();
+  await rail.getByRole("button", { name: FINISH_BUTTON }).click();
   await expect(rail.getByRole("heading", { name: "3m counted" })).toBeVisible();
 
   let failedNextStart = false;

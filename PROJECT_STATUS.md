@@ -67,6 +67,10 @@ The first-run workspace-readiness and handoff contract is:
 
 - `docs/specs/FIRST_RUN_ONBOARDING_V1.md` — implemented July 29
 
+The unattended protection contract is:
+
+- `docs/specs/ROLLING_BACKUPS_V1.md` — implemented August 22, 2026
+
 The canonical workspace navigation decision is:
 
 - `docs/adr/0001-six-destination-workspace.md`
@@ -509,6 +513,10 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
 - Touch-specific drag behavior still needs manual verification on a physical mobile device.
 - Focus Timer sessions are single-device and depend on the local Dayflow process; there is no menu-bar or system-wide macOS timer yet.
 - Focus and break lengths are chosen per session; configurable default presets and long-break cycles are not implemented yet.
+- Automatic Backups are created on a schedule but never deleted. Copies beyond
+  Backup Retention are reported, not pruned, and removing them is a manual
+  choice. They are also written beside the database rather than off the
+  machine, so they do not protect against losing the disk.
 - Complete JSON export and lossless database backup/restore are available from
   local commands and a managed local UI. UI restore is intentionally applied
   on the next Dayflow startup rather than against a live Prisma connection.
@@ -563,7 +571,12 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
 
 ### 6. Add Local-First Durability and Portability
 
-- Add opt-in rolling automatic backups around the validated manual UI.
+- Enforce Backup Retention by deleting old Automatic Backups. Scheduled
+  creation shipped on August 22, 2026 without any deletion path; the safety
+  rules for adding one are written down under "Deferred, not rejected" in
+  `docs/specs/ROLLING_BACKUPS_V1.md`.
+- Consider a backup destination outside the database directory, which is the
+  gap automatic local copies do not close.
 - Consider structured JSON import only after conflict and replacement semantics
   are specified; keep database backup as the lossless recovery path.
 - Add a printable or shareable weekly summary.

@@ -666,23 +666,41 @@ test("ignores a malformed legacy Time Block without crashing Timeline", async ({
   );
 });
 
-test("rejects non-today writes and missing Time Block deletes", async ({
+test("plans a future day, rejects a finished one, and 404s a missing delete", async ({
   page
 }) => {
   const bootstrap = await page.request.get("/api/bootstrap");
   const today = String((await bootstrap.json()).todayKey);
-  const tomorrow = offsetLocalDateKey(today, 1);
+
+  // Day Navigation v1 widened this forward. Tomorrow was a 400 under Manual
+  // Time Blocks v1, which allowed today alone.
   const future = await page.request.post("/api/time-blocks", {
     data: {
-      date: tomorrow,
+      date: offsetLocalDateKey(today, 1),
       startTime: "10:00",
       endTime: "10:30",
-      title: "Not part of today",
+      title: "Planned ahead",
       taskId: null
     }
   });
-  expect(future.status()).toBe(400);
+  expect(future.status()).toBe(201);
   expect(await future.json()).toMatchObject({
+    date: offsetLocalDateKey(today, 1),
+    title: "Planned ahead"
+  });
+
+  // A day that has ended is still refused: a plan for the past is not a plan.
+  const past = await page.request.post("/api/time-blocks", {
+    data: {
+      date: offsetLocalDateKey(today, -1),
+      startTime: "10:00",
+      endTime: "10:30",
+      title: "Planned behind",
+      taskId: null
+    }
+  });
+  expect(past.status()).toBe(400);
+  expect(await past.json()).toMatchObject({
     code: "VALIDATION_ERROR",
     field: "date"
   });

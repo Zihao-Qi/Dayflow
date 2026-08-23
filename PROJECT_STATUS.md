@@ -75,6 +75,11 @@ The unattended protection contract is:
 
 - `docs/specs/ROLLING_BACKUPS_V1.md` — implemented August 22, 2026
 
+The day-navigation contract is:
+
+- `docs/specs/DAY_NAVIGATION_V1.md` — implemented August 23, 2026, amending
+  the today-only rule in `docs/specs/TIME_BLOCKS_V1.md`
+
 The canonical workspace navigation decision is:
 
 - `docs/adr/0001-six-destination-workspace.md`
@@ -569,7 +574,8 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
 
 ### 2. Improve Planning
 
-- Add a simple day picker for planning future days.
+- Validate day navigation through daily use before adding week or month views.
+  Log now moves one day at a time, up to eight weeks ahead.
 - Validate manual Time Blocks through daily use before adding drag-resizing or
   automatic placement.
 - Explore capacity-aware scheduling suggestions only after the manual Projects workflow has been validated.

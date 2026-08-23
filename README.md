@@ -31,6 +31,9 @@ app runs locally without accounts or hosted services.
 - Manual Time Blocks with freeform or Task-prefilled creation, non-overlapping
   planning, full editing, confirmed deletion, and planned-versus-recorded
   Timeline comparison.
+- Day navigation in Log for any single day up to eight weeks ahead: past days
+  read and correct evidence, future days plan Time Blocks without inventing
+  evidence, and Today is unchanged.
 - Journal workspace for diary entries, quick notes, and saved references, with
   Task-linked Notes, Task/Note-linked References, complete-history text search,
   and exact Note tag filtering.
@@ -63,6 +66,7 @@ Product and corrective specifications:
 - [Rolling Automatic Backups v1](./docs/specs/ROLLING_BACKUPS_V1.md)
 - [Command Palette v1](./docs/specs/COMMAND_PALETTE_V1.md)
 - [Manual Time Blocks v1](./docs/specs/TIME_BLOCKS_V1.md)
+- [Day Navigation v1](./docs/specs/DAY_NAVIGATION_V1.md)
 - [Activity Capture v1](./docs/specs/ACTIVITY_CAPTURE_V1.md)
 - [Activity Editing v1](./docs/specs/ACTIVITY_EDITING_V1.md)
 - [Journal Relationships v1](./docs/specs/JOURNAL_RELATIONSHIPS_V1.md)

@@ -6,7 +6,7 @@ import {
   TIME_BLOCK_TASK_ID_MAX_LENGTH,
   TIME_BLOCK_TITLE_MAX_LENGTH,
   TimeBlockError,
-  assertTimeBlockIsToday,
+  assertTimeBlockIsNotPast,
   isTimeBlockRecord,
   minuteIntervalsOverlap,
   minutesToTimeBlockTime,
@@ -88,23 +88,64 @@ test("Time Block dates are strict local calendar dates", () => {
   }
 });
 
-test("Time Blocks can only be planned for the current local day", () => {
-  for (const date of ["2026-07-27", "2026-07-29"]) {
-    expectTimeBlockError(
-      () => parseDraft({ ...validDraft, date }),
-      "date"
-    );
-  }
+test("parsing a draft refuses a day that has ended and accepts a later one", () => {
+  // Day Navigation v1 widened this forward: 2026-07-29 was refused under
+  // Manual Time Blocks v1, which allowed today alone.
+  expectTimeBlockError(
+    () => parseDraft({ ...validDraft, date: "2026-07-27" }),
+    "date"
+  );
+  assert.equal(
+    localDateKey(parseDraft({ ...validDraft, date: "2026-07-29" }).date),
+    "2026-07-29"
+  );
 });
 
-test("structural parsing stays replay-safe while current-day validation is explicit", () => {
+test("structural parsing stays replay-safe while day validation is explicit", () => {
   const previousDay = parseTimeBlockDraftStructure({
     ...validDraft,
     date: "2026-07-27"
   });
   assert.equal(localDateKey(previousDay.date), "2026-07-27");
   expectTimeBlockError(
-    () => assertTimeBlockIsToday(previousDay, now),
+    () => assertTimeBlockIsNotPast(previousDay, now),
+    "date"
+  );
+});
+
+test("a Time Block may be planned for today or later, never for a day that ended", () => {
+  // `now` is fixed at 2026-07-28 by this suite.
+  const on = (date: string) =>
+    parseTimeBlockDraftStructure({ ...validDraft, date });
+
+  // Today and future days are allowed.
+  assert.doesNotThrow(() => assertTimeBlockIsNotPast(on("2026-07-28"), now));
+  assert.doesNotThrow(() => assertTimeBlockIsNotPast(on("2026-07-29"), now));
+  assert.doesNotThrow(() => assertTimeBlockIsNotPast(on("2026-09-22"), now));
+
+  // Any earlier day is refused, including the one immediately before.
+  for (const date of ["2026-07-27", "2026-07-01", "2025-12-31"]) {
+    expectTimeBlockError(
+      () => assertTimeBlockIsNotPast(on(date), now),
+      "date"
+    );
+  }
+});
+
+test("the widened rule keeps its boundary at the local day, not the instant", () => {
+  const lateToday = new Date(2026, 6, 28, 23, 59, 59);
+  assert.doesNotThrow(() =>
+    assertTimeBlockIsNotPast(
+      parseTimeBlockDraftStructure({ ...validDraft, date: "2026-07-28" }),
+      lateToday
+    )
+  );
+  expectTimeBlockError(
+    () =>
+      assertTimeBlockIsNotPast(
+        parseTimeBlockDraftStructure({ ...validDraft, date: "2026-07-27" }),
+        lateToday
+      ),
     "date"
   );
 });

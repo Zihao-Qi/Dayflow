@@ -89,7 +89,7 @@ export function parseTimeBlockDraft(
   now = new Date()
 ): TimeBlockDraft {
   const draft = parseTimeBlockDraftStructure(value);
-  assertTimeBlockIsToday(draft, now);
+  assertTimeBlockIsNotPast(draft, now);
   return draft;
 }
 
@@ -119,13 +119,25 @@ export function parseTimeBlockDraftStructure(
   };
 }
 
-export function assertTimeBlockIsToday(
+/**
+ * A Time Block may be planned for today or any later day, never for a day that
+ * has ended.
+ *
+ * Manual Time Blocks v1 restricted this to today alone, which made planning a
+ * future day impossible. Day Navigation v1 widens it forward only: a plan for
+ * a day that is over is not a plan, and Evidence Integrity keeps the past a
+ * record rather than something to fill in.
+ *
+ * The eight-week navigation horizon is deliberately not enforced here. That
+ * bound governs how far Log travels, not what a stored plan may say.
+ */
+export function assertTimeBlockIsNotPast(
   draft: Pick<TimeBlockDraft, "date">,
   now = new Date()
 ) {
-  if (draft.date.getTime() !== startOfLocalDay(now).getTime()) {
+  if (draft.date.getTime() < startOfLocalDay(now).getTime()) {
     throw new TimeBlockError(
-      "Time Blocks can only be planned for today.",
+      "Time Blocks cannot be planned for a day that has already ended.",
       "VALIDATION_ERROR",
       400,
       "date"

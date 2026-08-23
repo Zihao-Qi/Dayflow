@@ -5,7 +5,14 @@ Date: July 28, 2026
 
 ## Purpose
 
-A **Time Block** is an explicit plan to reserve part of today. It may stand on
+> **Amended by [Day Navigation v1](./DAY_NAVIGATION_V1.md), August 23, 2026.**
+> This specification restricted Time Blocks to today, which made planning a
+> future day impossible. The rule is widened forward: a Time Block may be
+> planned for today or any later day, never for a day that has ended. Every
+> other rule below still holds, and "today" should be read as "the planned
+> day" throughout.
+
+A **Time Block** is an explicit plan to reserve part of a day. It may stand on
 its own or point to one unfinished **Task**, but it is never evidence that work
 happened. The Log **Day Timeline** keeps planned Time Blocks separate from
 recorded **Activity** and a running or completed **Focus Session**.
@@ -15,9 +22,9 @@ create, inspect, edit, and delete every block shown there.
 
 ## v1 Scope
 
-- Manage Time Blocks from **Log → Timeline** for today.
+- Manage Time Blocks from **Log → Timeline** for the day being viewed.
 - Create a freeform Time Block with a title, start time, and end time.
-- Create a Time Block linked to an unfinished Task scheduled for today.
+- Create a Time Block linked to an unfinished Task scheduled for that day.
 - Start a Task-linked draft from either the Timeline dialog or a Task's
   **Block time for _Task title_** action.
 - Edit the title, start, end, and optional Task link of an existing Time Block.
@@ -32,7 +39,7 @@ does not need stacking, collision columns, or hidden blocks.
 
 The existing Time Block fields remain sufficient:
 
-- `date` is today's local calendar day;
+- `date` is the planned local calendar day, today or later;
 - `startTime` and `endTime` are local wall-clock times;
 - `title` is the visible snapshot shown on the Timeline;
 - `taskId` is either null or the identifier of one linked Task.
@@ -44,7 +51,7 @@ the latest representable same-day minute. The person may change the title or
 times before saving. Later Task title or estimate changes do not rewrite an
 existing Time Block.
 
-Only an unfinished Task scheduled for today may be newly linked. Linking a
+Only an unfinished Task scheduled for the same day may be newly linked. Linking a
 Time Block does not schedule, start, complete, reorder, or otherwise mutate the
 Task. Completing a linked Task later does not delete its Time Block. If the
 Task is deleted, the existing database relation becomes null and the saved
@@ -77,7 +84,7 @@ accessible **Add time block** dialog containing:
 - **Title**;
 - **Start**;
 - **End**;
-- optional **Linked task**, limited to unfinished Tasks scheduled today;
+- optional **Linked task**, limited to unfinished Tasks scheduled that day;
 - **Add block** and cancel controls.
 
 Selecting a Task in the dialog applies the same title and duration prefill as

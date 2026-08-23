@@ -11,6 +11,8 @@ import {
   BookOpen,
   CalendarDays,
   Check,
+  ChevronLeft,
+  ChevronRight,
   ChevronDown,
   ChevronUp,
   Circle,
@@ -43,6 +45,8 @@ import { useFocusSession } from "@/components/focus-session-provider";
 import { SaveStateChip, useSaveState } from "@/components/save-state";
 import { useReviewHistory } from "@/components/use-review-history";
 import type { PastReviewRecord } from "@/lib/review-records";
+import { useViewedDay } from "@/components/use-viewed-day";
+import type { ViewedDayKind } from "@/lib/day-records";
 import {
   useJournalEvidenceHistory,
   type JournalHistoryResult,
@@ -793,6 +797,35 @@ export function Dashboard() {
     (sum, task) => sum + task.estimateMinutes,
     0
   );
+  const viewedDay = useViewedDay(data?.todayKey ?? "");
+  const onDay = screen.startsWith("day-");
+
+  // Leaving Log resets the day: one that persists across a detour through
+  // Projects or Journal invites acting on the wrong day without noticing.
+  useEffect(() => {
+    if (!onDay) viewedDay.goToToday();
+  }, [onDay, viewedDay.goToToday]);
+
+  const dayIsToday = viewedDay.dayKey === (data?.todayKey ?? "");
+  const dayTasks = dayIsToday
+    ? openTodayTasks
+    : ((viewedDay.payload?.tasks ?? []) as unknown as Task[]).filter(
+        (task) => task.status !== "DONE"
+      );
+  const dayActivities = dayIsToday
+    ? data?.activities ?? []
+    : ((viewedDay.payload?.activities ?? []) as unknown as ActivityEntry[]);
+  const dayTimeBlocks = dayIsToday
+    ? data?.timeBlocks ?? []
+    : ((viewedDay.payload?.timeBlocks ?? []) as unknown as TimeBlock[]);
+  const dayBlockedMinutes = dayTimeBlocks
+    .filter((block) => block.date === viewedDay.dayKey)
+    .reduce((sum, block) => sum + safeTimeBlockDurationMinutes(block), 0);
+  const dayRecordedMinutes = dayActivities.reduce(
+    (sum, activity) => sum + activity.durationMinutes,
+    0
+  );
+
   const blockedMinutes = (data?.timeBlocks ?? [])
     .filter(
       (block) => block.date === data?.todayKey
@@ -2308,12 +2341,25 @@ export function Dashboard() {
             view={screen.replace("day-", "") as DayView}
             today={data.today}
             todayKey={data.todayKey}
-            tasks={openTodayTasks}
-            activities={data.activities}
-            timeBlocks={data.timeBlocks}
+            dayKey={viewedDay.dayKey}
+            dayKind={viewedDay.kind}
+            earliestDayKey={viewedDay.earliestDayKey}
+            forwardWeeks={viewedDay.forwardWeeks ?? 8}
+            dayLoading={viewedDay.loading}
+            dayError={viewedDay.error}
+            onChangeDay={(next) => {
+              void viewedDay.setDay(next);
+              // A future day opens on Timeline: Stream is built around
+              // recorded Activity that such a day cannot have.
+              if (next > (data?.todayKey ?? "")) navigate("day-timeline");
+            }}
+            onGoToToday={viewedDay.goToToday}
+            tasks={dayTasks}
+            activities={dayActivities}
+            timeBlocks={dayTimeBlocks}
             projects={projectById}
-            blockedMinutes={blockedMinutes}
-            recordedMinutes={activityMinutes}
+            blockedMinutes={dayBlockedMinutes}
+            recordedMinutes={dayRecordedMinutes}
             noteCount={data.notes.length}
             activeFocus={focus.active}
             focusNow={focus.now}
@@ -3434,6 +3480,14 @@ function DayPage({
   view,
   today,
   todayKey,
+  dayKey,
+  dayKind,
+  earliestDayKey,
+  forwardWeeks,
+  dayLoading,
+  dayError,
+  onChangeDay,
+  onGoToToday,
   tasks,
   activities,
   timeBlocks,
@@ -3456,6 +3510,14 @@ function DayPage({
   view: DayView;
   today: string;
   todayKey: string;
+  dayKey: string;
+  dayKind: ViewedDayKind;
+  earliestDayKey: string | null;
+  forwardWeeks: number;
+  dayLoading: boolean;
+  dayError: string;
+  onChangeDay: (dayKey: string) => void;
+  onGoToToday: () => void;
   tasks: Task[];
   activities: ActivityEntry[];
   timeBlocks: TimeBlock[];
@@ -3475,10 +3537,17 @@ function DayPage({
   onEditTimeBlock: (block: TimeBlock) => void;
   onEditActivity: (activity: ActivityEntry) => void;
 }) {
+  const isToday = dayKind === "today";
+  const isFuture = dayKind === "future";
+
   return (
     <div className="day-page log-page page-stack">
       <PageHeader
-        eyebrow={formatLongDate(today)}
+        eyebrow={
+          isToday
+            ? formatLongDate(today)
+            : `${isFuture ? "Planning" : "Looking back"} · ${formatLongLocalDateKey(dayKey)}`
+        }
         title="Log"
         actions={
           <SegmentedControl
@@ -3491,15 +3560,46 @@ function DayPage({
           />
         }
       />
-      <div className="log-totals" aria-label="Today’s log totals">
-        <span>{formatMinutes(blockedMinutes)} blocked</span>
-        <strong>{formatMinutes(recordedMinutes)} recorded</strong>
-        <span>
-          {activities.length} {activities.length === 1 ? "session" : "sessions"} ·{" "}
-          {noteCount} {noteCount === 1 ? "note" : "notes"}
-        </span>
-        <small>so far today</small>
-      </div>
+
+      <DayPicker
+        dayKey={dayKey}
+        todayKey={todayKey}
+        earliestDayKey={earliestDayKey}
+        forwardWeeks={forwardWeeks}
+        loading={dayLoading}
+        onChangeDay={onChangeDay}
+        onGoToToday={onGoToToday}
+      />
+
+      {dayError && (
+        <p className="day-error" role="alert">
+          {dayError}
+        </p>
+      )}
+
+      {isFuture ? (
+        <div className="log-totals" aria-label="Planned totals">
+          <strong>{formatMinutes(blockedMinutes)} planned</strong>
+          <span>
+            {timeBlocks.length} {timeBlocks.length === 1 ? "block" : "blocks"} ·{" "}
+            {tasks.length} {tasks.length === 1 ? "task" : "tasks"} scheduled
+          </span>
+          <small>nothing recorded yet — this day has not happened</small>
+        </div>
+      ) : (
+        <div
+          className="log-totals"
+          aria-label={isToday ? "Today’s log totals" : "Log totals for this day"}
+        >
+          <span>{formatMinutes(blockedMinutes)} blocked</span>
+          <strong>{formatMinutes(recordedMinutes)} recorded</strong>
+          <span>
+            {activities.length} {activities.length === 1 ? "session" : "sessions"}
+            {isToday ? ` · ${noteCount} ${noteCount === 1 ? "note" : "notes"}` : ""}
+          </span>
+          <small>{isToday ? "so far today" : "on this day"}</small>
+        </div>
+      )}
       {view === "stream" && (
         <DayStream
           tasks={tasks}
@@ -3512,20 +3612,103 @@ function DayPage({
           onQueueTask={onQueueTask}
           onFocusTransition={onFocusTransition}
           onOpenPalette={onOpenPalette}
-          onEditActivity={onEditActivity}
+          onEditActivity={isFuture ? undefined : onEditActivity}
         />
       )}
       {view === "timeline" && (
         <DayTimeline
-          todayKey={todayKey}
+          todayKey={dayKey}
           blocks={timeBlocks}
           tasks={tasks}
           activities={activities}
-          activeFocus={activeFocus}
+          activeFocus={isToday ? activeFocus : null}
           focusNow={focusNow}
-          onCreateBlock={onCreateTimeBlock}
+          onCreateBlock={dayKind === "past" ? undefined : onCreateTimeBlock}
           onEditBlock={onEditTimeBlock}
         />
+      )}
+    </div>
+  );
+}
+
+function shiftDayKey(dayKey: string, days: number) {
+  const [year, month, day] = dayKey.split("-").map(Number);
+  const shifted = new Date(year, month - 1, day + days);
+  return `${shifted.getFullYear()}-${String(shifted.getMonth() + 1).padStart(2, "0")}-${String(
+    shifted.getDate()
+  ).padStart(2, "0")}`;
+}
+
+function DayPicker({
+  dayKey,
+  todayKey,
+  earliestDayKey,
+  forwardWeeks,
+  loading,
+  onChangeDay,
+  onGoToToday
+}: {
+  dayKey: string;
+  todayKey: string;
+  earliestDayKey: string | null;
+  forwardWeeks: number;
+  loading: boolean;
+  onChangeDay: (dayKey: string) => void;
+  onGoToToday: () => void;
+}) {
+  const horizonKey = shiftDayKey(todayKey, forwardWeeks * 7);
+  // There is nothing to read before the earliest record, and nothing to plan
+  // past the horizon. Both ends stop rather than silently landing elsewhere.
+  const atStart = Boolean(earliestDayKey) && dayKey <= (earliestDayKey ?? "");
+  const atEnd = dayKey >= horizonKey;
+
+  return (
+    <div className="day-picker" role="group" aria-label="Choose a day">
+      <button
+        type="button"
+        className="secondary-button"
+        aria-label="Previous day"
+        disabled={loading || atStart}
+        onClick={() => onChangeDay(shiftDayKey(dayKey, -1))}
+      >
+        <ChevronLeft size={15} />
+      </button>
+      <label className="day-picker-date">
+        <input
+          type="date"
+          aria-label="Day shown in Log"
+          value={dayKey}
+          max={horizonKey}
+          min={earliestDayKey ?? undefined}
+          disabled={loading}
+          onChange={(event) => {
+            if (event.target.value) onChangeDay(event.target.value);
+          }}
+        />
+      </label>
+      <button
+        type="button"
+        className="secondary-button"
+        aria-label="Next day"
+        disabled={loading || atEnd}
+        onClick={() => onChangeDay(shiftDayKey(dayKey, 1))}
+      >
+        <ChevronRight size={15} />
+      </button>
+      {dayKey !== todayKey && (
+        <button
+          type="button"
+          className="text-button"
+          disabled={loading}
+          onClick={onGoToToday}
+        >
+          Back to today
+        </button>
+      )}
+      {loading && (
+        <small role="status" className="day-picker-status">
+          Loading…
+        </small>
       )}
     </div>
   );
@@ -3554,7 +3737,7 @@ function DayStream({
   onQueueTask: (task: Task, placement: QueuePlacement) => Promise<boolean>;
   onFocusTransition: ReturnType<typeof useFocusSession>["transition"];
   onOpenPalette: () => void;
-  onEditActivity: (activity: ActivityEntry) => void;
+  onEditActivity?: (activity: ActivityEntry) => void;
 }) {
   let cursor = new Date();
   const idleNext = !activeFocus ? tasks[0] ?? null : null;
@@ -3580,12 +3763,13 @@ function DayStream({
                   <strong>
                     {activity.durationMinutes}m · {activity.category}
                   </strong>
-                  {activity.origin === "MANUAL" &&
+                  {onEditActivity &&
+                    activity.origin === "MANUAL" &&
                     activity.focusSessionId === null && (
                       <button
                         aria-label={`Edit activity: ${activity.note}`}
                         className="stream-activity-edit"
-                        onClick={() => onEditActivity(activity)}
+                        onClick={() => onEditActivity?.(activity)}
                         type="button"
                       >
                         <Pencil size={13} />
@@ -3750,7 +3934,7 @@ function DayTimeline({
   activities: ActivityEntry[];
   activeFocus: ReturnType<typeof useFocusSession>["active"];
   focusNow: number;
-  onCreateBlock: (task?: Task | null) => void;
+  onCreateBlock?: (task?: Task | null) => void;
   onEditBlock: (block: TimeBlock) => void;
 }) {
   const todayBlocks = blocks
@@ -3796,6 +3980,7 @@ function DayTimeline({
               : "No time blocked yet"}
           </strong>
         </div>
+        {onCreateBlock && (
         <button
           className="secondary-button"
           type="button"
@@ -3804,8 +3989,9 @@ function DayTimeline({
           <Plus size={14} />
           Add time block
         </button>
+        )}
       </div>
-      {tasks.length > 0 && (
+      {onCreateBlock && tasks.length > 0 && (
         <div className="timeline-task-shortcuts" aria-label="Block a task">
           <span>Block a task</span>
           <div>
@@ -3858,7 +4044,7 @@ function DayTimeline({
                 </button>
               );
             })}
-            {!todayBlocks.length && (
+            {!todayBlocks.length && onCreateBlock && (
               <button
                 className="timeline-empty"
                 onClick={() => onCreateBlock(null)}
@@ -3872,6 +4058,9 @@ function DayTimeline({
               >
                 Nothing planned · add a block
               </button>
+            )}
+            {!todayBlocks.length && !onCreateBlock && (
+              <p className="timeline-empty-note">Nothing was planned for this day.</p>
             )}
           </div>
           <div className="timeline-column actual">

@@ -6,7 +6,7 @@ import {
 import { timeBlockMutationErrorResponse } from "@/lib/time-block-http";
 import { createTimeBlock } from "@/lib/time-block-persistence";
 import {
-  assertTimeBlockIsToday,
+  assertTimeBlockIsNotPast,
   parseTimeBlockDraftStructure,
   readTimeBlockMutationBody
 } from "@/lib/time-blocks";
@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
       kind: "time-block.create",
       payload: body,
       create: (transaction) => {
-        assertTimeBlockIsToday(input);
+        assertTimeBlockIsNotPast(input);
         return createTimeBlock(input, transaction);
       }
     });

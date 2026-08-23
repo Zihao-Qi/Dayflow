@@ -56,6 +56,10 @@ _Avoid_: Percent complete, effort
 The total duration of activities attributed to a Project, either directly or through Project tasks.
 _Avoid_: Plan Progress, estimate
 
+**Viewed Day**:
+The single local calendar day the Log destination is showing. It defaults to today, resets to today on leaving Log, and never changes what Today shows.
+_Avoid_: Today, selected date, current day
+
 **Review Period**:
 The seven local calendar days ending today, used for period-bound Review evidence.
 _Avoid_: Calendar week, all time

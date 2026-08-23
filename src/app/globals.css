@@ -9717,6 +9717,105 @@ html[data-layout-mode="phone"] {
   padding: 0 22px 20px;
 }
 
+.automatic-backup-panel {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px;
+}
+
+.automatic-backup-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.automatic-backup-heading strong {
+  display: block;
+  margin-top: 3px;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.automatic-backup-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  font-size: 12px;
+}
+
+.automatic-backup-copy,
+.automatic-backup-failure,
+.automatic-backup-retention {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+.automatic-backup-retention strong,
+.automatic-backup-failure {
+  color: var(--ink);
+}
+
+.automatic-backup-retention code {
+  overflow-wrap: anywhere;
+  font-size: 11px;
+}
+
+.automatic-backup-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.automatic-backup-fields label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.automatic-backup-fields select,
+.automatic-backup-fields input {
+  min-height: 34px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fffefb;
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.automatic-backup-fields input[type="number"] {
+  width: 72px;
+}
+
+.automatic-backup-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.automatic-backup-facts dt {
+  color: var(--muted);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.automatic-backup-facts dd {
+  margin: 3px 0 0;
+  font-size: 12.5px;
+}
+
 .backup-list-panel {
   display: grid;
   align-content: start;

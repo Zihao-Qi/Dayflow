@@ -274,6 +274,7 @@ export type ApplicationSchemaDifference = {
 
 export type BackupPurpose =
   | "manual"
+  | "automatic"
   | "restore-safety"
   | "migration-safety";
 
@@ -356,6 +357,7 @@ export function defaultBackupPath(
 ) {
   const label: Record<BackupPurpose, string> = {
     manual: "dayflow",
+    automatic: "dayflow-automatic",
     "restore-safety": "dayflow-safety-before-restore",
     "migration-safety": "dayflow-safety-before-migration"
   };

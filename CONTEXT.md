@@ -80,6 +80,14 @@ _Avoid_: Invested Time, weekly budget
 A Scheduled Task whose scheduled day has passed and whose status is not done. It remains on its original day until the user chooses another disposition.
 _Avoid_: Automatically moved task
 
+**Automatic Backup**:
+A verified backup artifact Dayflow created on its own schedule rather than in response to an explicit request. It is identical in format and validation to a manual backup and differs only in why it exists.
+_Avoid_: Snapshot, autosave, sync
+
+**Backup Retention**:
+The number of most-recent Automatic Backups the user wants to keep. It is a stated preference Dayflow reports against; Dayflow does not delete anything to satisfy it.
+_Avoid_: Expiry, cleanup, quota, auto-delete
+
 **Area**:
 A future container for an ongoing responsibility without a finishable outcome. Areas are deliberately separate from Projects and are not part of Projects v1.
 _Avoid_: Project, perpetual project

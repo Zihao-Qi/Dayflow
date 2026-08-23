@@ -36,6 +36,9 @@ app runs locally without accounts or hosted services.
   and exact Note tag filtering.
 - Review workspace for seven-day evidence summaries, Project movement, and a
   period-bound narrative and next-period intention.
+- Read-only browsing of Reviews saved for earlier periods, each opened on its
+  own stored seven-day window with its evidence re-derived from current
+  records.
 - Project attribution for activities, notes, and saved references.
 - Global Capture palette with Task and Project search, typed Focus commands,
   URL and Note intent recognition, and draft-preserving handoff to the owning
@@ -54,6 +57,7 @@ Product and corrective specifications:
 
 - [Evidence Integrity v1](./docs/specs/EVIDENCE_INTEGRITY_V1.md)
 - [Weekly Evidence Review v1](./docs/specs/WEEKLY_EVIDENCE_REVIEW_V1.md)
+- [Review Period Browsing v1](./docs/specs/REVIEW_PERIOD_BROWSING_V1.md)
 - [Local Data Reliability v1](./docs/specs/LOCAL_DATA_RELIABILITY_V1.md)
 - [Migration Safety Backups v1](./docs/specs/MIGRATION_SAFETY_BACKUPS_V1.md)
 - [Rolling Automatic Backups v1](./docs/specs/ROLLING_BACKUPS_V1.md)

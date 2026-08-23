@@ -60,6 +60,10 @@ _Avoid_: Plan Progress, estimate
 The seven local calendar days ending today, used for period-bound Review evidence.
 _Avoid_: Calendar week, all time
 
+**Past Review Period**:
+The exact seven-local-day window of a Review saved before the current Review Period, identified by that Review's own stored boundaries. It is read-only.
+_Avoid_: Review Period, calendar week, archive, snapshot
+
 **Review**:
 A deliberately saved narrative and next-period intention for one Review Period. It interprets Evidence without copying or replacing it.
 _Avoid_: Diary reflection, Review Summary

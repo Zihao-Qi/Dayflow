@@ -310,3 +310,50 @@ export function seedPreviousDayTimeBlockReceipt(date: string) {
   );
   return { mutationId, payload, response };
 }
+
+/**
+ * Seed Reviews for periods that have already ended.
+ *
+ * `saveOffsets` are whole days behind today. They deliberately allow
+ * non-multiples of seven: a Review saved three days ago must still be
+ * reachable in history, which is the case an offset-from-today period grid
+ * cannot address.
+ */
+export function seedPastReviews(saveOffsets: number[]) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const dayMs = 24 * 60 * 60 * 1_000;
+  const seeded = saveOffsets.map((daysAgo) => {
+    if (!Number.isInteger(daysAgo) || daysAgo < 1) {
+      throw new Error("A past Review must have been saved at least one day ago.");
+    }
+    const periodEnd = new Date(today.getTime() + (1 - daysAgo) * dayMs);
+    const periodStart = new Date(periodEnd.getTime() - 7 * dayMs);
+    return {
+      id: `past-review-${daysAgo}`,
+      daysAgo,
+      periodStart: periodStart.getTime(),
+      periodEnd: periodEnd.getTime(),
+      narrative: `Saved ${daysAgo} days ago`,
+      nextPeriodIntention: `Intention from ${daysAgo} days ago`
+    };
+  });
+
+  runPrismaDbExecute(
+    ["--stdin"],
+    seeded
+      .map(
+        (review) => `
+          INSERT INTO "Review"
+          ("id", "periodStart", "periodEnd", "narrative",
+           "nextPeriodIntention", "createdAt", "updatedAt")
+          VALUES
+          ('${review.id}', ${review.periodStart}, ${review.periodEnd},
+           '${review.narrative}', '${review.nextPeriodIntention}',
+           ${review.periodEnd}, ${review.periodEnd});
+        `
+      )
+      .join("\n")
+  );
+  return seeded;
+}

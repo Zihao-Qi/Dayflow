@@ -6749,6 +6749,86 @@ button.note-tag:hover {
   font-size: 11px;
 }
 
+.review-history-panel {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 18px;
+}
+
+.review-history-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.review-history-list > li > button {
+  display: grid;
+  gap: 5px;
+  width: 100%;
+  min-height: 44px;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fffefb;
+  color: var(--ink);
+  text-align: left;
+}
+
+.review-history-list > li > button:hover {
+  border-color: #cfc7b8;
+  background: var(--sage-soft);
+}
+
+.review-history-list > li > button[aria-current="true"] {
+  border-color: #b9b0a0;
+  background: var(--sage-soft);
+}
+
+.review-history-list > li > button small {
+  display: block;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-history-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  color: var(--ink);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.review-past-writing {
+  display: grid;
+  gap: 16px;
+  margin-top: 4px;
+}
+
+.review-past-writing h3 {
+  margin: 3px 0 6px;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.review-past-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .review-editor-card {
   display: grid;
   gap: 10px;

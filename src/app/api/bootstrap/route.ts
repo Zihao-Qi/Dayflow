@@ -8,8 +8,7 @@ import {
   sameDayRange,
   startOfLocalDay
 } from "@/lib/dates";
-import { listProjectSummaries } from "@/lib/projects";
-import { buildReviewSummary } from "@/lib/review-domain";
+import { readReviewPeriodEvidence } from "@/lib/review-history";
 import { serializeTimeBlock } from "@/lib/time-block-persistence";
 import { isTimeBlockRecord } from "@/lib/time-blocks";
 import { isWorkspaceEmpty } from "@/lib/workspace-readiness";
@@ -31,12 +30,7 @@ export async function GET() {
     timeBlocks,
     activities,
     weekTasks,
-    diaries,
-    weekActivities,
-    completedTasks,
-    reviewNotes,
-    reviewMaterials,
-    projects,
+    reviewEvidence,
     savedReview,
     activityCategoryRows,
     workspaceEmpty
@@ -92,34 +86,7 @@ export async function GET() {
         where: { date: { gte: weekStart, lt: reviewEnd } },
         orderBy: { date: "asc" }
       }),
-      prisma.diaryEntry.findMany({
-        where: { date: { gte: weekStart, lt: reviewEnd } },
-        orderBy: { date: "asc" }
-      }),
-      prisma.activityEntry.findMany({
-        where: { startedAt: { gte: weekStart, lt: reviewEnd } },
-        orderBy: { startedAt: "asc" },
-        include: {
-          focusSession: {
-            select: {
-              needsEnrichment: true
-            }
-          }
-        }
-      }),
-      prisma.task.findMany({
-        where: { completedAt: { gte: weekStart, lt: reviewEnd } },
-        select: { id: true }
-      }),
-      prisma.note.findMany({
-        where: { date: { gte: weekStart, lt: reviewEnd } },
-        select: { id: true }
-      }),
-      prisma.material.findMany({
-        where: { createdAt: { gte: weekStart, lt: reviewEnd } },
-        select: { id: true }
-      }),
-      listProjectSummaries(reviewPeriod),
+      readReviewPeriodEvidence(prisma, reviewPeriod),
       prisma.review.findUnique({
         where: {
           periodStart_periodEnd: {
@@ -146,24 +113,13 @@ export async function GET() {
         energy: 3,
         persisted: false
       };
+  const { projects, summary: reviewSummary } = reviewEvidence;
   const stats = buildStats(
     weekTasks,
-    diaries,
-    weekActivities,
+    reviewEvidence.diaries,
+    reviewEvidence.activities,
     weekStart
   );
-  const reviewSummary = {
-    ...buildReviewSummary({
-      activities: weekActivities,
-      completedTasks,
-      notes: reviewNotes,
-      materials: reviewMaterials,
-      diaries
-    }),
-    movedProjectCount: projects.filter(
-      (project) => project.movedDuringReviewPeriod
-    ).length
-  };
   const review = savedReview
     ? { ...savedReview, persisted: true }
     : {

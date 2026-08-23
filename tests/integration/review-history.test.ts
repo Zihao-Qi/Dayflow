@@ -292,3 +292,43 @@ test("an unknown or malformed Review identifier is rejected before querying", as
     );
   });
 });
+
+test("correcting Evidence in an earlier window changes its summary, not its narrative", async (context) => {
+  await withDatabase(context, async ({ prisma, history }) => {
+    const today = startOfLocalDay();
+    const saved = await prisma.review.create({
+      data: {
+        ...windowSavedDaysAgo(9),
+        narrative: "as it was written then",
+        nextPeriodIntention: "left alone"
+      }
+    });
+    const activity = await prisma.activityEntry.create({
+      data: {
+        startedAt: addDays(today, -10),
+        durationMinutes: 30,
+        category: "Deep Work",
+        note: "inside the saved window"
+      }
+    });
+
+    const before = await history.readPastReviewPeriod(prisma, saved.id);
+    assert.equal(before.reviewSummary.recordedMinutes, 30);
+
+    // Nothing is snapshotted, so a later correction is reflected.
+    await prisma.activityEntry.update({
+      where: { id: activity.id },
+      data: { durationMinutes: 55 }
+    });
+
+    const after = await history.readPastReviewPeriod(prisma, saved.id);
+    assert.equal(after.reviewSummary.recordedMinutes, 55);
+    assert.equal(after.review.narrative, "as it was written then");
+    assert.equal(after.review.nextPeriodIntention, "left alone");
+    assert.equal(
+      after.review.updatedAt.getTime(),
+      before.review.updatedAt.getTime(),
+      "the saved Review must not be rewritten by a read"
+    );
+  });
+});

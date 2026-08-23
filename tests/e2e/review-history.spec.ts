@@ -122,3 +122,110 @@ test("past-period evidence is derived for that window, not for today", async ({
   await expect(page.locator(".page-eyebrow")).toContainText("Past review");
   await expect(page.locator(".review-metrics")).not.toContainText("45m");
 });
+
+test("Review history and a past period stay usable at phone width", async ({
+  page
+}) => {
+  seedPastReviews([3, 10]);
+  await page.setViewportSize({ width: 375, height: 812 });
+  await openReview(page);
+
+  await page.getByRole("button", { name: "Earlier reviews" }).click();
+  const entry = historyPanel(page).getByRole("button", {
+    name: /Saved 3 days ago/
+  });
+  await expect(entry).toBeVisible();
+
+  // Touch targets stay reachable and the page never scrolls sideways.
+  const box = await entry.boundingBox();
+  expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+  await entry.click();
+  await expect(page.locator(".review-past-card")).toBeVisible();
+  expect(
+    await page.evaluate(
+      () =>
+        document.documentElement.scrollWidth >
+        document.documentElement.clientWidth
+    )
+  ).toBe(false);
+});
+
+/**
+ * Simulate the local day rolling over by shifting the period the bootstrap
+ * payload reports, mirroring the existing Review rollover coverage.
+ */
+async function controlBootstrapPeriodShift(page: Page) {
+  let bootstrapLoads = 0;
+  let shiftPeriod = false;
+  await page.route("**/api/bootstrap", async (route) => {
+    const shouldShift = shiftPeriod;
+    const response = await route.fetch();
+    const payload = (await response.json()) as Record<string, unknown> & {
+      review: Record<string, unknown> & {
+        periodStart: string;
+        periodEnd: string;
+      };
+    };
+    bootstrapLoads += 1;
+    if (shouldShift) {
+      payload.today = shiftLocalDay(payload.today as string);
+      payload.review = {
+        id: null,
+        periodStart: shiftLocalDay(payload.review.periodStart),
+        periodEnd: shiftLocalDay(payload.review.periodEnd),
+        narrative: "",
+        nextPeriodIntention: "",
+        persisted: false
+      };
+    }
+    await route.fulfill({ response, json: payload });
+  });
+  return {
+    armShift: () => {
+      shiftPeriod = true;
+    },
+    loadCount: () => bootstrapLoads
+  };
+}
+
+function shiftLocalDay(value: string) {
+  return new Date(new Date(value).getTime() + 24 * 60 * 60 * 1_000).toISOString();
+}
+
+test("a local-day rollover keeps an open Past Review Period on screen", async ({
+  page
+}) => {
+  seedPastReviews([3]);
+  const bootstrapPeriod = await controlBootstrapPeriodShift(page);
+
+  const now = new Date();
+  const loadingTime = new Date(now);
+  loadingTime.setHours(23, 55, 0, 0);
+  const lateToday = new Date(now);
+  lateToday.setHours(23, 59, 59, 0);
+  await page.clock.install({ time: loadingTime });
+
+  await openReview(page);
+  await page.getByRole("button", { name: "Earlier reviews" }).click();
+  await historyPanel(page)
+    .getByRole("button", { name: /Saved 3 days ago/ })
+    .click();
+
+  const pastCard = page.locator(".review-past-card");
+  await expect(pastCard).toBeVisible();
+  const pastEyebrow = await page.locator(".page-eyebrow").textContent();
+
+  const loadsBeforeRollover = bootstrapPeriod.loadCount();
+  bootstrapPeriod.armShift();
+  await page.clock.pauseAt(lateToday);
+  await page.clock.runFor(1_500);
+  await expect
+    .poll(bootstrapPeriod.loadCount)
+    .toBeGreaterThan(loadsBeforeRollover);
+
+  // The past window is absolute, so the rollover must not move it or discard
+  // the reader's place in history.
+  await expect(pastCard).toBeVisible();
+  await expect(page.locator(".page-eyebrow")).toHaveText(pastEyebrow ?? "");
+  await expect(page.locator(".review-page textarea")).toHaveCount(0);
+});

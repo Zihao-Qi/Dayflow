@@ -97,11 +97,15 @@ history rather than a disabled control.
 Because every Past Review Period carries absolute stored boundaries, a local
 day rolling over cannot change which days a listed period covers.
 
-One case still needs handling: the period being read is the current one, and
-the day rolls over while it is on screen. It then becomes a Past Review Period.
-The interface must keep the same absolute window on screen and re-label it,
-rather than silently swapping in different days, and must withdraw the save
-affordance that no longer applies.
+The current Review Period continues to roll forward exactly as
+[Weekly Evidence Review v1](./WEEKLY_EVIDENCE_REVIEW_V1.md) specifies: it
+follows the local day and a shifted period starts with an empty draft. That
+behavior is unchanged here.
+
+The case this specification adds is a rollover while a Past Review Period is
+open. That window is absolute, so it must stay on screen and stay read-only.
+The reader must not be returned to the current period, and the period label
+must not change under them.
 
 ## Typed Failures
 
@@ -180,8 +184,8 @@ nothing about how that interval was chosen.
     history.
 11. Returning to the current Review Period restores the editable save flow
     exactly as it behaves today.
-12. A local-day rollover while the current period is on screen re-labels it as
-    past and withdraws the save affordance, without changing the days shown.
+12. A local-day rollover while a Past Review Period is open keeps that period
+    and its label on screen, and keeps it read-only.
 13. The history control and read-only Review remain usable at phone, tablet,
     and desktop widths.
 
@@ -193,9 +197,12 @@ nothing about how that interval was chosen.
   are not multiples of seven days behind today.
 - Unit tests proving a past window's summary matches current-period
   aggregation for identical Evidence.
-- Storage/API tests proving a past-period read mutates nothing.
+- Storage/API tests proving a past-period read mutates nothing, and that a
+  corrected Activity changes an earlier window's derived summary while its
+  saved narrative and intention stay fixed.
 - Browser coverage for opening history, the read-only saved Review, the empty
-  history state, and returning to the current period with saving still
-  available.
+  history state, returning to the current period with saving still available,
+  a local-day rollover while a past period is open, and phone-width layout
+  with reachable touch targets and no horizontal overflow.
 - Existing Review Period, rollover, and missing-evidence boundary tests remain
   green.

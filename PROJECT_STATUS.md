@@ -67,6 +67,10 @@ The first-run workspace-readiness and handoff contract is:
 
 - `docs/specs/FIRST_RUN_ONBOARDING_V1.md` — implemented July 29
 
+The Review history contract is:
+
+- `docs/specs/REVIEW_PERIOD_BROWSING_V1.md` — implemented August 22, 2026
+
 The canonical workspace navigation decision is:
 
 - `docs/adr/0001-six-destination-workspace.md`
@@ -356,8 +360,14 @@ Funemployment Day has a narrower and immediately understandable promise around r
   Project and compares the weekly budget only with the former.
 - Provides a period-bound narrative and next-period intention saved separately
   from the Journal.
-- Accepts a saved Review only for the current Review Period; browsing earlier
-  periods is not implemented yet.
+- Accepts a saved Review only for the current Review Period.
+- Lists Reviews saved for earlier periods, newest first, through stable cursor
+  pagination, and opens each on its own stored seven-day window.
+- Derives a Past Review Period's summary from current Evidence rather than a
+  snapshot, so later corrections are reflected while the saved narrative and
+  intention stay fixed in time.
+- Keeps Past Review Periods read-only and restores the editable current-period
+  save flow on return.
 
 ### Agent Export
 
@@ -572,8 +582,11 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
 
 - Validate the seven-day evidence summary and period-bound narrative through
   repeated weekly use.
-- Add browsing for earlier Review Periods. Only the current period can be
-  saved today; the route rejects any other period.
+- Add browsing for seven-day windows that were never written about, addressed
+  by an arbitrary anchor day. Browsing saved Reviews shipped on August 22,
+  2026; an unreviewed window is the deliberate follow-up, and the read path
+  already takes a resolved interval, so it is an added entry point rather than
+  a redesign.
 - Reintroduce a charting dependency before any of the visualization items
   below. Review currently renders typographic readouts only, and Recharts was
   dropped once the last chart was removed.

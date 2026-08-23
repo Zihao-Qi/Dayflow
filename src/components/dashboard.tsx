@@ -2400,7 +2400,6 @@ export function Dashboard() {
 
         {screen === "review" && (
           <ReviewPage
-            key={`${data.review.periodStart}:${data.review.periodEnd}`}
             projects={data.projects}
             review={data.review}
             summary={data.reviewSummary}
@@ -4821,6 +4820,7 @@ function ReviewPage({
         />
       ) : (
         <CurrentReviewEditor
+          key={`${review.periodStart}:${review.periodEnd}`}
           review={review}
           onSaveReview={onSaveReview}
           onSaveError={onSaveError}

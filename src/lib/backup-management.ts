@@ -29,11 +29,18 @@ import {
   buildRetentionReport,
   parseAutomaticBackupPolicy,
   readStoredAutomaticBackupPolicy,
-  resolveAutomaticBackupSchedule,
-  type AutomaticBackupPolicy,
-  type AutomaticBackupSchedule,
-  type RetentionReport
+  resolveAutomaticBackupSchedule
 } from "@/lib/backup-schedule";
+import type {
+  AutomaticBackupAttempt,
+  AutomaticBackupPolicy,
+  AutomaticBackupState
+} from "@/lib/automatic-backup-contract";
+
+export type {
+  AutomaticBackupAttempt,
+  AutomaticBackupState
+} from "@/lib/automatic-backup-contract";
 
 const BACKUP_FILE_PATTERN =
   /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}\.dayflow-backup$/;
@@ -159,21 +166,6 @@ export function getManagedBackupIndex(
   };
 }
 
-export type AutomaticBackupAttempt = {
-  status: "succeeded" | "failed" | "skipped";
-  at: string;
-  fileName?: string;
-  reason?: string;
-};
-
-export type AutomaticBackupState = {
-  policy: AutomaticBackupPolicy;
-  schedule: AutomaticBackupSchedule;
-  retention: RetentionReport;
-  lastSuccessAt: string | null;
-  lastAttempt: AutomaticBackupAttempt | null;
-};
-
 export function getAutomaticBackupState(
   options: BackupManagementOptions = {}
 ): AutomaticBackupState {
@@ -286,7 +278,11 @@ function automaticStateFor(
   const policy = readAutomaticPolicy(context);
   const automatic = backups.filter((backup) => backup.purpose === "automatic");
   const stored = readAutomaticStatus(context);
-  const lastSuccessAt = stored?.lastSuccessAt ?? null;
+  const artifactSuccessAt = latestVerifiedBackupCreatedAt(automatic);
+  const lastSuccessAt = latestIsoTimestamp(
+    stored?.lastSuccessAt ?? null,
+    artifactSuccessAt
+  );
   const lastSuccessDate = lastSuccessAt ? new Date(lastSuccessAt) : null;
   return {
     policy,
@@ -295,6 +291,21 @@ function automaticStateFor(
     lastSuccessAt,
     lastAttempt: stored?.lastAttempt ?? null
   };
+}
+
+function latestVerifiedBackupCreatedAt(backups: ManagedBackupSummary[]) {
+  let latest: string | null = null;
+  for (const backup of backups) {
+    if (backup.status !== "verified" || !backup.createdAt) continue;
+    latest = latestIsoTimestamp(latest, backup.createdAt);
+  }
+  return latest;
+}
+
+function latestIsoTimestamp(left: string | null, right: string | null) {
+  if (!left) return right;
+  if (!right) return left;
+  return Date.parse(left) >= Date.parse(right) ? left : right;
 }
 
 function readAutomaticPolicy(context: BackupContext): AutomaticBackupPolicy {

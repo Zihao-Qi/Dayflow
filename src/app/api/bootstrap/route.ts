@@ -12,6 +12,11 @@ import { readReviewPeriodEvidence } from "@/lib/review-history";
 import { serializeTimeBlock } from "@/lib/time-block-persistence";
 import { isTimeBlockRecord } from "@/lib/time-blocks";
 import { isWorkspaceEmpty } from "@/lib/workspace-readiness";
+import {
+  DAY_VIEW_FORWARD_WEEKS,
+  earliestRecordedDay,
+  resolveEarliestNavigableDayKey
+} from "@/lib/day-view";
 
 export async function GET() {
   const today = startOfLocalDay();
@@ -33,7 +38,8 @@ export async function GET() {
     reviewEvidence,
     savedReview,
     activityCategoryRows,
-    workspaceEmpty
+    workspaceEmpty,
+    earliestDayKey
   ] =
     await Promise.all([
       prisma.task.findMany({
@@ -99,7 +105,8 @@ export async function GET() {
         select: { category: true },
         distinct: ["category"]
       }),
-      isWorkspaceEmpty(prisma)
+      isWorkspaceEmpty(prisma),
+      earliestRecordedDay(prisma)
     ]);
 
   const diaryEntry = diary
@@ -134,6 +141,8 @@ export async function GET() {
   return NextResponse.json({
     today: start.toISOString(),
     todayKey: localDateKey(start),
+    earliestDayKey: resolveEarliestNavigableDayKey(earliestDayKey, start),
+    dayViewForwardWeeks: DAY_VIEW_FORWARD_WEEKS,
     tasks,
     paletteTasks,
     notes: notes.map((note) => ({ ...note, tags: safeTags(note.tags) })),

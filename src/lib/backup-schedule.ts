@@ -8,16 +8,22 @@
  * Contract: docs/specs/ROLLING_BACKUPS_V1.md
  */
 
+import type {
+  AutomaticBackupPolicy,
+  AutomaticBackupSchedule,
+  RetentionReport
+} from "@/lib/automatic-backup-contract";
+
+export type {
+  AutomaticBackupPolicy,
+  AutomaticBackupSchedule,
+  RetentionReport
+} from "@/lib/automatic-backup-contract";
+
 export const AUTOMATIC_BACKUP_MIN_INTERVAL_HOURS = 1;
 export const AUTOMATIC_BACKUP_MAX_INTERVAL_HOURS = 168;
 export const AUTOMATIC_BACKUP_MIN_RETAIN = 1;
 export const AUTOMATIC_BACKUP_MAX_RETAIN = 50;
-
-export type AutomaticBackupPolicy = {
-  enabled: boolean;
-  intervalHours: number;
-  retainCount: number;
-};
 
 export const DEFAULT_AUTOMATIC_BACKUP_POLICY: AutomaticBackupPolicy = {
   enabled: false,
@@ -128,11 +134,6 @@ export function readStoredAutomaticBackupPolicy(
   }
 }
 
-export type AutomaticBackupSchedule = {
-  due: boolean;
-  nextDueAt: string | null;
-};
-
 /**
  * Decide whether an Automatic Backup is due.
  *
@@ -158,12 +159,6 @@ export function resolveAutomaticBackupSchedule(
     nextDueAt: nextDue.toISOString()
   };
 }
-
-export type RetentionReport = {
-  automaticCount: number;
-  retainCount: number;
-  beyondRetention: number;
-};
 
 /**
  * Report against Backup Retention. v1 deletes nothing, so this is the whole of

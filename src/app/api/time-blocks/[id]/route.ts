@@ -5,7 +5,7 @@ import {
   replaceTimeBlock
 } from "@/lib/time-block-persistence";
 import {
-  parseTimeBlockDraft,
+  parseTimeBlockDraftStructure,
   parseTimeBlockPathId,
   readTimeBlockMutationBody
 } from "@/lib/time-blocks";
@@ -17,7 +17,10 @@ export async function PUT(request: NextRequest, { params }: Params) {
   try {
     const id = parseTimeBlockPathId(rawId);
     const body = await readTimeBlockMutationBody(request);
-    const input = parseTimeBlockDraft(body);
+    // Replacing an existing past block is a correction, not a new plan.
+    // Creation keeps the not-past guard; replacement keeps structural and
+    // relationship validation without rejecting the block's stored day.
+    const input = parseTimeBlockDraftStructure(body);
     return NextResponse.json(await replaceTimeBlock(id, input));
   } catch (error) {
     return timeBlockMutationErrorResponse(error, "save");

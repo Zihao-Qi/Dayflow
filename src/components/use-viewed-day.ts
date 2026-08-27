@@ -27,15 +27,19 @@ export type ViewedDayState = {
  * today costs no request and behaves exactly as before. Only another day is
  * fetched.
  */
-export function useViewedDay(todayKey: string) {
+export function useViewedDay(
+  todayKey: string,
+  initialEarliestDayKey: string | null,
+  initialForwardWeeks: number | null
+) {
   const [state, setState] = useState<ViewedDayState>({
     dayKey: todayKey,
     kind: "today",
     payload: null,
     loading: false,
     error: "",
-    earliestDayKey: null,
-    forwardWeeks: null
+    earliestDayKey: initialEarliestDayKey,
+    forwardWeeks: initialForwardWeeks
   });
   const request = useRef(0);
 
@@ -51,7 +55,7 @@ export function useViewedDay(todayKey: string) {
           loading: false,
           error: ""
         }));
-        return;
+        return true;
       }
       setState((current) => ({ ...current, dayKey, loading: true, error: "" }));
       try {
@@ -60,14 +64,14 @@ export function useViewedDay(todayKey: string) {
           { cache: "no-store" }
         );
         const body = response.ok ? await response.json() : null;
-        if (ticket !== request.current) return;
+        if (ticket !== request.current) return false;
         if (!response.ok || !isViewedDayPayload(body)) {
           setState((current) => ({
             ...current,
             loading: false,
             error: LOAD_FAILURE
           }));
-          return;
+          return false;
         }
         setState({
           dayKey: body.dateKey,
@@ -78,13 +82,15 @@ export function useViewedDay(todayKey: string) {
           earliestDayKey: body.earliestDayKey,
           forwardWeeks: body.forwardWeeks
         });
+        return true;
       } catch {
-        if (ticket !== request.current) return;
+        if (ticket !== request.current) return false;
         setState((current) => ({
           ...current,
           loading: false,
           error: LOAD_FAILURE
         }));
+        return false;
       }
     },
     [todayKey]
@@ -101,6 +107,14 @@ export function useViewedDay(todayKey: string) {
       error: ""
     }));
   }, [todayKey]);
+
+  useEffect(() => {
+    setState((current) => ({
+      ...current,
+      earliestDayKey: initialEarliestDayKey,
+      forwardWeeks: initialForwardWeeks
+    }));
+  }, [initialEarliestDayKey, initialForwardWeeks]);
 
   // The local day rolling over makes the viewed day a different kind of day,
   // so the only honest thing to show is the new today.

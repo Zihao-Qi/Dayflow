@@ -8,11 +8,8 @@ import {
   useState
 } from "react";
 import {
-  BookOpen,
   CalendarDays,
   Check,
-  ChevronLeft,
-  ChevronRight,
   ChevronDown,
   ChevronUp,
   Circle,
@@ -28,7 +25,6 @@ import {
   Menu,
   NotebookPen,
   Pause,
-  Pencil,
   Play,
   Plus,
   RefreshCw,
@@ -39,14 +35,24 @@ import {
 } from "lucide-react";
 import { CommandPalette } from "@/components/command-palette";
 import { DataManagementDialog } from "@/components/data-management-dialog";
+import { DayPage } from "@/components/day-workspace";
+import { safeTimeBlockDurationMinutes } from "@/components/day-workspace-helpers";
+import {
+  formatLongDate,
+  formatLongLocalDateKey,
+  formatMinutes
+} from "@/components/dashboard-formatters";
 import { ProjectsWorkspace } from "@/components/projects-workspace";
+import { ReviewPage } from "@/components/review-workspace";
 import { FocusDraft, FocusRail } from "@/components/focus-timer";
 import { useFocusSession } from "@/components/focus-session-provider";
 import { SaveStateChip, useSaveState } from "@/components/save-state";
-import { useReviewHistory } from "@/components/use-review-history";
-import type { PastReviewRecord } from "@/lib/review-records";
+import {
+  MiniFocusRing,
+  PageHeader,
+  SegmentedControl
+} from "@/components/workspace-ui";
 import { useViewedDay } from "@/components/use-viewed-day";
-import type { ViewedDayKind } from "@/lib/day-records";
 import {
   useJournalEvidenceHistory,
   type JournalHistoryResult,
@@ -65,7 +71,6 @@ import {
   useLayoutMode
 } from "@/components/use-layout-mode";
 import {
-  focusElapsedSeconds,
   focusRemainingSeconds,
   formatFocusClock
 } from "@/lib/focus-domain";
@@ -91,27 +96,18 @@ import {
   ACTIVITY_CATEGORY_MAX_LENGTH,
   DEFAULT_ACTIVITY_CATEGORY
 } from "@/lib/activity-categories";
-import {
-  formatInvestedMinutes,
-  ProjectSummary
-} from "@/lib/project-domain";
+import { ProjectSummary } from "@/lib/project-domain";
 import {
   resolvePalette,
   type PaletteItem
 } from "@/lib/command-palette";
-import {
-  REVIEW_INTENTION_MAX_LENGTH,
-  REVIEW_NARRATIVE_MAX_LENGTH
-} from "@/lib/review-domain";
 import {
   isTimeBlockRecord,
   minutesToTimeBlockTime,
   TIME_BLOCK_LAST_MINUTE,
   TIME_BLOCK_SLOT_INTERVAL_MINUTES,
   type TimeBlockRecord,
-  type TimeBlockTaskSummary,
-  timeBlockDurationMinutes,
-  timeBlockTimeToMinutes
+  type TimeBlockTaskSummary
 } from "@/lib/time-blocks";
 import type { QueuePlacement } from "@/lib/focus-queue";
 
@@ -269,6 +265,8 @@ type ReviewSummary = {
 type Bootstrap = {
   today: string;
   todayKey: string;
+  earliestDayKey: string;
+  dayViewForwardWeeks: number;
   workspaceEmpty: boolean;
   tasks: Task[];
   paletteTasks: PaletteTaskRecord[];
@@ -285,9 +283,6 @@ type Bootstrap = {
   reviewSummary: ReviewSummary;
 };
 
-const TIMELINE_BASE_HOUR_HEIGHT_PX = 52;
-const TIMELINE_DESKTOP_TARGET_HEIGHT_PX = 24;
-const TIMELINE_TOUCH_TARGET_HEIGHT_PX = 44;
 const emptyNoteCaptureDraft: NoteCaptureDraft = {
   content: "",
   tags: "",
@@ -330,15 +325,6 @@ function diariesEqual(left: Diary, right: Diary) {
   );
 }
 
-function reviewsEqual(left: Review, right: Review) {
-  return (
-    left.periodStart === right.periodStart &&
-    left.periodEnd === right.periodEnd &&
-    left.narrative === right.narrative &&
-    left.nextPeriodIntention === right.nextPeriodIntention
-  );
-}
-
 function stringArraysEqual(left: string[], right: string[]) {
   return (
     left.length === right.length &&
@@ -364,20 +350,6 @@ function mergeJournalRecords<T extends { id: string; createdAt: string }>(
     (left, right) =>
       Date.parse(right.createdAt) - Date.parse(left.createdAt) ||
       right.id.localeCompare(left.id)
-  );
-}
-
-function normalizeReview(review: Review): Review {
-  return {
-    ...review,
-    narrative: review.narrative.trim(),
-    nextPeriodIntention: review.nextPeriodIntention.trim()
-  };
-}
-
-function hasReviewContent(review: Review) {
-  return Boolean(
-    review.narrative.trim() || review.nextPeriodIntention.trim()
   );
 }
 
@@ -797,7 +769,11 @@ export function Dashboard() {
     (sum, task) => sum + task.estimateMinutes,
     0
   );
-  const viewedDay = useViewedDay(data?.todayKey ?? "");
+  const viewedDay = useViewedDay(
+    data?.todayKey ?? "",
+    data?.earliestDayKey ?? null,
+    data?.dayViewForwardWeeks ?? null
+  );
   const onDay = screen.startsWith("day-");
 
   // Leaving Log resets the day: one that persists across a detour through
@@ -1927,7 +1903,10 @@ export function Dashboard() {
     };
   }
 
-  function openTimeBlockEditor(task: Task | null = null) {
+  function openTimeBlockEditor(
+    date: string,
+    task: Task | null = null
+  ) {
     if (!data) return;
     const durationMinutes = suggestedTaskBlockDuration(task);
     const slot = defaultTimeBlockTimes(durationMinutes);
@@ -1935,7 +1914,7 @@ export function Dashboard() {
     setTimeBlockErrorField(null);
     setTimeBlockEditor({
       id: null,
-      date: data.todayKey,
+      date,
       originalTask: task
         ? {
             id: task.id,
@@ -1982,7 +1961,7 @@ export function Dashboard() {
     setTimeBlockEditor((current) => {
       if (!current) return current;
       const task =
-        todayTasks.find((item) => item.id === taskId) ??
+        timeBlockTaskCandidates.find((item) => item.id === taskId) ??
         (current.linkedTask?.id === taskId
           ? current.linkedTask
           : current.originalTask?.id === taskId
@@ -2089,7 +2068,11 @@ export function Dashboard() {
         creating ? "Time block added." : "Time block updated."
       );
       const refreshed = await refreshAfterConfirmedMutation();
-      if (!refreshed) {
+      const viewedDayRefreshed =
+        payload.date === data.todayKey
+          ? true
+          : await viewedDay.setDay(payload.date);
+      if (!refreshed || !viewedDayRefreshed) {
         setTimeBlockEditor((current) =>
           current
             ? {
@@ -2176,8 +2159,14 @@ export function Dashboard() {
     );
   }
 
+  const timeBlockTaskCandidates =
+    timeBlockEditor &&
+    !dayIsToday &&
+    timeBlockEditor.date === viewedDay.dayKey
+      ? dayTasks
+      : openTodayTasks;
   const timeBlockDialogTasks = mergeTimeBlockTaskOptions(
-    openTodayTasks,
+    timeBlockTaskCandidates,
     timeBlockEditor
   );
   const isToday = screen === "today";
@@ -2344,7 +2333,9 @@ export function Dashboard() {
             dayKey={viewedDay.dayKey}
             dayKind={viewedDay.kind}
             earliestDayKey={viewedDay.earliestDayKey}
-            forwardWeeks={viewedDay.forwardWeeks ?? 8}
+            forwardWeeks={
+              viewedDay.forwardWeeks ?? data.dayViewForwardWeeks
+            }
             dayLoading={viewedDay.loading}
             dayError={viewedDay.error}
             onChangeDay={(next) => {
@@ -3476,640 +3467,6 @@ function FirstRunPage({
   );
 }
 
-function DayPage({
-  view,
-  today,
-  todayKey,
-  dayKey,
-  dayKind,
-  earliestDayKey,
-  forwardWeeks,
-  dayLoading,
-  dayError,
-  onChangeDay,
-  onGoToToday,
-  tasks,
-  activities,
-  timeBlocks,
-  projects,
-  blockedMinutes,
-  recordedMinutes,
-  noteCount,
-  activeFocus,
-  focusNow,
-  focusBusy,
-  onViewChange,
-  onStartFocus,
-  onQueueTask,
-  onFocusTransition,
-  onOpenPalette,
-  onCreateTimeBlock,
-  onEditTimeBlock,
-  onEditActivity
-}: {
-  view: DayView;
-  today: string;
-  todayKey: string;
-  dayKey: string;
-  dayKind: ViewedDayKind;
-  earliestDayKey: string | null;
-  forwardWeeks: number;
-  dayLoading: boolean;
-  dayError: string;
-  onChangeDay: (dayKey: string) => void;
-  onGoToToday: () => void;
-  tasks: Task[];
-  activities: ActivityEntry[];
-  timeBlocks: TimeBlock[];
-  projects: Map<string, ProjectSummary>;
-  blockedMinutes: number;
-  recordedMinutes: number;
-  noteCount: number;
-  activeFocus: ReturnType<typeof useFocusSession>["active"];
-  focusNow: number;
-  focusBusy: boolean;
-  onViewChange: (view: DayView) => void;
-  onStartFocus: (target: FocusTarget) => void;
-  onQueueTask: (task: Task, placement: QueuePlacement) => Promise<boolean>;
-  onFocusTransition: ReturnType<typeof useFocusSession>["transition"];
-  onOpenPalette: () => void;
-  onCreateTimeBlock: (task?: Task | null) => void;
-  onEditTimeBlock: (block: TimeBlock) => void;
-  onEditActivity: (activity: ActivityEntry) => void;
-}) {
-  const isToday = dayKind === "today";
-  const isFuture = dayKind === "future";
-
-  return (
-    <div className="day-page log-page page-stack">
-      <PageHeader
-        eyebrow={
-          isToday
-            ? formatLongDate(today)
-            : `${isFuture ? "Planning" : "Looking back"} · ${formatLongLocalDateKey(dayKey)}`
-        }
-        title="Log"
-        actions={
-          <SegmentedControl
-            value={view}
-            options={[
-              ["stream", "Stream"],
-              ["timeline", "Timeline"]
-            ]}
-            onChange={onViewChange}
-          />
-        }
-      />
-
-      <DayPicker
-        dayKey={dayKey}
-        todayKey={todayKey}
-        earliestDayKey={earliestDayKey}
-        forwardWeeks={forwardWeeks}
-        loading={dayLoading}
-        onChangeDay={onChangeDay}
-        onGoToToday={onGoToToday}
-      />
-
-      {dayError && (
-        <p className="day-error" role="alert">
-          {dayError}
-        </p>
-      )}
-
-      {isFuture ? (
-        <div className="log-totals" aria-label="Planned totals">
-          <strong>{formatMinutes(blockedMinutes)} planned</strong>
-          <span>
-            {timeBlocks.length} {timeBlocks.length === 1 ? "block" : "blocks"} ·{" "}
-            {tasks.length} {tasks.length === 1 ? "task" : "tasks"} scheduled
-          </span>
-          <small>nothing recorded yet — this day has not happened</small>
-        </div>
-      ) : (
-        <div
-          className="log-totals"
-          aria-label={isToday ? "Today’s log totals" : "Log totals for this day"}
-        >
-          <span>{formatMinutes(blockedMinutes)} blocked</span>
-          <strong>{formatMinutes(recordedMinutes)} recorded</strong>
-          <span>
-            {activities.length} {activities.length === 1 ? "session" : "sessions"}
-            {isToday ? ` · ${noteCount} ${noteCount === 1 ? "note" : "notes"}` : ""}
-          </span>
-          <small>{isToday ? "so far today" : "on this day"}</small>
-        </div>
-      )}
-      {view === "stream" && (
-        <DayStream
-          tasks={tasks}
-          activities={activities}
-          projects={projects}
-          activeFocus={activeFocus}
-          focusNow={focusNow}
-          focusBusy={focusBusy}
-          onStartFocus={onStartFocus}
-          onQueueTask={onQueueTask}
-          onFocusTransition={onFocusTransition}
-          onOpenPalette={onOpenPalette}
-          onEditActivity={isFuture ? undefined : onEditActivity}
-        />
-      )}
-      {view === "timeline" && (
-        <DayTimeline
-          todayKey={dayKey}
-          blocks={timeBlocks}
-          tasks={tasks}
-          activities={activities}
-          activeFocus={isToday ? activeFocus : null}
-          focusNow={focusNow}
-          onCreateBlock={dayKind === "past" ? undefined : onCreateTimeBlock}
-          onEditBlock={onEditTimeBlock}
-        />
-      )}
-    </div>
-  );
-}
-
-function shiftDayKey(dayKey: string, days: number) {
-  const [year, month, day] = dayKey.split("-").map(Number);
-  const shifted = new Date(year, month - 1, day + days);
-  return `${shifted.getFullYear()}-${String(shifted.getMonth() + 1).padStart(2, "0")}-${String(
-    shifted.getDate()
-  ).padStart(2, "0")}`;
-}
-
-function DayPicker({
-  dayKey,
-  todayKey,
-  earliestDayKey,
-  forwardWeeks,
-  loading,
-  onChangeDay,
-  onGoToToday
-}: {
-  dayKey: string;
-  todayKey: string;
-  earliestDayKey: string | null;
-  forwardWeeks: number;
-  loading: boolean;
-  onChangeDay: (dayKey: string) => void;
-  onGoToToday: () => void;
-}) {
-  const horizonKey = shiftDayKey(todayKey, forwardWeeks * 7);
-  // There is nothing to read before the earliest record, and nothing to plan
-  // past the horizon. Both ends stop rather than silently landing elsewhere.
-  const atStart = Boolean(earliestDayKey) && dayKey <= (earliestDayKey ?? "");
-  const atEnd = dayKey >= horizonKey;
-
-  return (
-    <div className="day-picker" role="group" aria-label="Choose a day">
-      <button
-        type="button"
-        className="secondary-button"
-        aria-label="Previous day"
-        disabled={loading || atStart}
-        onClick={() => onChangeDay(shiftDayKey(dayKey, -1))}
-      >
-        <ChevronLeft size={15} />
-      </button>
-      <label className="day-picker-date">
-        <input
-          type="date"
-          aria-label="Day shown in Log"
-          value={dayKey}
-          max={horizonKey}
-          min={earliestDayKey ?? undefined}
-          disabled={loading}
-          onChange={(event) => {
-            if (event.target.value) onChangeDay(event.target.value);
-          }}
-        />
-      </label>
-      <button
-        type="button"
-        className="secondary-button"
-        aria-label="Next day"
-        disabled={loading || atEnd}
-        onClick={() => onChangeDay(shiftDayKey(dayKey, 1))}
-      >
-        <ChevronRight size={15} />
-      </button>
-      {dayKey !== todayKey && (
-        <button
-          type="button"
-          className="text-button"
-          disabled={loading}
-          onClick={onGoToToday}
-        >
-          Back to today
-        </button>
-      )}
-      {loading && (
-        <small role="status" className="day-picker-status">
-          Loading…
-        </small>
-      )}
-    </div>
-  );
-}
-
-function DayStream({
-  tasks,
-  activities,
-  projects,
-  activeFocus,
-  focusNow,
-  focusBusy,
-  onStartFocus,
-  onQueueTask,
-  onFocusTransition,
-  onOpenPalette,
-  onEditActivity
-}: {
-  tasks: Task[];
-  activities: ActivityEntry[];
-  projects: Map<string, ProjectSummary>;
-  activeFocus: ReturnType<typeof useFocusSession>["active"];
-  focusNow: number;
-  focusBusy: boolean;
-  onStartFocus: (target: FocusTarget) => void;
-  onQueueTask: (task: Task, placement: QueuePlacement) => Promise<boolean>;
-  onFocusTransition: ReturnType<typeof useFocusSession>["transition"];
-  onOpenPalette: () => void;
-  onEditActivity?: (activity: ActivityEntry) => void;
-}) {
-  let cursor = new Date();
-  const idleNext = !activeFocus ? tasks[0] ?? null : null;
-  const plannedTasks = activeFocus
-    ? tasks.filter((task) => task.id !== activeFocus.taskId)
-    : tasks.slice(1);
-  return (
-    <section className="day-view">
-      <p className="view-explainer">
-        Above the marker is what happened. Below it is what is still planned — that
-        part you can still change.
-      </p>
-      <div className="day-stream">
-        {[...activities].reverse().map((activity) => {
-          const projectId =
-            activity.attributedProjectId ?? activity.projectId;
-          return (
-            <article className="stream-row complete" key={activity.id}>
-              <time>{formatActivityTime(activity.startedAt)}</time>
-              <div>
-                <i />
-                <div className="stream-activity-heading">
-                  <strong>
-                    {activity.durationMinutes}m · {activity.category}
-                  </strong>
-                  {onEditActivity &&
-                    activity.origin === "MANUAL" &&
-                    activity.focusSessionId === null && (
-                      <button
-                        aria-label={`Edit activity: ${activity.note}`}
-                        className="stream-activity-edit"
-                        onClick={() => onEditActivity?.(activity)}
-                        type="button"
-                      >
-                        <Pencil size={13} />
-                        Edit
-                      </button>
-                    )}
-                </div>
-                <p>{activity.note}</p>
-                {projectId && projects.get(projectId) && (
-                  <span>{projects.get(projectId)?.name}</span>
-                )}
-              </div>
-            </article>
-          );
-        })}
-        {activeFocus && (
-          <article className="stream-row now">
-            <time>now</time>
-            <div>
-              <i />
-              <section className="stream-now-card">
-                <MiniFocusRing session={activeFocus} now={focusNow} />
-                <span>
-                  <strong>{activeFocus.label}</strong>
-                  <small>{formatFocusClock(focusRemainingSeconds(activeFocus, focusNow))} left</small>
-                </span>
-                <button
-                  className="secondary-button"
-                  disabled={focusBusy}
-                  onClick={() =>
-                    void onFocusTransition(
-                      activeFocus.status === "PAUSED" ? "resume" : "pause"
-                    )
-                  }
-                >
-                  {activeFocus.status === "PAUSED" ? "Resume" : "Pause"}
-                </button>
-                <button
-                  className="primary-button"
-                  disabled={focusBusy}
-                  onClick={() => void onFocusTransition("complete")}
-                >
-                  Finish
-                </button>
-              </section>
-            </div>
-          </article>
-        )}
-        {idleNext && (
-          <article className="stream-row now idle-now">
-            <time>now</time>
-            <div>
-              <i />
-              <section className="stream-task-card">
-                <span>
-                  <strong>Nothing running · {tasks.length} tasks left</strong>
-                  <small>{idleNext.title} · {idleNext.estimateMinutes}m</small>
-                </span>
-                <button
-                  className="secondary-button"
-                  onClick={() =>
-                    onStartFocus({
-                      taskId: idleNext.id,
-                      projectId: idleNext.projectId ?? undefined,
-                      label: idleNext.title,
-                      plannedMinutes: idleNext.estimateMinutes
-                    })
-                  }
-                >
-                  Start this block
-                </button>
-              </section>
-            </div>
-          </article>
-        )}
-        {plannedTasks.slice(0, 4).map((task, index) => {
-          if (index > 0) {
-            cursor = new Date(
-              cursor.getTime() + plannedTasks[index - 1].estimateMinutes * 60000
-            );
-          }
-          return (
-            <article className="stream-row planned" key={task.id}>
-              <time>{index === 0 ? "still planned" : `≈ ${formatClockTime(cursor)}`}</time>
-              <div>
-                <i />
-                <section className="stream-task-card">
-                  <span>
-                    <strong>{task.title}</strong>
-                    <small>
-                      {task.estimateMinutes}m
-                      {task.projectId && projects.get(task.projectId)
-                        ? ` · ${projects.get(task.projectId)?.name}`
-                        : ""}
-                    </small>
-                  </span>
-                  <button
-                    className={
-                      activeFocus
-                        ? "plain-button queue-next-button"
-                        : index === 0
-                          ? "secondary-button"
-                          : "plain-button"
-                    }
-                    disabled={Boolean(activeFocus && task.focusQueuePosition !== null)}
-                    onClick={() =>
-                      activeFocus
-                        ? void onQueueTask(task, index === 0 ? "next" : "end")
-                        : onStartFocus({
-                            taskId: task.id,
-                            projectId: task.projectId ?? undefined,
-                            label: task.title,
-                            plannedMinutes: task.estimateMinutes
-                          })
-                    }
-                  >
-                    {activeFocus && task.focusQueuePosition === null && (
-                      <Plus size={12} />
-                    )}
-                    {activeFocus
-                      ? task.focusQueuePosition !== null
-                        ? "Queued"
-                        : index === 0
-                          ? "Queue next"
-                          : "Queue"
-                      : index === 0
-                        ? "Focus next"
-                        : "Focus"}
-                  </button>
-                </section>
-              </div>
-            </article>
-          );
-        })}
-        <article className="stream-row planned add">
-          <time />
-          <div>
-            <i />
-            <button onClick={onOpenPalette}>
-              Add to the day<span className="desktop-shortcut"> · ⌘K</span>
-            </button>
-          </div>
-        </article>
-      </div>
-    </section>
-  );
-}
-
-function DayTimeline({
-  todayKey,
-  blocks,
-  tasks,
-  activities,
-  activeFocus,
-  focusNow,
-  onCreateBlock,
-  onEditBlock
-}: {
-  todayKey: string;
-  blocks: TimeBlock[];
-  tasks: Task[];
-  activities: ActivityEntry[];
-  activeFocus: ReturnType<typeof useFocusSession>["active"];
-  focusNow: number;
-  onCreateBlock?: (task?: Task | null) => void;
-  onEditBlock: (block: TimeBlock) => void;
-}) {
-  const todayBlocks = blocks
-    .filter((block) => block.date === todayKey)
-    .sort(
-      (left, right) =>
-        left.startTime.localeCompare(right.startTime) ||
-        left.endTime.localeCompare(right.endTime) ||
-        left.createdAt.localeCompare(right.createdAt) ||
-        left.id.localeCompare(right.id)
-    );
-  const bounds = timelineBounds(todayBlocks, activities, activeFocus, focusNow);
-  const timelineScales = timelineHourHeights(todayBlocks);
-  const timelineStyle = {
-    "--timeline-desktop-hour-height": `${timelineScales.desktop}px`,
-    "--timeline-touch-hour-height": `${timelineScales.touch}px`,
-    "--timeline-desktop-height": `${
-      bounds.hourCount * timelineScales.desktop
-    }px`,
-    "--timeline-touch-height": `${
-      bounds.hourCount * timelineScales.touch
-    }px`
-  } as CSSProperties;
-  return (
-    <section className="day-view">
-      <p className="view-explainer">
-        Planned time and focused time share one grid so gaps and overages stay honest.
-      </p>
-      <div className="timeline-planning-toolbar">
-        <div>
-          <span className="eyebrow">Manual plan</span>
-          <strong>
-            {todayBlocks.length
-              ? `${todayBlocks.length} ${
-                  todayBlocks.length === 1 ? "block" : "blocks"
-                } · ${formatMinutes(
-                  todayBlocks.reduce(
-                    (sum, block) =>
-                      sum + safeTimeBlockDurationMinutes(block),
-                    0
-                  )
-                )}`
-              : "No time blocked yet"}
-          </strong>
-        </div>
-        {onCreateBlock && (
-        <button
-          className="secondary-button"
-          type="button"
-          onClick={() => onCreateBlock(null)}
-        >
-          <Plus size={14} />
-          Add time block
-        </button>
-        )}
-      </div>
-      {onCreateBlock && tasks.length > 0 && (
-        <div className="timeline-task-shortcuts" aria-label="Block a task">
-          <span>Block a task</span>
-          <div>
-            {tasks.map((task) => (
-              <button
-                aria-label={`Block time for ${task.title}`}
-                key={task.id}
-                onClick={() => onCreateBlock(task)}
-                type="button"
-              >
-                <span>{task.title}</span>
-                <small>{task.estimateMinutes || 30}m</small>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-      <div className="day-timeline-scroll">
-        <div className="day-timeline-panel" style={timelineStyle}>
-          <div className="timeline-corner" />
-          <span className="timeline-column-label">Planned</span>
-          <span className="timeline-column-label focused">Focused</span>
-          <div className="timeline-hours">
-            {Array.from({ length: bounds.hourCount }, (_, index) => (
-              <span key={index}>{formatHour(index + bounds.startHour)}</span>
-            ))}
-          </div>
-          <div className="timeline-column">
-            {todayBlocks.map((block) => {
-              const interval = safeTimeBlockInterval(block);
-              if (!interval) return null;
-              return (
-                <button
-                  aria-label={`Time block: ${block.title}, ${block.startTime} to ${block.endTime}`}
-                  className="planned-block"
-                  key={block.id}
-                  onClick={() => onEditBlock(block)}
-                  style={timelinePosition(
-                    interval.startMinutes,
-                    interval.endMinutes - interval.startMinutes,
-                    bounds.startHour,
-                    bounds.hourCount
-                  )}
-                  type="button"
-                >
-                  <strong>{block.title}</strong>
-                  <small>
-                    {block.startTime}–{block.endTime}
-                  </small>
-                </button>
-              );
-            })}
-            {!todayBlocks.length && onCreateBlock && (
-              <button
-                className="timeline-empty"
-                onClick={() => onCreateBlock(null)}
-                style={timelinePosition(
-                  Math.max(9, bounds.startHour) * 60,
-                  60,
-                  bounds.startHour,
-                  bounds.hourCount
-                )}
-                type="button"
-              >
-                Nothing planned · add a block
-              </button>
-            )}
-            {!todayBlocks.length && !onCreateBlock && (
-              <p className="timeline-empty-note">Nothing was planned for this day.</p>
-            )}
-          </div>
-          <div className="timeline-column actual">
-            {activities.map((activity) => {
-              const date = new Date(activity.startedAt);
-              const start = date.getHours() * 60 + date.getMinutes();
-              return (
-                <article
-                  className="focused-block"
-                  key={activity.id}
-                  style={timelinePosition(
-                    start,
-                    activity.durationMinutes,
-                    bounds.startHour,
-                    bounds.hourCount
-                  )}
-                >
-                  <strong>{activity.note}</strong>
-                  <small>{activity.durationMinutes}m</small>
-                </article>
-              );
-            })}
-            {activeFocus && (
-              <article
-                className="focused-block running"
-                style={timelinePosition(
-                  new Date(activeFocus.startedAt).getHours() * 60 +
-                    new Date(activeFocus.startedAt).getMinutes(),
-                  Math.max(
-                    20,
-                    Math.floor(
-                      focusElapsedSeconds(activeFocus, focusNow) / 60
-                    )
-                  ),
-                  bounds.startHour,
-                  bounds.hourCount
-                )}
-              >
-                <strong>{activeFocus.label}</strong>
-                <small>running</small>
-              </article>
-            )}
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
 function DayMatrix({
   tasks,
   today,
@@ -4949,560 +4306,6 @@ function JournalPage({
   );
 }
 
-function ReviewPage({
-  projects,
-  review,
-  summary,
-  onSaveReview,
-  onSaveError,
-  onSaveRecovered,
-  onOpenProject
-}: {
-  projects: ProjectSummary[];
-  review: Review;
-  summary: ReviewSummary;
-  onSaveReview: (review: Review) => Promise<boolean>;
-  onSaveError: () => void;
-  onSaveRecovered: () => void;
-  onOpenProject: (id: string) => void;
-}) {
-  const history = useReviewHistory();
-  const past = history.selected;
-  const activeSummary: ReviewSummary = past ? past.reviewSummary : summary;
-  const activeProjects: ReviewMovedProject[] = past ? past.projects : projects;
-  const activePeriodEnd = past ? past.review.periodEnd : review.periodEnd;
-
-  return (
-    <div className="review-page page-stack">
-      <PageHeader
-        eyebrow={`${
-          past ? "Past review \u00b7 seven days ending" : "Seven days ending"
-        } ${formatReviewPeriodEnd(activePeriodEnd)}`}
-        title="Review"
-        actions={
-          <button
-            type="button"
-            className="secondary-button"
-            aria-expanded={history.open}
-            onClick={history.open ? history.closeHistory : history.openHistory}
-          >
-            <BookOpen size={14} />
-            {history.open ? "Hide earlier reviews" : "Earlier reviews"}
-          </button>
-        }
-      />
-
-      {history.open && (
-        <ReviewHistoryPanel history={history} />
-      )}
-
-      <ReviewEvidenceSections
-        summary={activeSummary}
-        projects={activeProjects}
-        onOpenProject={onOpenProject}
-      />
-
-      {past ? (
-        <PastReviewCard
-          review={past.review}
-          onReturnToCurrent={history.clearSelection}
-        />
-      ) : (
-        <CurrentReviewEditor
-          key={`${review.periodStart}:${review.periodEnd}`}
-          review={review}
-          onSaveReview={onSaveReview}
-          onSaveError={onSaveError}
-          onSaveRecovered={onSaveRecovered}
-        />
-      )}
-    </div>
-  );
-}
-
-type ReviewMovedProject = {
-  id: string;
-  name: string;
-  taskCount: number;
-  completedTaskCount: number;
-  progressPercent: number | null;
-  reviewPeriodInvestedMinutes: number;
-  movedDuringReviewPeriod: boolean;
-};
-
-function ReviewEvidenceSections({
-  summary,
-  projects,
-  onOpenProject
-}: {
-  summary: ReviewSummary;
-  projects: ReviewMovedProject[];
-  onOpenProject: (id: string) => void;
-}) {
-  const moved = projects.filter(
-    (project) => project.movedDuringReviewPeriod
-  );
-  const categories = summary.categoryMinutes.filter(
-    (item) => item.minutes > 0
-  );
-  const diaryAverageNote =
-    summary.diaryDayCount === 0
-      ? "no saved Diary days"
-      : `across ${summary.diaryDayCount} saved Diary ${
-          summary.diaryDayCount === 1 ? "day" : "days"
-        }`;
-
-  return (
-    <>
-      <dl className="review-metrics" aria-label="Review period totals">
-        <ReviewMetric
-          label="Recorded"
-          value={formatMinutes(summary.recordedMinutes)}
-          note="Activity time"
-        />
-        <ReviewMetric
-          label="Focused"
-          value={formatMinutes(summary.focusedMinutes)}
-          note="Focus-origin Activity"
-        />
-        <ReviewMetric
-          label="Tasks done"
-          value={String(summary.completedTaskCount)}
-          note={
-            summary.completedTaskCount === 1
-              ? "task completed"
-              : "tasks completed"
-          }
-        />
-        <ReviewMetric
-          label="Diary days"
-          value={`${summary.diaryDayCount}/7`}
-          note="intentionally saved"
-        />
-      </dl>
-
-      <div className="review-evidence-grid">
-        <section
-          className="panel review-evidence-panel"
-          aria-labelledby="review-evidence-heading"
-        >
-          <div className="review-panel-heading">
-            <div>
-              <span className="eyebrow">Supporting evidence</span>
-              <h2 id="review-evidence-heading">Evidence captured</h2>
-            </div>
-          </div>
-          <dl className="review-evidence-counts">
-            <ReviewMetric
-              label="Notes"
-              value={String(summary.noteCount)}
-              note={summary.noteCount === 1 ? "note captured" : "notes captured"}
-            />
-            <ReviewMetric
-              label="References"
-              value={String(summary.materialCount)}
-              note={
-                summary.materialCount === 1
-                  ? "reference saved"
-                  : "references saved"
-              }
-            />
-            <ReviewMetric
-              label="Projects"
-              value={String(summary.movedProjectCount)}
-              note="moved forward"
-            />
-            <ReviewMetric
-              label="Average mood"
-              value={formatDiaryAverage(summary.averageMood)}
-              note={diaryAverageNote}
-            />
-            <ReviewMetric
-              label="Average energy"
-              value={formatDiaryAverage(summary.averageEnergy)}
-              note={diaryAverageNote}
-            />
-          </dl>
-          <p className="review-missing-evidence-note">
-            Mood and energy average only saved Diary days. Missing days stay
-            missing.
-          </p>
-        </section>
-
-        <section
-          className="panel review-category-panel"
-          aria-labelledby="review-category-heading"
-        >
-          <div className="review-panel-heading">
-            <div>
-              <span className="eyebrow">Activity distribution</span>
-              <h2 id="review-category-heading">Where the time went</h2>
-            </div>
-            <strong>{formatMinutes(summary.recordedMinutes)}</strong>
-          </div>
-          {categories.length ? (
-            <ul
-              className="review-category-list"
-              aria-label="Activity time by category"
-            >
-              {categories.map((item) => {
-                const percentage = Math.round(
-                  (item.minutes / Math.max(summary.recordedMinutes, 1)) * 100
-                );
-                return (
-                  <li key={item.category}>
-                    <div className="review-category-copy">
-                      <span>{item.category}</span>
-                      <strong>{formatMinutes(item.minutes)}</strong>
-                      <small>{percentage}%</small>
-                    </div>
-                    <div className="review-category-track" aria-hidden="true">
-                      <i
-                        style={{
-                          width: `${Math.max(0, Math.min(percentage, 100))}%`
-                        }}
-                      />
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          ) : (
-            <p className="review-empty-copy">
-              No Activity time was recorded in this review period.
-            </p>
-          )}
-        </section>
-      </div>
-
-      {summary.pendingEnrichmentSessions > 0 && (
-        <p className="review-pending-note" role="status">
-          <Check size={14} />
-          <span>
-            <strong>
-              {formatMinutes(summary.pendingEnrichmentMinutes)} is already
-              counted.
-            </strong>{" "}
-            {summary.pendingEnrichmentSessions === 1
-              ? "This session"
-              : "These sessions"}{" "}
-            can receive optional notes and categories later.
-          </span>
-        </p>
-      )}
-
-      <section
-        className="panel moved-projects"
-        aria-labelledby="review-projects-heading"
-      >
-        <div className="review-panel-heading">
-          <div>
-            <span className="eyebrow">Outcomes in motion</span>
-            <h2 id="review-projects-heading">Projects moved forward</h2>
-          </div>
-          <strong>{summary.movedProjectCount}</strong>
-        </div>
-        <div className="review-project-list">
-          {moved.map((project) => (
-            <button
-              key={project.id}
-              type="button"
-              onClick={() => onOpenProject(project.id)}
-            >
-              <strong>{project.name}</strong>
-              <div className="meter" aria-hidden="true">
-                <i style={{ width: `${project.progressPercent ?? 0}%` }} />
-              </div>
-              <small>
-                {project.completedTaskCount}/{project.taskCount} tasks ·{" "}
-                {formatInvestedMinutes(
-                  project.reviewPeriodInvestedMinutes
-                )}{" "}
-                invested this review period
-              </small>
-            </button>
-          ))}
-          {!moved.length && (
-            <p>No project movement was recorded in this review period.</p>
-          )}
-        </div>
-      </section>
-    </>
-  );
-}
-
-function CurrentReviewEditor({
-  review,
-  onSaveReview,
-  onSaveError,
-  onSaveRecovered
-}: {
-  review: Review;
-  onSaveReview: (review: Review) => Promise<boolean>;
-  onSaveError: () => void;
-  onSaveRecovered: () => void;
-}) {
-  const reviewSave = useSaveState<Review>({
-    value: review,
-    save: onSaveReview,
-    normalize: normalizeReview,
-    isEqual: reviewsEqual,
-    isValid: hasReviewContent,
-    onFinalError: onSaveError,
-    onRecovered: onSaveRecovered
-  });
-  const hasDraft = hasReviewContent(reviewSave.draft);
-
-  return (
-      <section
-        className="panel review-editor-card"
-        aria-labelledby="review-editor-heading"
-      >
-        <div className="review-editor-heading">
-          <div>
-            <span className="eyebrow">Saved separately from Journal</span>
-            <h2 id="review-editor-heading">Your review</h2>
-          </div>
-          <div
-            className="review-save-state"
-            role="status"
-            aria-live="polite"
-            aria-atomic="true"
-          >
-            <SaveStateChip
-              state={reviewSave.state}
-              onRetry={() => void reviewSave.flush(true)}
-            />
-          </div>
-        </div>
-        <p className="review-editor-intro">
-          Interpret the evidence without changing it. This writing belongs to
-          this exact seven-day period, not today&apos;s Diary.
-        </p>
-        <form
-          className="review-editor-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void reviewSave.flush(true);
-          }}
-        >
-          <div className="review-writing-fields">
-            <label htmlFor="review-narrative">
-              <span>Looking back</span>
-              <strong>What moved forward?</strong>
-              <textarea
-                id="review-narrative"
-                aria-label="What moved forward?"
-                value={reviewSave.draft.narrative}
-                maxLength={REVIEW_NARRATIVE_MAX_LENGTH}
-                aria-describedby="review-narrative-help"
-                onChange={(event) =>
-                  reviewSave.setDraft({
-                    ...reviewSave.draft,
-                    narrative: event.target.value
-                  })
-                }
-                {...reviewSave.inputProps}
-              />
-              <small id="review-narrative-help">
-                A short account grounded in the evidence above ·{" "}
-                {reviewSave.draft.narrative.length.toLocaleString()}/
-                {REVIEW_NARRATIVE_MAX_LENGTH.toLocaleString()}
-              </small>
-            </label>
-            <label htmlFor="review-intention">
-              <span>Looking ahead</span>
-              <strong>What deserves protection next?</strong>
-              <textarea
-                id="review-intention"
-                aria-label="What deserves protection next?"
-                value={reviewSave.draft.nextPeriodIntention}
-                maxLength={REVIEW_INTENTION_MAX_LENGTH}
-                aria-describedby="review-intention-help"
-                onChange={(event) =>
-                  reviewSave.setDraft({
-                    ...reviewSave.draft,
-                    nextPeriodIntention: event.target.value
-                  })
-                }
-                {...reviewSave.inputProps}
-              />
-              <small id="review-intention-help">
-                One intention for the next seven days ·{" "}
-                {reviewSave.draft.nextPeriodIntention.length.toLocaleString()}/
-                {REVIEW_INTENTION_MAX_LENGTH.toLocaleString()}
-              </small>
-            </label>
-          </div>
-          <div className="review-editor-actions">
-            <p>
-              {hasDraft
-                ? "Changes also save after a short pause, on blur, or with ⌘/Ctrl+Enter."
-                : "Write in at least one field to save this Review."}
-            </p>
-            <button
-              type="submit"
-              className="primary-button"
-              disabled={!hasDraft || reviewSave.state === "saving"}
-            >
-              <Save size={14} />
-              {reviewSave.state === "saving" ? "Saving…" : "Save review"}
-            </button>
-          </div>
-        </form>
-      </section>
-  );
-}
-
-function PastReviewCard({
-  review,
-  onReturnToCurrent
-}: {
-  review: PastReviewRecord;
-  onReturnToCurrent: () => void;
-}) {
-  return (
-    <section
-      className="panel review-editor-card review-past-card"
-      aria-labelledby="review-past-heading"
-    >
-      <div className="review-editor-heading">
-        <div>
-          <span className="eyebrow">Saved for this period</span>
-          <h2 id="review-past-heading">Your review</h2>
-        </div>
-        <button
-          type="button"
-          className="secondary-button"
-          onClick={onReturnToCurrent}
-        >
-          Back to this week
-        </button>
-      </div>
-      <p className="review-editor-intro">
-        This review belongs to a period that has already ended, so it is shown
-        as it was written. The evidence above is derived from your records as
-        they exist now.
-      </p>
-      <div className="review-past-writing">
-        <section aria-labelledby="review-past-narrative-heading">
-          <span className="eyebrow">Looking back</span>
-          <h3 id="review-past-narrative-heading">What moved forward?</h3>
-          {review.narrative ? (
-            <p className="review-past-text">{review.narrative}</p>
-          ) : (
-            <p className="review-empty-copy">
-              Nothing was written for this field.
-            </p>
-          )}
-        </section>
-        <section aria-labelledby="review-past-intention-heading">
-          <span className="eyebrow">Looking ahead</span>
-          <h3 id="review-past-intention-heading">
-            What deserves protection next?
-          </h3>
-          {review.nextPeriodIntention ? (
-            <p className="review-past-text">{review.nextPeriodIntention}</p>
-          ) : (
-            <p className="review-empty-copy">
-              Nothing was written for this field.
-            </p>
-          )}
-        </section>
-      </div>
-    </section>
-  );
-}
-
-function ReviewHistoryPanel({
-  history
-}: {
-  history: ReturnType<typeof useReviewHistory>;
-}) {
-  return (
-    <section
-      className="panel review-history-panel"
-      aria-labelledby="review-history-heading"
-    >
-      <div className="review-panel-heading">
-        <div>
-          <span className="eyebrow">Saved reviews</span>
-          <h2 id="review-history-heading">Earlier reviews</h2>
-        </div>
-        {history.totalCount !== null && (
-          <strong>{history.totalCount}</strong>
-        )}
-      </div>
-
-      {history.error ? (
-        <p className="review-history-error" role="alert">
-          <span>{history.error}</span>
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={history.retry}
-          >
-            Try again
-          </button>
-        </p>
-      ) : !history.loaded && history.loading ? (
-        <p className="review-empty-copy" role="status">
-          Loading earlier reviews\u2026
-        </p>
-      ) : history.loaded && !history.items.length ? (
-        <p className="review-empty-copy">
-          No earlier review has been saved yet. A review joins this list once
-          its seven-day period has ended.
-        </p>
-      ) : (
-        <>
-          <ul
-            className="review-history-list"
-            aria-label="Reviews saved for earlier periods"
-          >
-            {history.items.map((item) => {
-              const selected = history.selected?.review.id === item.id;
-              return (
-                <li key={item.id}>
-                  <button
-                    type="button"
-                    aria-current={selected ? "true" : undefined}
-                    onClick={() => void history.select(item.id)}
-                  >
-                    <strong>
-                      Seven days ending {formatReviewPeriodEnd(item.periodEnd)}
-                    </strong>
-                    <small>
-                      {item.narrative ||
-                        item.nextPeriodIntention ||
-                        "No writing saved"}
-                    </small>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-          {history.selectionError && (
-            <p className="review-history-error" role="alert">
-              {history.selectionError}
-            </p>
-          )}
-          {history.nextCursor && (
-            <button
-              type="button"
-              className="secondary-button"
-              disabled={history.loading}
-              onClick={history.loadNext}
-            >
-              {history.loading ? "Loading\u2026" : "Show older reviews"}
-            </button>
-          )}
-        </>
-      )}
-    </section>
-  );
-}
-
 function ActivityDialog({
   mode,
   tasks,
@@ -5717,51 +4520,6 @@ function ActivityDialog({
   );
 }
 
-function PageHeader({
-  eyebrow,
-  title,
-  actions
-}: {
-  eyebrow: string;
-  title: string;
-  actions?: React.ReactNode;
-}) {
-  return (
-    <header className="page-header">
-      <div>
-        <span className="page-eyebrow">{eyebrow}</span>
-        <h1>{title}</h1>
-      </div>
-      {actions}
-    </header>
-  );
-}
-
-function SegmentedControl<T extends string>({
-  value,
-  options,
-  onChange
-}: {
-  value: T;
-  options: Array<[T, string]>;
-  onChange: (value: T) => void;
-}) {
-  return (
-    <div className="segmented-control">
-      {options.map(([id, label]) => (
-        <button
-          key={id}
-          className={value === id ? "active" : ""}
-          onClick={() => onChange(id)}
-          type="button"
-        >
-          {label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
 function ArrangementControl({
   value,
   options,
@@ -5812,27 +4570,6 @@ function ArrangementControl({
           </button>
         ))}
       </div>
-    </div>
-  );
-}
-
-function MiniFocusRing({
-  session,
-  now
-}: {
-  session: NonNullable<ReturnType<typeof useFocusSession>["active"]>;
-  now: number;
-}) {
-  const elapsed = focusElapsedSeconds(session, now);
-  const progress = Math.min(100, (elapsed / (session.plannedMinutes * 60)) * 100);
-  return (
-    <div
-      className="mini-focus-ring"
-      style={{
-        background: `conic-gradient(var(--sage) ${progress}%, #e2e0d5 ${progress}% 100%)`
-      }}
-    >
-      <span>{formatFocusClock(focusRemainingSeconds(session, now))}</span>
     </div>
   );
 }
@@ -6120,129 +4857,6 @@ function HistoryFooter<T>({
   return null;
 }
 
-function ReviewMetric({
-  label,
-  value,
-  note
-}: {
-  label: string;
-  value: string;
-  note: string;
-}) {
-  return (
-    <div>
-      <dt>{label}</dt>
-      <dd>
-        <strong>{value}</strong>
-        <small>{note}</small>
-      </dd>
-    </div>
-  );
-}
-
-function timelineBounds(
-  blocks: TimeBlock[],
-  activities: ActivityEntry[],
-  activeFocus: ReturnType<typeof useFocusSession>["active"],
-  focusNow: number
-) {
-  let earliestMinutes = 8 * 60;
-  let latestMinutes = 18 * 60;
-  for (const block of blocks) {
-    const interval = safeTimeBlockInterval(block);
-    if (!interval) continue;
-    earliestMinutes = Math.min(earliestMinutes, interval.startMinutes);
-    latestMinutes = Math.max(latestMinutes, interval.endMinutes);
-  }
-  for (const activity of activities) {
-    const startedAt = new Date(activity.startedAt);
-    const start = startedAt.getHours() * 60 + startedAt.getMinutes();
-    earliestMinutes = Math.min(earliestMinutes, start);
-    latestMinutes = Math.max(
-      latestMinutes,
-      start + activity.durationMinutes
-    );
-  }
-  if (activeFocus) {
-    const startedAt = new Date(activeFocus.startedAt);
-    const start = startedAt.getHours() * 60 + startedAt.getMinutes();
-    earliestMinutes = Math.min(earliestMinutes, start);
-    latestMinutes = Math.max(
-      latestMinutes,
-      start + Math.max(20, focusElapsedSeconds(activeFocus, focusNow) / 60)
-    );
-  }
-  const startHour = Math.max(
-    0,
-    Math.min(23, Math.floor(earliestMinutes / 60))
-  );
-  const endHour = Math.max(
-    startHour + 1,
-    Math.min(24, Math.ceil(latestMinutes / 60))
-  );
-  return { startHour, endHour, hourCount: endHour - startHour };
-}
-
-function timelinePosition(
-  startMinutes: number,
-  durationMinutes: number,
-  startHour: number,
-  hourCount: number
-) {
-  const timelineMinutes = Math.max(60, hourCount * 60);
-  const top =
-    ((startMinutes - startHour * 60) / timelineMinutes) * 100;
-  const height = (durationMinutes / timelineMinutes) * 100;
-  return { top: `${top}%`, height: `${height}%` };
-}
-
-function timelineHourHeights(blocks: TimeBlock[]) {
-  const shortestBlock = blocks.reduce((shortest, block) => {
-    const duration = safeTimeBlockDurationMinutes(block);
-    return duration > 0 ? Math.min(shortest, duration) : shortest;
-  }, Number.POSITIVE_INFINITY);
-  if (!Number.isFinite(shortestBlock)) {
-    return {
-      desktop: TIMELINE_BASE_HOUR_HEIGHT_PX,
-      touch: TIMELINE_BASE_HOUR_HEIGHT_PX
-    };
-  }
-  return {
-    desktop: Math.max(
-      TIMELINE_BASE_HOUR_HEIGHT_PX,
-      Math.ceil(
-        (TIMELINE_DESKTOP_TARGET_HEIGHT_PX * 60) / shortestBlock
-      )
-    ),
-    touch: Math.max(
-      TIMELINE_BASE_HOUR_HEIGHT_PX,
-      Math.ceil(
-        (TIMELINE_TOUCH_TARGET_HEIGHT_PX * 60) / shortestBlock
-      )
-    )
-  };
-}
-
-function safeTimeBlockInterval(block: TimeBlock) {
-  try {
-    const startMinutes = timeBlockTimeToMinutes(block.startTime);
-    const endMinutes = timeBlockTimeToMinutes(block.endTime);
-    return startMinutes < endMinutes
-      ? { startMinutes, endMinutes }
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function safeTimeBlockDurationMinutes(block: TimeBlock) {
-  try {
-    return timeBlockDurationMinutes(block);
-  } catch {
-    return 0;
-  }
-}
-
 function suggestedTaskBlockDuration(
   task: Pick<Task, "estimateMinutes"> | null
 ) {
@@ -6251,12 +4865,6 @@ function suggestedTaskBlockDuration(
     TIME_BLOCK_LAST_MINUTE,
     Math.max(1, estimate || 30)
   );
-}
-
-function formatHour(hour: number) {
-  const date = new Date();
-  date.setHours(hour, 0, 0, 0);
-  return date.toLocaleTimeString("en-US", { hour: "numeric" });
 }
 
 type MatrixQuadrantId = "do-now" | "schedule" | "quick-wins" | "later";
@@ -6519,41 +5127,11 @@ function mergeTimeBlockTaskOptions(
   return result;
 }
 
-function formatLongDate(value: string) {
-  return new Date(value).toLocaleDateString("en-US", {
-    weekday: "long",
-    month: "long",
-    day: "numeric"
-  });
-}
-
-function formatLongLocalDateKey(value: string) {
-  const [year, month, day] = value.split("-").map(Number);
-  return new Date(year, month - 1, day).toLocaleDateString("en-US", {
-    weekday: "long",
-    month: "long",
-    day: "numeric"
-  });
-}
-
 function formatShortDate(value: string) {
   return new Date(value).toLocaleDateString("en-US", {
     month: "short",
     day: "numeric"
   });
-}
-
-function formatReviewPeriodEnd(periodEnd: string) {
-  const lastMoment = new Date(new Date(periodEnd).getTime() - 1);
-  return lastMoment.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric"
-  });
-}
-
-function formatDiaryAverage(value: number | null) {
-  if (value === null) return "Not recorded";
-  return `${Number.isInteger(value) ? value : value.toFixed(1)}/5`;
 }
 
 function formatBacklogDue(value: string | null, today: string) {
@@ -6565,28 +5143,10 @@ function formatBacklogDue(value: string | null, today: string) {
   return formatShortDate(value);
 }
 
-function formatActivityTime(value: string) {
-  return new Date(value).toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit"
-  });
-}
-
-function formatClockTime(value: Date) {
-  return value.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-}
-
 function formatTimeInput(value: Date) {
   return `${String(value.getHours()).padStart(2, "0")}:${String(
     value.getMinutes()
   ).padStart(2, "0")}`;
-}
-
-function formatMinutes(minutes: number) {
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  const rest = minutes % 60;
-  return rest ? `${hours}h ${rest}m` : `${hours}h`;
 }
 
 function numberWord(value: number) {

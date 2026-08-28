@@ -98,6 +98,45 @@ test("an enabled policy creates one verified backup and then waits", { timeout: 
   });
 });
 
+test("verified automatic artifacts preserve the schedule when status metadata is lost", { timeout: 120_000 }, () => {
+  withHarness(({ options, backupDirectory, artifacts }) => {
+    const firstRun = new Date("2026-08-26T12:00:00.000Z");
+    setAutomaticBackupPolicy(enabled, { ...options, now: firstRun });
+    assert.equal(
+      runDueAutomaticBackup({ ...options, now: firstRun }).status,
+      "succeeded"
+    );
+    assert.equal(artifacts().length, 1);
+
+    rmSync(join(backupDirectory, ".dayflow-automatic-status.json"), {
+      force: true
+    });
+    const oneHourLater = new Date("2026-08-26T13:00:00.000Z");
+    const missingState = getAutomaticBackupState({
+      ...options,
+      now: oneHourLater
+    });
+    assert.equal(missingState.lastSuccessAt, firstRun.toISOString());
+    assert.equal(missingState.schedule.due, false);
+    assert.equal(
+      runDueAutomaticBackup({ ...options, now: oneHourLater }).reason,
+      "not due"
+    );
+
+    writeFileSync(
+      join(backupDirectory, ".dayflow-automatic-status.json"),
+      "{ corrupt status"
+    );
+    const corruptState = getAutomaticBackupState({
+      ...options,
+      now: oneHourLater
+    });
+    assert.equal(corruptState.lastSuccessAt, firstRun.toISOString());
+    assert.equal(corruptState.schedule.due, false);
+    assert.equal(artifacts().length, 1);
+  });
+});
+
 test("v1 deletes nothing: a due-check-and-create leaves every artifact present", { timeout: 240_000 }, () => {
   withHarness(({ options, backupDirectory, artifacts }) => {
     // A manual backup, plus safety artifacts, plus more automatic backups than
@@ -121,7 +160,11 @@ test("v1 deletes nothing: a due-check-and-create leaves every artifact present",
     assert.equal(state.retention.automaticCount, 5);
     assert.equal(state.retention.beyondRetention, 4);
 
-    const attempt = runDueAutomaticBackup(options);
+    assert.ok(manual.createdAt);
+    const dueAt = new Date(
+      Date.parse(manual.createdAt) + enabled.intervalHours * 60 * 60 * 1000
+    );
+    const attempt = runDueAutomaticBackup({ ...options, now: dueAt });
     assert.equal(attempt.status, "succeeded", attempt.reason);
 
     const after = artifacts();

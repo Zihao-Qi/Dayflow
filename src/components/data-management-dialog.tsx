@@ -23,6 +23,11 @@ import {
   parseCsvExportResponseMetadata,
   type CsvExportKind
 } from "@/lib/csv-export-contract";
+import {
+  isAutomaticBackupState,
+  type AutomaticBackupPolicy,
+  type AutomaticBackupState
+} from "@/lib/automatic-backup-contract";
 
 type BackupRecord = {
   id: string;
@@ -48,29 +53,6 @@ type BackupIndex = {
   backups: BackupRecord[];
   pendingRestore: RestoreStatus | null;
   lastRestore: RestoreStatus | null;
-};
-
-type AutomaticBackupPolicy = {
-  enabled: boolean;
-  intervalHours: number;
-  retainCount: number;
-};
-
-type AutomaticBackupState = {
-  policy: AutomaticBackupPolicy;
-  schedule: { due: boolean; nextDueAt: string | null };
-  retention: {
-    automaticCount: number;
-    retainCount: number;
-    beyondRetention: number;
-  };
-  lastSuccessAt: string | null;
-  lastAttempt: {
-    status: "succeeded" | "failed" | "skipped";
-    at: string;
-    fileName?: string;
-    reason?: string;
-  } | null;
 };
 
 type BusyAction =
@@ -1254,31 +1236,6 @@ function isBackupIndex(value: unknown): value is BackupIndex {
     value.backups.every(isBackupRecord) &&
     (value.pendingRestore === null || isObject(value.pendingRestore)) &&
     (value.lastRestore === null || isObject(value.lastRestore))
-  );
-}
-
-function isAutomaticBackupState(
-  value: unknown
-): value is AutomaticBackupState {
-  if (!isObject(value)) return false;
-  const policy = value.policy;
-  const schedule = value.schedule;
-  const retention = value.retention;
-  return (
-    isObject(policy) &&
-    typeof policy.enabled === "boolean" &&
-    isNonNegativeInteger(policy.intervalHours) &&
-    isNonNegativeInteger(policy.retainCount) &&
-    isObject(schedule) &&
-    typeof schedule.due === "boolean" &&
-    (schedule.nextDueAt === null || typeof schedule.nextDueAt === "string") &&
-    isObject(retention) &&
-    isNonNegativeInteger(retention.automaticCount) &&
-    isNonNegativeInteger(retention.retainCount) &&
-    isNonNegativeInteger(retention.beyondRetention) &&
-    (value.lastSuccessAt === null ||
-      typeof value.lastSuccessAt === "string") &&
-    (value.lastAttempt === null || isObject(value.lastAttempt))
   );
 }
 

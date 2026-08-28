@@ -5,7 +5,7 @@ import {
   replaceTimeBlock
 } from "@/lib/time-block-persistence";
 import {
-  parseTimeBlockDraft,
+  parseTimeBlockDraftStructure,
   parseTimeBlockPathId,
   readTimeBlockMutationBody
 } from "@/lib/time-blocks";
@@ -17,7 +17,9 @@ export async function PUT(request: NextRequest, { params }: Params) {
   try {
     const id = parseTimeBlockPathId(rawId);
     const body = await readTimeBlockMutationBody(request);
-    const input = parseTimeBlockDraft(body);
+    // Replacement validates date transitions against the stored block inside
+    // the persistence transaction, so unchanged past dates remain correctable.
+    const input = parseTimeBlockDraftStructure(body);
     return NextResponse.json(await replaceTimeBlock(id, input));
   } catch (error) {
     return timeBlockMutationErrorResponse(error, "save");

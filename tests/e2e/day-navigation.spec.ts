@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { resetTestDatabase } from "./database";
+import { resetTestDatabase, seedTimeBlock } from "./database";
 
 test.beforeEach(() => {
   resetTestDatabase();
@@ -69,6 +69,12 @@ test("a future day plans without inventing evidence", async ({ page }) => {
 });
 
 test("a past day reads and corrects but cannot be planned into", async ({ page }) => {
+  const today = await todayKey(page);
+  seedTimeBlock({
+    id: "past-navigation-block",
+    date: offsetKey(today, -1),
+    title: "Past navigation evidence"
+  });
   await openLog(page);
   await page.getByRole("button", { name: "Previous day" }).click();
   await expect(eyebrow(page)).toContainText("Looking back");
@@ -143,6 +149,193 @@ test("a planned future block survives navigating away and back", async ({ page }
   await page.getByRole("button", { name: "Next day" }).click();
   await expect(dayInput(page)).toHaveValue(tomorrow);
   await expect(page.getByText("Deep work tomorrow")).toBeVisible();
+});
+
+test("creating a future Time Block writes to the Viewed Day and refreshes it", async ({
+  page
+}) => {
+  await openLog(page);
+  const today = await todayKey(page);
+  const tomorrow = offsetKey(today, 1);
+
+  await page.getByRole("button", { name: "Next day" }).click();
+  await page
+    .getByRole("button", { name: "Add time block", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", {
+    name: "Add time block",
+    exact: true
+  });
+  await dialog.getByLabel("Title", { exact: true }).fill("Plan tomorrow");
+  await dialog.getByLabel("Start", { exact: true }).fill("11:00");
+  await dialog.getByLabel("End", { exact: true }).fill("12:00");
+
+  const requestPromise = page.waitForRequest(
+    (request) =>
+      new URL(request.url()).pathname === "/api/time-blocks" &&
+      request.method() === "POST"
+  );
+  await dialog.getByRole("button", { name: "Add block" }).click();
+  const request = await requestPromise;
+  expect(request.postDataJSON()).toMatchObject({ date: tomorrow });
+  await expect(dialog).toHaveCount(0);
+  await expect(
+    page.getByRole("button", {
+      name: "Time block: Plan tomorrow, 11:00 to 12:00",
+      exact: true
+    })
+  ).toBeVisible();
+});
+
+test("a past Time Block remains editable as a correction", async ({ page }) => {
+  const today = await todayKey(page);
+  const yesterday = offsetKey(today, -1);
+  seedTimeBlock({
+    id: "past-editable-block",
+    date: yesterday,
+    title: "Original past plan"
+  });
+
+  await openLog(page);
+  await dayInput(page).fill(yesterday);
+  await page.getByRole("button", { name: "Timeline", exact: true }).click();
+  await page
+    .getByRole("button", {
+      name: "Time block: Original past plan, 09:00 to 10:00",
+      exact: true
+    })
+    .click();
+  const dialog = page.getByRole("dialog", {
+    name: "Edit time block",
+    exact: true
+  });
+  await dialog
+    .getByLabel("Title", { exact: true })
+    .fill("Corrected past plan");
+  const responsePromise = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname ===
+        "/api/time-blocks/past-editable-block" &&
+      response.request().method() === "PUT"
+  );
+  await dialog.getByRole("button", { name: "Save changes" }).click();
+  expect((await responsePromise).status()).toBe(200);
+  await expect(dialog).toHaveCount(0);
+  await expect(
+    page.getByRole("button", {
+      name: "Time block: Corrected past plan, 09:00 to 10:00",
+      exact: true
+    })
+  ).toBeVisible();
+});
+
+test("Time Block corrections cannot move a block into another past day", async ({
+  page
+}) => {
+  const today = await todayKey(page);
+  const yesterday = offsetKey(today, -1);
+  const twoDaysAgo = offsetKey(today, -2);
+  seedTimeBlock({
+    id: "current-block-date-guard",
+    date: today,
+    title: "Current block"
+  });
+  seedTimeBlock({
+    id: "past-block-date-guard",
+    date: yesterday,
+    title: "Past block",
+    startTime: "13:00",
+    endTime: "14:00"
+  });
+
+  for (const [id, date] of [
+    ["current-block-date-guard", yesterday],
+    ["past-block-date-guard", twoDaysAgo]
+  ]) {
+    const response = await page.request.put(`/api/time-blocks/${id}`, {
+      data: {
+        date,
+        startTime: "09:00",
+        endTime: "10:00",
+        title: "Illicit past move",
+        taskId: null
+      }
+    });
+    expect(response.status()).toBe(400);
+    expect(await response.json()).toMatchObject({
+      code: "VALIDATION_ERROR",
+      field: "date"
+    });
+  }
+
+  const correction = await page.request.put(
+    "/api/time-blocks/past-block-date-guard",
+    {
+      data: {
+        date: yesterday,
+        startTime: "09:00",
+        endTime: "10:00",
+        title: "Corrected in place",
+        taskId: null
+      }
+    }
+  );
+  expect(correction.status()).toBe(200);
+  expect(await correction.json()).toMatchObject({
+    date: yesterday,
+    title: "Corrected in place"
+  });
+});
+
+test("non-today Stream views expose no Focus, queue, or capture actions", async ({
+  page
+}) => {
+  const today = await todayKey(page);
+  const yesterday = offsetKey(today, -1);
+  const tomorrow = offsetKey(today, 1);
+  for (const [title, date] of [
+    ["Past task", yesterday],
+    ["Future task", tomorrow]
+  ]) {
+    const response = await page.request.post("/api/tasks", {
+      data: { title, date, estimateMinutes: 30 }
+    });
+    expect(response.status()).toBe(201);
+  }
+
+  await openLog(page);
+  for (const date of [yesterday, tomorrow]) {
+    await dayInput(page).fill(date);
+    await page.getByRole("button", { name: "Stream", exact: true }).click();
+    const stream = page.locator(".day-stream");
+    await expect(stream).toBeVisible();
+    await expect(
+      stream.getByRole("button", {
+        name: /Start this block|Focus|Queue|Add to the day/
+      })
+    ).toHaveCount(0);
+  }
+});
+
+test("the day route rejects dates before the earliest persisted Evidence", async ({
+  page
+}) => {
+  const today = await todayKey(page);
+  const earliest = offsetKey(today, -2);
+  seedTimeBlock({
+    id: "earliest-navigation-block",
+    date: earliest,
+    title: "Earliest evidence"
+  });
+
+  const response = await page.request.get(
+    `/api/day?date=${offsetKey(earliest, -1)}`
+  );
+  expect(response.status()).toBe(400);
+  expect(await response.json()).toMatchObject({
+    code: "VALIDATION_ERROR",
+    field: "date"
+  });
 });
 
 test("the day picker fits a phone viewport", async ({ page }) => {

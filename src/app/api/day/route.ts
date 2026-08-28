@@ -3,9 +3,11 @@ import { prisma } from "@/lib/prisma";
 import {
   DAY_VIEW_FORWARD_WEEKS,
   DayViewRequestError,
+  assertViewedDayOnOrAfter,
   earliestRecordedDay,
   parseViewedDay,
-  readViewedDay
+  readViewedDay,
+  resolveEarliestNavigableDayKey
 } from "@/lib/day-view";
 
 export const runtime = "nodejs";
@@ -14,10 +16,11 @@ export const dynamic = "force-dynamic";
 export async function GET(request: NextRequest) {
   try {
     const { date } = parseViewedDay(request.nextUrl.searchParams);
-    const [day, earliestDayKey] = await Promise.all([
-      readViewedDay(prisma, date),
-      earliestRecordedDay(prisma)
-    ]);
+    const earliestDayKey = resolveEarliestNavigableDayKey(
+      await earliestRecordedDay(prisma)
+    );
+    assertViewedDayOnOrAfter(date, earliestDayKey);
+    const day = await readViewedDay(prisma, date);
     return NextResponse.json({
       ...day,
       earliestDayKey,

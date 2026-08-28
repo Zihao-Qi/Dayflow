@@ -89,6 +89,30 @@ export function parseViewedDay(
   return { date, kind: classifyDay(date, now) };
 }
 
+export function resolveEarliestNavigableDayKey(
+  earliestRecordedDayKey: string | null,
+  now = new Date()
+) {
+  const todayKey = localDateKey(startOfLocalDay(now));
+  return earliestRecordedDayKey && earliestRecordedDayKey < todayKey
+    ? earliestRecordedDayKey
+    : todayKey;
+}
+
+export function assertViewedDayOnOrAfter(
+  date: Date,
+  earliestDayKey: string
+) {
+  const earliest = parseLocalDate(earliestDayKey);
+  if (!earliest || date.getTime() < earliest.getTime()) {
+    throw new DayViewRequestError(
+      "VALIDATION_ERROR",
+      "That day is earlier than Dayflow's first recorded evidence.",
+      "date"
+    );
+  }
+}
+
 /**
  * Read one day.
  *

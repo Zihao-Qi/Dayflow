@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import { localDateKey } from "@/lib/dates";
 import { prisma } from "@/lib/prisma";
 import {
+  assertTimeBlockIsNotPast,
   isTimeBlockRecord,
   TimeBlockError,
   timeBlockIntervalsOverlap,
@@ -49,7 +50,7 @@ export async function replaceTimeBlock(
   return prisma.$transaction(async (transaction) => {
     const current = await transaction.timeBlock.findUnique({
       where: { id },
-      select: { id: true, taskId: true }
+      select: { id: true, date: true, taskId: true }
     });
     if (!current) {
       throw new TimeBlockError(
@@ -58,6 +59,9 @@ export async function replaceTimeBlock(
         404,
         "id"
       );
+    }
+    if (input.date.getTime() !== current.date.getTime()) {
+      assertTimeBlockIsNotPast(input);
     }
     await validatePersistedTimeBlock(
       input,

@@ -270,6 +270,42 @@ export function seedMalformedTimeBlock(date: string) {
   );
 }
 
+export function seedTimeBlock({
+  id,
+  date,
+  title,
+  startTime = "09:00",
+  endTime = "10:00"
+}: {
+  id: string;
+  date: string;
+  title: string;
+  startTime?: string;
+  endTime?: string;
+}) {
+  if (
+    !/^[A-Za-z0-9_-]+$/.test(id) ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+    !/^([01]\d|2[0-3]):[0-5]\d$/.test(startTime) ||
+    !/^([01]\d|2[0-3]):[0-5]\d$/.test(endTime)
+  ) {
+    throw new Error("Time Block seed values are not canonical.");
+  }
+  const timestamp = new Date(`${date}T00:00:00`).getTime();
+  if (!Number.isFinite(timestamp)) {
+    throw new Error("Time Block seed date is invalid.");
+  }
+  const safeTitle = title.replaceAll("'", "''");
+  runPrismaDbExecute(
+    ["--stdin"],
+    `INSERT INTO "TimeBlock"
+     ("id", "date", "startTime", "endTime", "title", "taskId", "createdAt", "updatedAt")
+     VALUES
+     ('${id}', ${timestamp}, '${startTime}', '${endTime}',
+      '${safeTitle}', NULL, ${timestamp}, ${timestamp});`
+  );
+}
+
 export function seedPreviousDayTimeBlockReceipt(date: string) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     throw new Error("Previous-day Time Block date is not canonical.");

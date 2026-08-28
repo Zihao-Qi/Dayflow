@@ -17,9 +17,8 @@ export async function PUT(request: NextRequest, { params }: Params) {
   try {
     const id = parseTimeBlockPathId(rawId);
     const body = await readTimeBlockMutationBody(request);
-    // Replacing an existing past block is a correction, not a new plan.
-    // Creation keeps the not-past guard; replacement keeps structural and
-    // relationship validation without rejecting the block's stored day.
+    // Replacement validates date transitions against the stored block inside
+    // the persistence transaction, so unchanged past dates remain correctable.
     const input = parseTimeBlockDraftStructure(body);
     return NextResponse.json(await replaceTimeBlock(id, input));
   } catch (error) {

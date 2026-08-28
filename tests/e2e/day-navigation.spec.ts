@@ -229,6 +229,64 @@ test("a past Time Block remains editable as a correction", async ({ page }) => {
   ).toBeVisible();
 });
 
+test("Time Block corrections cannot move a block into another past day", async ({
+  page
+}) => {
+  const today = await todayKey(page);
+  const yesterday = offsetKey(today, -1);
+  const twoDaysAgo = offsetKey(today, -2);
+  seedTimeBlock({
+    id: "current-block-date-guard",
+    date: today,
+    title: "Current block"
+  });
+  seedTimeBlock({
+    id: "past-block-date-guard",
+    date: yesterday,
+    title: "Past block",
+    startTime: "13:00",
+    endTime: "14:00"
+  });
+
+  for (const [id, date] of [
+    ["current-block-date-guard", yesterday],
+    ["past-block-date-guard", twoDaysAgo]
+  ]) {
+    const response = await page.request.put(`/api/time-blocks/${id}`, {
+      data: {
+        date,
+        startTime: "09:00",
+        endTime: "10:00",
+        title: "Illicit past move",
+        taskId: null
+      }
+    });
+    expect(response.status()).toBe(400);
+    expect(await response.json()).toMatchObject({
+      code: "VALIDATION_ERROR",
+      field: "date"
+    });
+  }
+
+  const correction = await page.request.put(
+    "/api/time-blocks/past-block-date-guard",
+    {
+      data: {
+        date: yesterday,
+        startTime: "09:00",
+        endTime: "10:00",
+        title: "Corrected in place",
+        taskId: null
+      }
+    }
+  );
+  expect(correction.status()).toBe(200);
+  expect(await correction.json()).toMatchObject({
+    date: yesterday,
+    title: "Corrected in place"
+  });
+});
+
 test("non-today Stream views expose no Focus, queue, or capture actions", async ({
   page
 }) => {

@@ -848,6 +848,40 @@ function ProjectDetailWorkspace({
     );
   }
 
+  async function deleteTask(id: string) {
+    return request(
+      `/api/tasks/${id}`,
+      { method: "DELETE" },
+      (value) =>
+        Boolean(
+          value &&
+            typeof value === "object" &&
+            "ok" in value &&
+            value.ok === true
+        )
+    );
+  }
+
+  async function deletePhase(id: string) {
+    const deleted = await request(
+      `/api/phases/${id}`,
+      { method: "DELETE" },
+      (value) =>
+        Boolean(
+          value &&
+            typeof value === "object" &&
+            "ok" in value &&
+            value.ok === true
+        )
+    );
+    if (deleted) {
+      setNewTaskPhase((selectedPhase) =>
+        selectedPhase === id ? "" : selectedPhase
+      );
+    }
+    return deleted;
+  }
+
   async function completeProject() {
     const confirm = project.completedTaskCount !== project.taskCount
       ? window.confirm("Complete this Project while unfinished tasks remain?")
@@ -1129,8 +1163,11 @@ function ProjectDetailWorkspace({
           <ProjectPhaseSection
             title="Project tasks"
             tasks={directTasks}
+            phases={detail.phases}
             today={today}
+            canManagePlan={canAddWork}
             onUpdate={updateTask}
+            onDelete={deleteTask}
             onStartFocus={onStartFocus}
           />
         )}
@@ -1146,8 +1183,11 @@ function ProjectDetailWorkspace({
             </header>
             <TaskGroup
               tasks={directTasks}
+              phases={detail.phases}
               today={today}
+              canManagePlan={canAddWork}
               onUpdate={updateTask}
+              onDelete={deleteTask}
               onStartFocus={onStartFocus}
             />
           </section>
@@ -1163,8 +1203,10 @@ function ProjectDetailWorkspace({
                 phase={phase}
                 title={phase.name}
                 tasks={phaseTasks}
+                phases={detail.phases}
                 today={today}
                 collapsed={collapsed}
+                canManagePlan={canAddWork}
                 onToggle={() =>
                   setCollapsedPhases((current) => {
                     const next = new Set(current);
@@ -1174,8 +1216,10 @@ function ProjectDetailWorkspace({
                   })
                 }
                 onUpdate={updateTask}
+                onDelete={deleteTask}
                 onStartFocus={onStartFocus}
                 onPhaseSaved={onSync}
+                onDeletePhase={deletePhase}
                 onError={onError}
               />
             );
@@ -1554,25 +1598,32 @@ function ProjectEditForm({
 function ProjectPhaseSection({
   title,
   tasks,
+  phases,
   phase,
   today,
   collapsed = false,
+  canManagePlan,
   onToggle,
   onUpdate,
+  onDelete,
   onStartFocus,
   onPhaseSaved,
+  onDeletePhase,
   onError
 }: {
   title: string;
   tasks: ProjectTaskRecord[];
+  phases: ProjectPhaseRecord[];
   phase?: ProjectPhaseRecord;
   today: string;
   collapsed?: boolean;
+  canManagePlan: boolean;
   onToggle?: () => void;
   onUpdate: (
     id: string,
     patch: Partial<ProjectTaskRecord> & { scheduleSource?: string }
   ) => Promise<void>;
+  onDelete: (id: string) => Promise<boolean>;
   onStartFocus: (target: {
     taskId?: string;
     projectId?: string;
@@ -1580,9 +1631,34 @@ function ProjectPhaseSection({
     plannedMinutes?: number;
   }) => void;
   onPhaseSaved?: () => Promise<void>;
+  onDeletePhase?: (id: string) => Promise<boolean>;
   onError?: (error: string) => void;
 }) {
   const metrics = calculateProjectMetrics(tasks);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteFailed, setDeleteFailed] = useState(false);
+  const deleteTriggerRef = useRef<HTMLButtonElement>(null);
+  const keepPhaseRef = useRef<HTMLButtonElement>(null);
+
+  function closeDeleteConfirm() {
+    setDeleteConfirmOpen(false);
+    setDeleteFailed(false);
+    window.setTimeout(() => deleteTriggerRef.current?.focus(), 0);
+  }
+
+  useEffect(() => {
+    if (!deleteConfirmOpen) return;
+    keepPhaseRef.current?.focus();
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key !== "Escape" || deleting) return;
+      event.preventDefault();
+      closeDeleteConfirm();
+    }
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [deleteConfirmOpen, deleting]);
+
   return (
     <section className="project-phase-section">
       <div className="phase-header">
@@ -1597,6 +1673,20 @@ function ProjectPhaseSection({
             : "0/0"}
         </span>
         <i className="phase-rule" />
+        {phase && canManagePlan && onDeletePhase && (
+          <button
+            ref={deleteTriggerRef}
+            className="phase-delete"
+            title={`Delete phase ${phase.name}`}
+            aria-label={`Delete phase ${phase.name}`}
+            onClick={() => {
+              setDeleteFailed(false);
+              setDeleteConfirmOpen(true);
+            }}
+          >
+            <Trash2 size={13} />
+          </button>
+        )}
         {phase && onToggle && (
           <button
             className="phase-collapse"
@@ -1612,29 +1702,89 @@ function ProjectPhaseSection({
         (tasks.length ? (
           <TaskGroup
             tasks={tasks}
+            phases={phases}
             today={today}
+            canManagePlan={canManagePlan}
             onUpdate={onUpdate}
+            onDelete={onDelete}
             onStartFocus={onStartFocus}
           />
         ) : (
           <p className="phase-empty">No tasks in this phase yet.</p>
         ))}
+      {phase && onDeletePhase && deleteConfirmOpen && (
+        <div
+          className="project-delete-confirm-overlay"
+          role="presentation"
+          onMouseDown={deleting ? undefined : closeDeleteConfirm}
+        >
+          <section
+            className="project-delete-confirm"
+            role="alertdialog"
+            aria-modal="true"
+            aria-label={`Delete phase ${phase.name}`}
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <span className="eyebrow">Delete phase</span>
+            <h2>Delete “{phase.name}”?</h2>
+            <p>
+              Its {tasks.length} {tasks.length === 1 ? "Task" : "Tasks"} will be
+              preserved and moved to the Project root.
+            </p>
+            {deleteFailed && (
+              <p className="project-confirm-error" role="alert">
+                Phase could not be deleted. Try again.
+              </p>
+            )}
+            <div>
+              <button
+                className="primary-button project-delete-confirm-button"
+                disabled={deleting}
+                onClick={async () => {
+                  setDeleteFailed(false);
+                  setDeleting(true);
+                  const deleted = await onDeletePhase(phase.id);
+                  setDeleting(false);
+                  if (deleted) setDeleteConfirmOpen(false);
+                  else setDeleteFailed(true);
+                }}
+              >
+                {deleting ? "Deleting…" : "Delete phase"}
+              </button>
+              <button
+                ref={keepPhaseRef}
+                className="secondary-button"
+                disabled={deleting}
+                onClick={closeDeleteConfirm}
+              >
+                Keep phase
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </section>
   );
 }
 
 function TaskGroup({
   tasks,
+  phases,
   today,
+  canManagePlan,
   onUpdate,
+  onDelete,
   onStartFocus
 }: {
   tasks: ProjectTaskRecord[];
+  phases: ProjectPhaseRecord[];
   today: string;
+  canManagePlan: boolean;
   onUpdate: (
     id: string,
     patch: Partial<ProjectTaskRecord> & { scheduleSource?: string }
   ) => Promise<void>;
+  onDelete: (id: string) => Promise<boolean>;
   onStartFocus: (target: {
     taskId?: string;
     projectId?: string;
@@ -1648,8 +1798,11 @@ function TaskGroup({
         <ProjectTaskItem
           key={task.id}
           task={task}
+          phases={phases}
           today={today}
+          canManagePlan={canManagePlan}
           onUpdate={onUpdate}
+          onDelete={onDelete}
           onStartFocus={onStartFocus}
         />
       ))}
@@ -1659,16 +1812,22 @@ function TaskGroup({
 
 function ProjectTaskItem({
   task,
+  phases,
   today,
+  canManagePlan,
   onUpdate,
+  onDelete,
   onStartFocus
 }: {
   task: ProjectTaskRecord;
+  phases: ProjectPhaseRecord[];
   today: string;
+  canManagePlan: boolean;
   onUpdate: (
     id: string,
     patch: Partial<ProjectTaskRecord> & { scheduleSource?: string }
   ) => Promise<void>;
+  onDelete: (id: string) => Promise<boolean>;
   onStartFocus: (target: {
     taskId?: string;
     projectId?: string;
@@ -1677,15 +1836,38 @@ function ProjectTaskItem({
   }) => void;
 }) {
   const [title, setTitle] = useState(task.title);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteFailed, setDeleteFailed] = useState(false);
+  const deleteTriggerRef = useRef<HTMLButtonElement>(null);
+  const keepTaskRef = useRef<HTMLButtonElement>(null);
   const backlog = !task.date && task.status !== "DONE";
   const done = task.status === "DONE";
 
+  function closeDeleteConfirm() {
+    setDeleteConfirmOpen(false);
+    setDeleteFailed(false);
+    window.setTimeout(() => deleteTriggerRef.current?.focus(), 0);
+  }
+
   useEffect(() => setTitle(task.title), [task.title]);
+  useEffect(() => {
+    if (!deleteConfirmOpen) return;
+    keepTaskRef.current?.focus();
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key !== "Escape" || deleting) return;
+      event.preventDefault();
+      closeDeleteConfirm();
+    }
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [deleteConfirmOpen, deleting]);
 
   return (
     <article
       className={[
         "project-task",
+        phases.length > 0 ? "has-phase-options" : "",
         backlog ? "backlog" : "",
         done ? "done" : ""
       ]
@@ -1710,6 +1892,24 @@ function ProjectTaskItem({
         }}
         aria-label={`Task title: ${task.title}`}
       />
+      {phases.length > 0 && (
+        <select
+          className="project-task-phase"
+          value={task.phaseId ?? ""}
+          disabled={!canManagePlan}
+          aria-label={`Phase for ${task.title}`}
+          onChange={(event) =>
+            void onUpdate(task.id, { phaseId: event.target.value || null })
+          }
+        >
+          <option value="">No phase</option>
+          {phases.map((phase) => (
+            <option key={phase.id} value={phase.id}>
+              {phase.name}
+            </option>
+          ))}
+        </select>
+      )}
       {done ? (
         <span className="project-task-state done">Done</span>
       ) : backlog ? (
@@ -1757,7 +1957,69 @@ function ProjectTaskItem({
           due {formatShortDate(task.deadline)}
         </span>
       ) : (
-        <span aria-hidden="true" />
+        <span className="project-task-deadline-spacer" aria-hidden="true" />
+      )}
+      {canManagePlan && (
+        <button
+          ref={deleteTriggerRef}
+          className="icon-button project-task-delete"
+          title={`Delete task ${task.title}`}
+          aria-label={`Delete task ${task.title}`}
+          onClick={() => {
+            setDeleteFailed(false);
+            setDeleteConfirmOpen(true);
+          }}
+        >
+          <Trash2 size={14} />
+        </button>
+      )}
+      {deleteConfirmOpen && (
+        <div
+          className="project-delete-confirm-overlay"
+          role="presentation"
+          onMouseDown={deleting ? undefined : closeDeleteConfirm}
+        >
+          <section
+            className="project-delete-confirm"
+            role="alertdialog"
+            aria-modal="true"
+            aria-label={`Delete task ${task.title}`}
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <span className="eyebrow">Delete task</span>
+            <h2>Delete “{task.title}”?</h2>
+            <p>This permanently removes the task.</p>
+            {deleteFailed && (
+              <p className="project-confirm-error" role="alert">
+                Task could not be deleted. Try again.
+              </p>
+            )}
+            <div>
+              <button
+                className="primary-button project-delete-confirm-button"
+                disabled={deleting}
+                onClick={async () => {
+                  setDeleteFailed(false);
+                  setDeleting(true);
+                  const deleted = await onDelete(task.id);
+                  setDeleting(false);
+                  if (deleted) setDeleteConfirmOpen(false);
+                  else setDeleteFailed(true);
+                }}
+              >
+                {deleting ? "Deleting…" : "Delete task"}
+              </button>
+              <button
+                ref={keepTaskRef}
+                className="secondary-button"
+                disabled={deleting}
+                onClick={closeDeleteConfirm}
+              >
+                Keep task
+              </button>
+            </div>
+          </section>
+        </div>
       )}
     </article>
   );

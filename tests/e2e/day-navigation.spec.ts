@@ -198,7 +198,7 @@ test("a past Time Block remains editable as a correction", async ({ page }) => {
 
   await openLog(page);
   await dayInput(page).fill(yesterday);
-  await page.getByRole("button", { name: "Timeline", exact: true }).click();
+  await page.getByRole("radio", { name: "Timeline", exact: true }).click();
   await page
     .getByRole("button", {
       name: "Time block: Original past plan, 09:00 to 10:00",
@@ -306,7 +306,7 @@ test("non-today Stream views expose no Focus, queue, or capture actions", async 
   await openLog(page);
   for (const date of [yesterday, tomorrow]) {
     await dayInput(page).fill(date);
-    await page.getByRole("button", { name: "Stream", exact: true }).click();
+    await page.getByRole("radio", { name: "Stream", exact: true }).click();
     const stream = page.locator(".day-stream");
     await expect(stream).toBeVisible();
     await expect(

@@ -4053,6 +4053,7 @@ function JournalPage({
         title="Journal"
         actions={
           <SegmentedControl
+            ariaLabel="Journal view"
             value={view}
             options={[
               ["daily", "Daily page"],
@@ -4632,47 +4633,15 @@ function ArrangementControl({
   options: Array<[BacklogArrange, string]>;
   onChange: (value: BacklogArrange) => void;
 }) {
-  function moveSelection(
-    event: React.KeyboardEvent<HTMLButtonElement>,
-    index: number
-  ) {
-    if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
-      return;
-    }
-    event.preventDefault();
-    const direction =
-      event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 1;
-    const nextIndex = (index + direction + options.length) % options.length;
-    const group = event.currentTarget.parentElement;
-    onChange(options[nextIndex][0]);
-    window.requestAnimationFrame(() => {
-      group?.querySelectorAll<HTMLButtonElement>('[role="radio"]')[nextIndex]?.focus();
-    });
-  }
-
   return (
     <div className="arrange-control">
       <span>Arrange</span>
-      <div
-        className="segmented-control"
-        role="radiogroup"
-        aria-label="Arrange backlog by"
-      >
-        {options.map(([id, label], index) => (
-          <button
-            key={id}
-            type="button"
-            role="radio"
-            aria-checked={value === id}
-            tabIndex={value === id ? 0 : -1}
-            className={value === id ? "active" : ""}
-            onKeyDown={(event) => moveSelection(event, index)}
-            onClick={() => onChange(id)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      <SegmentedControl
+        ariaLabel="Arrange backlog by"
+        value={value}
+        options={options}
+        onChange={onChange}
+      />
     </div>
   );
 }

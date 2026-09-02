@@ -151,6 +151,7 @@ export function DayPage({
         title="Log"
         actions={
           <SegmentedControl
+            ariaLabel="Log view"
             value={view}
             options={[
               ["stream", "Stream"],

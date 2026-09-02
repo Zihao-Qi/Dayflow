@@ -55,7 +55,7 @@ test("captures Task-linked Notes and Task/Note-linked References with canonical 
 
   await openDashboard(page);
   await page.getByRole("button", { name: "Journal", exact: true }).click();
-  await page.getByRole("button", { name: /Notes/ }).click();
+  await page.getByRole("radio", { name: /Notes/ }).click();
   const noteForm = page.locator(".capture-form").filter({ hasText: "New note" });
   const noteContent = noteForm.getByPlaceholder(
     "Capture a thought, decision, or reminder."
@@ -136,7 +136,7 @@ test("captures Task-linked Notes and Task/Note-linked References with canonical 
   await expect(noteCard).toContainText("Task: Capture the standalone decision");
   await expect(noteCard).toContainText("Journal relationships");
 
-  await page.getByRole("button", { name: /References/ }).click();
+  await page.getByRole("radio", { name: /References/ }).click();
   const referenceForm = page
     .locator(".capture-form")
     .filter({ hasText: "Save reference" });
@@ -199,7 +199,7 @@ test("announces recovery after local Note validation fails and a retry saves", a
 }) => {
   await openDashboard(page);
   await page.getByRole("button", { name: "Journal", exact: true }).click();
-  await page.getByRole("button", { name: /Notes/ }).click();
+  await page.getByRole("radio", { name: /Notes/ }).click();
   const form = page.locator(".capture-form").filter({ hasText: "New note" });
 
   await form
@@ -236,7 +236,7 @@ test("reaches older Note options and retains every Reference field after mismatc
     .getByRole("menu", { name: "More destinations" })
     .getByRole("menuitem", { name: "Journal" })
     .click();
-  await page.getByRole("button", { name: /References/ }).click();
+  await page.getByRole("radio", { name: /References/ }).click();
 
   const form = page.locator(".capture-form").filter({
     hasText: "Save reference"

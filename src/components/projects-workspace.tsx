@@ -35,6 +35,7 @@ import {
   projectStatusLabel
 } from "@/lib/project-domain";
 import { SaveStateChip, useSaveState } from "@/components/save-state";
+import { SegmentedControl } from "@/components/workspace-ui";
 
 type ProjectsWorkspaceProps = {
   projects: ProjectSummary[];
@@ -52,6 +53,29 @@ type ProjectsWorkspaceProps = {
     plannedMinutes?: number;
   }) => void;
 };
+
+type ProjectView = "cards" | "compact";
+
+const PROJECTS_VIEW_STORAGE_KEY = "dayflow-projects-view";
+const PROJECT_VIEW_OPTIONS: Array<[ProjectView, string]> = [
+  ["cards", "Cards"],
+  ["compact", "Compact"]
+];
+
+function parseProjectView(value: string | null): ProjectView {
+  return value === "compact" ? "compact" : "cards";
+}
+
+function readStoredProjectView(): ProjectView {
+  if (typeof window === "undefined") return "cards";
+  try {
+    return parseProjectView(
+      window.localStorage.getItem(PROJECTS_VIEW_STORAGE_KEY)
+    );
+  } catch {
+    return "cards";
+  }
+}
 
 type ProjectPatch = Partial<{
   name: string;
@@ -162,6 +186,7 @@ export function ProjectsWorkspace({
   onStartFocus
 }: ProjectsWorkspaceProps) {
   const [filter, setFilter] = useState<ProjectStatus>("ACTIVE");
+  const [view, setView] = useState<ProjectView>(readStoredProjectView);
   const [detail, setDetail] = useState<ProjectDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [error, setError] = useState("");
@@ -207,6 +232,15 @@ export function ProjectsWorkspace({
   function closeCreateForm() {
     onCreateOpenChange(false);
     window.setTimeout(() => createButtonRef.current?.focus(), 0);
+  }
+
+  function switchView(nextView: ProjectView) {
+    setView(nextView);
+    try {
+      window.localStorage.setItem(PROJECTS_VIEW_STORAGE_KEY, nextView);
+    } catch {
+      // The selected view still lasts for this session.
+    }
   }
 
   async function updateProject(patch: ProjectPatch, reportError = true) {
@@ -302,6 +336,8 @@ export function ProjectsWorkspace({
   }
 
   const visibleProjects = projects.filter((project) => project.status === filter);
+  const compactList = view === "compact" && visibleProjects.length > 0;
+  const ProjectOverviewItem = compactList ? ProjectRow : ProjectCard;
 
   return (
     <div className="projects-page">
@@ -340,40 +376,66 @@ export function ProjectsWorkspace({
           />
         )}
 
-        <div className="project-filters" aria-label="Project status filters">
-          {(["ACTIVE", "PAUSED", "COMPLETED", "ARCHIVED"] as ProjectStatus[]).map((status) => (
-            <button
-              key={status}
-              className={filter === status ? "active" : ""}
-              aria-pressed={filter === status}
-              onClick={() => setFilter(status)}
-            >
-              {projectStatusLabel(status)}
-              <span>{projects.filter((project) => project.status === status).length}</span>
-            </button>
-          ))}
+        <div className="project-filter-row">
+          <div className="project-filters" aria-label="Project status filters">
+            {(["ACTIVE", "PAUSED", "COMPLETED", "ARCHIVED"] as ProjectStatus[]).map((status) => (
+              <button
+                key={status}
+                className={filter === status ? "active" : ""}
+                aria-pressed={filter === status}
+                onClick={() => setFilter(status)}
+              >
+                {projectStatusLabel(status)}
+                <span>{projects.filter((project) => project.status === status).length}</span>
+              </button>
+            ))}
+          </div>
+          <SegmentedControl
+            ariaLabel="Project view"
+            className="project-view-control"
+            value={view}
+            options={PROJECT_VIEW_OPTIONS}
+            onChange={switchView}
+          />
         </div>
       </section>
 
       {error && <p className="project-error">{error}</p>}
 
-      <section className="project-card-grid" aria-label={`${projectStatusLabel(filter)} projects`}>
+      <section
+        className={
+          compactList ? "project-list panel" : "project-card-grid"
+        }
+        aria-label={`${projectStatusLabel(filter)} projects`}
+      >
         {visibleProjects.map((project) => (
-          <ProjectCard
+          <ProjectOverviewItem
             key={project.id}
             project={project}
             onOpen={() => onSelectedProjectChange(project.id)}
             onStartFocus={onStartFocus}
           />
         ))}
-        <button
-          className="project-create-card"
-          onClick={() => onCreateOpenChange(true)}
-        >
-          <Plus size={20} />
-          <strong>Start a finishable outcome</strong>
-          <span>Name it first. Duration, weekly effort and phases are optional.</span>
-        </button>
+        {compactList ? (
+          <button
+            type="button"
+            className="project-create-row"
+            onClick={() => onCreateOpenChange(true)}
+          >
+            <Plus size={15} />
+            New project
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="project-create-card"
+            onClick={() => onCreateOpenChange(true)}
+          >
+            <Plus size={20} />
+            <strong>Start a finishable outcome</strong>
+            <span>Name it first. Duration, weekly effort and phases are optional.</span>
+          </button>
+        )}
         {!visibleProjects.length && (
           <div className="panel project-empty">
             <FolderKanban size={32} />
@@ -585,6 +647,68 @@ function ProjectCreateForm({
   );
 }
 
+function ProjectRow({
+  project,
+  onOpen,
+  onStartFocus
+}: {
+  project: ProjectSummary;
+  onOpen: () => void;
+  onStartFocus: ProjectsWorkspaceProps["onStartFocus"];
+}) {
+  const statusLabel = projectStatusLabel(project.status);
+  const plannedMinutes = project.nextTaskEstimateMinutes ?? 30;
+  const nextTaskTitle = project.nextTaskTitle ?? "Add a first task";
+  const taskProgressLabel = project.taskCount
+    ? `${project.completedTaskCount}/${project.taskCount} tasks`
+    : "No tasks yet";
+
+  return (
+    <article className="project-row">
+      <span
+        className={`project-row-dot status-${project.status.toLowerCase()}`}
+        aria-hidden="true"
+        title={statusLabel}
+      />
+      <button
+        type="button"
+        className="project-row-open"
+        title={project.name}
+        onClick={onOpen}
+      >
+        {project.name}
+      </button>
+      <div className="project-row-progress">
+        <div
+          className="meter slim"
+          aria-label={`${project.progressPercent ?? 0}% of current plan`}
+        >
+          <i style={{ width: `${project.progressPercent ?? 0}%` }} />
+        </div>
+        <span>{project.progressPercent === null ? "—" : `${project.progressPercent}%`}</span>
+      </div>
+      <span className="project-row-tasks" title={taskProgressLabel}>
+        {taskProgressLabel}
+      </span>
+      <span className="project-row-next" title={nextTaskTitle}>
+        <span>Next:</span>
+        <strong>{nextTaskTitle}</strong>
+      </span>
+      {project.nextTaskId && (
+        <button
+          type="button"
+          className="secondary-button focus-button project-row-focus"
+          aria-label={`Focus ${plannedMinutes}m on ${nextTaskTitle}`}
+          onClick={() => onStartFocus(focusTargetFor(project))}
+        >
+          <Play size={13} />
+          {plannedMinutes}m
+        </button>
+      )}
+    </article>
+  );
+}
+
 function ProjectCard({
   project,
   onOpen,
@@ -609,7 +733,7 @@ function ProjectCard({
           </time>
         )}
       </div>
-      <button className="project-card-open" onClick={onOpen}>
+      <button type="button" className="project-card-open" onClick={onOpen}>
         <h3>{project.name}</h3>
         {project.desiredOutcome && <p>{project.desiredOutcome}</p>}
       </button>
@@ -644,15 +768,9 @@ function ProjectCard({
         </div>
         {project.nextTaskId && (
           <button
+            type="button"
             className="secondary-button focus-button"
-            onClick={() =>
-              onStartFocus({
-                taskId: project.nextTaskId ?? undefined,
-                projectId: project.id,
-                label: project.nextTaskTitle ?? project.name,
-                plannedMinutes: project.nextTaskEstimateMinutes ?? 30
-              })
-            }
+            onClick={() => onStartFocus(focusTargetFor(project))}
           >
             <Play size={14} />
             Focus {project.nextTaskEstimateMinutes ?? 30}m
@@ -661,6 +779,17 @@ function ProjectCard({
       </div>
     </article>
   );
+}
+
+function focusTargetFor(
+  project: ProjectSummary
+): Parameters<ProjectsWorkspaceProps["onStartFocus"]>[0] {
+  return {
+    taskId: project.nextTaskId ?? undefined,
+    projectId: project.id,
+    label: project.nextTaskTitle ?? project.name,
+    plannedMinutes: project.nextTaskEstimateMinutes ?? 30
+  };
 }
 
 function ProjectDetailWorkspace({

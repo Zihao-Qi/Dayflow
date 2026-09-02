@@ -205,8 +205,8 @@ test("Note filters reach older matches without changing drafts or linked-Note op
   seedJournalSearchHistory();
   await openDashboard(page);
   await page.getByRole("button", { name: "Journal", exact: true }).click();
-  await page.getByRole("button", { name: /Notes/ }).click();
-  await expect(page.getByRole("button", { name: "Notes · 125" })).toBeVisible();
+  await page.getByRole("radio", { name: /Notes/ }).click();
+  await expect(page.getByRole("radio", { name: "Notes · 125" })).toBeVisible();
 
   const noteForm = page.locator(".capture-form").filter({ hasText: "New note" });
   await noteForm
@@ -219,7 +219,7 @@ test("Note filters reach older matches without changing drafts or linked-Note op
   const search = page.getByRole("search", { name: "Search Notes" });
   await search.getByLabel("Search Notes").fill("needle");
   await search.getByLabel("Filter by tag").fill("#Design Systems");
-  await expect(page.getByRole("button", { name: "Notes · 63" })).toBeVisible();
+  await expect(page.getByRole("radio", { name: "Notes · 63" })).toBeVisible();
   await expect(page.getByText("Needle note 124", { exact: true })).toBeVisible();
   await expect(page.getByText("Ordinary note 123", { exact: true })).toHaveCount(
     0
@@ -266,7 +266,7 @@ test("Note filters reach older matches without changing drafts or linked-Note op
   ).toHaveValue("capture-draft");
 
   await search.getByRole("button", { name: "Clear filters" }).click();
-  await expect(page.getByRole("button", { name: "Notes · 125" })).toBeVisible();
+  await expect(page.getByRole("radio", { name: "Notes · 125" })).toBeVisible();
   const latest = page
     .locator(".note-card")
     .filter({ hasText: "Needle note 124" });
@@ -274,9 +274,9 @@ test("Note filters reach older matches without changing drafts or linked-Note op
   await expect(search.getByLabel("Filter by tag")).toHaveValue(
     "design-systems"
   );
-  await expect(page.getByRole("button", { name: "Notes · 63" })).toBeVisible();
+  await expect(page.getByRole("radio", { name: "Notes · 63" })).toBeVisible();
 
-  await page.getByRole("button", { name: /References/ }).click();
+  await page.getByRole("radio", { name: /References/ }).click();
   const linkedNote = page.getByLabel("Reference linked note");
   await expect(linkedNote.locator("option")).toHaveCount(51);
   await page.getByRole("button", { name: "Load older notes" }).click();
@@ -284,11 +284,11 @@ test("Note filters reach older matches without changing drafts or linked-Note op
   await expect(linkedNote.locator("option")).toHaveCount(126);
   await linkedNote.selectOption("search-note-000");
 
-  await page.getByRole("button", { name: /Notes/ }).click();
+  await page.getByRole("radio", { name: /Notes/ }).click();
   await expect(search.getByLabel("Filter by tag")).toHaveValue(
     "design-systems"
   );
-  await page.getByRole("button", { name: /References/ }).click();
+  await page.getByRole("radio", { name: /References/ }).click();
   await expect(page.getByLabel("Reference linked note").locator("option")).toHaveCount(
     126
   );
@@ -303,8 +303,8 @@ test("confirmed creates preserve already-loaded unfiltered history", async ({
   seedJournalSearchHistory();
   await openDashboard(page);
   await page.getByRole("button", { name: "Journal", exact: true }).click();
-  await page.getByRole("button", { name: /Notes/ }).click();
-  await expect(page.getByRole("button", { name: "Notes · 125" })).toBeVisible();
+  await page.getByRole("radio", { name: /Notes/ }).click();
+  await expect(page.getByRole("radio", { name: "Notes · 125" })).toBeVisible();
 
   await page.getByRole("button", { name: "Load more" }).click();
   await page.getByRole("button", { name: "Load more" }).click();
@@ -354,9 +354,9 @@ test("confirmed creates preserve already-loaded unfiltered history", async ({
   await expect(page.getByText("All 126 notes loaded.", { exact: true })).toBeVisible();
   await page.unroute("**/api/notes?*");
 
-  await page.getByRole("button", { name: /References/ }).click();
+  await page.getByRole("radio", { name: /References/ }).click();
   await expect(
-    page.getByRole("button", { name: "References · 125" })
+    page.getByRole("radio", { name: "References · 125" })
   ).toBeVisible();
   await page.getByRole("button", { name: "Load more" }).click();
   await page.getByRole("button", { name: "Load more" }).click();
@@ -429,7 +429,7 @@ test("Reference search retries failures, rejects stale responses, and fits on ph
     .getByRole("menu", { name: "More destinations" })
     .getByRole("menuitem", { name: "Journal" })
     .click();
-  await page.getByRole("button", { name: /References/ }).click();
+  await page.getByRole("radio", { name: /References/ }).click();
 
   const form = page.locator(".capture-form").filter({
     hasText: "Save reference"

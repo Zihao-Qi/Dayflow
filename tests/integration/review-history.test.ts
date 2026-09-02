@@ -4,7 +4,12 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import test from "node:test";
-import { addDays, reviewPeriodRange, startOfLocalDay } from "../../src/lib/dates";
+import {
+  addDays,
+  localDateKey,
+  reviewPeriodRange,
+  startOfLocalDay
+} from "../../src/lib/dates";
 
 const repositoryRoot = process.cwd();
 const prismaCliPath = join(
@@ -231,6 +236,89 @@ test("a past window derives the same summary the current period would", async (c
     assert.equal(olderSummary.recordedMinutes, currentSummary.recordedMinutes);
     assert.deepEqual(olderSummary.categoryMinutes, currentSummary.categoryMinutes);
     assert.equal(olderSummary.recordedMinutes, 75);
+  });
+});
+
+test("an unsaved Review Window derives evidence without matching an overlapping Review", async (context) => {
+  await withDatabase(context, async ({ prisma, history }) => {
+    const today = startOfLocalDay();
+    const endingDay = addDays(today, -9);
+    const expectedStart = addDays(endingDay, -6);
+    const expectedEnd = addDays(endingDay, 1);
+    await prisma.activityEntry.create({
+      data: {
+        startedAt: addDays(today, -10),
+        durationMinutes: 42,
+        category: "Deep Work",
+        note: "inside the requested window"
+      }
+    });
+    await prisma.review.create({
+      data: {
+        periodStart: addDays(expectedStart, -1),
+        periodEnd: addDays(expectedEnd, -1),
+        narrative: "overlapping but not exact",
+        nextPeriodIntention: "must not appear"
+      }
+    });
+
+    const snapshot = JSON.stringify({
+      reviews: await prisma.review.findMany({ orderBy: { id: "asc" } }),
+      activities: await prisma.activityEntry.findMany({ orderBy: { id: "asc" } }),
+      receipts: await prisma.mutationReceipt.count()
+    });
+    const detail = await history.readReviewWindow(
+      prisma,
+      new URLSearchParams({ ending: localDateKey(endingDay) })
+    );
+
+    assert.equal(detail.periodStart.getTime(), expectedStart.getTime());
+    assert.equal(detail.periodEnd.getTime(), expectedEnd.getTime());
+    assert.equal(detail.review, null);
+    assert.equal(detail.reviewSummary.recordedMinutes, 42);
+    assert.equal(
+      JSON.stringify({
+        reviews: await prisma.review.findMany({ orderBy: { id: "asc" } }),
+        activities: await prisma.activityEntry.findMany({ orderBy: { id: "asc" } }),
+        receipts: await prisma.mutationReceipt.count()
+      }),
+      snapshot,
+      "reading an unsaved Review Window mutated storage"
+    );
+  });
+});
+
+test("a Review Window includes only a Review with its exact boundaries", async (context) => {
+  await withDatabase(context, async ({ prisma, history }) => {
+    const endingDay = addDays(startOfLocalDay(), -5);
+    const periodStart = addDays(endingDay, -6);
+    const periodEnd = addDays(endingDay, 1);
+    const saved = await prisma.review.create({
+      data: {
+        periodStart,
+        periodEnd,
+        narrative: "exact window interpretation",
+        nextPeriodIntention: "protect the next step"
+      }
+    });
+
+    const before = JSON.stringify(await prisma.review.findUniqueOrThrow({
+      where: { id: saved.id }
+    }));
+    const detail = await history.readReviewWindow(
+      prisma,
+      new URLSearchParams({ ending: localDateKey(endingDay) })
+    );
+
+    assert.equal(detail.review?.id, saved.id);
+    assert.equal(detail.review?.narrative, "exact window interpretation");
+    assert.equal(
+      JSON.stringify(await prisma.review.findUniqueOrThrow({
+        where: { id: saved.id }
+      })),
+      before,
+      "opening a matching Review rewrote it"
+    );
   });
 });
 

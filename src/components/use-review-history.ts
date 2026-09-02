@@ -3,9 +3,11 @@
 import { useCallback, useRef, useState } from "react";
 import {
   isPastReviewDetail,
+  isReviewWindowDetail,
   isReviewHistoryPage,
   type PastReviewDetail,
-  type PastReviewRecord
+  type PastReviewRecord,
+  type ReviewWindowDetail
 } from "@/lib/review-records";
 
 const REVIEW_HISTORY_LIMIT = 20;
@@ -13,6 +15,8 @@ const LIST_FAILURE =
   "Earlier reviews could not be loaded. Check that Dayflow is still running.";
 const DETAIL_FAILURE =
   "That review could not be opened. Check that Dayflow is still running.";
+const WINDOW_FAILURE =
+  "That Review Window could not be opened. Check the date and try again.";
 
 export type ReviewHistoryState = {
   open: boolean;
@@ -25,6 +29,10 @@ export type ReviewHistoryState = {
   selected: PastReviewDetail | null;
   selecting: boolean;
   selectionError: string;
+  window: ReviewWindowDetail | null;
+  windowLoading: boolean;
+  windowError: string;
+  windowEnding: string;
 };
 
 const initialState: ReviewHistoryState = {
@@ -37,13 +45,18 @@ const initialState: ReviewHistoryState = {
   error: "",
   selected: null,
   selecting: false,
-  selectionError: ""
+  selectionError: "",
+  window: null,
+  windowLoading: false,
+  windowError: "",
+  windowEnding: ""
 };
 
 export function useReviewHistory() {
   const [state, setState] = useState<ReviewHistoryState>(initialState);
   const listRequest = useRef(0);
   const detailRequest = useRef(0);
+  const windowEndingRequest = useRef("");
 
   const loadPage = useCallback(async (cursor: string | null) => {
     const request = (listRequest.current += 1);
@@ -101,7 +114,8 @@ export function useReviewHistory() {
     setState((current) => ({
       ...current,
       selecting: true,
-      selectionError: ""
+      selectionError: "",
+      windowLoading: false
     }));
     try {
       const response = await fetch(`/api/review/${encodeURIComponent(id)}`);
@@ -119,7 +133,10 @@ export function useReviewHistory() {
         ...current,
         selecting: false,
         selectionError: "",
-        selected: payload
+        selected: payload,
+        window: null,
+        windowLoading: false,
+        windowError: ""
       }));
     } catch {
       if (request !== detailRequest.current) return;
@@ -131,13 +148,63 @@ export function useReviewHistory() {
     }
   }, []);
 
+  const selectWindow = useCallback(async (ending: string) => {
+    const request = (detailRequest.current += 1);
+    windowEndingRequest.current = ending;
+    setState((current) => ({
+      ...current,
+      selecting: false,
+      windowLoading: true,
+      windowError: "",
+      windowEnding: ending
+    }));
+    try {
+      const query = new URLSearchParams({ ending });
+      const response = await fetch(`/api/review/window?${query}`);
+      const payload = response.ok ? await response.json() : null;
+      if (request !== detailRequest.current) return;
+      if (!response.ok || !isReviewWindowDetail(payload)) {
+        setState((current) => ({
+          ...current,
+          windowLoading: false,
+          windowError: WINDOW_FAILURE
+        }));
+        return;
+      }
+      setState((current) => ({
+        ...current,
+        selected: null,
+        selectionError: "",
+        window: payload,
+        windowLoading: false,
+        windowError: ""
+      }));
+    } catch {
+      if (request !== detailRequest.current) return;
+      setState((current) => ({
+        ...current,
+        windowLoading: false,
+        windowError: WINDOW_FAILURE
+      }));
+    }
+  }, []);
+
+  const retryWindow = useCallback(() => {
+    if (windowEndingRequest.current) {
+      void selectWindow(windowEndingRequest.current);
+    }
+  }, [selectWindow]);
+
   const clearSelection = useCallback(() => {
     detailRequest.current += 1;
     setState((current) => ({
       ...current,
       selected: null,
       selecting: false,
-      selectionError: ""
+      selectionError: "",
+      window: null,
+      windowLoading: false,
+      windowError: ""
     }));
   }, []);
 
@@ -148,6 +215,8 @@ export function useReviewHistory() {
     loadNext,
     retry,
     select,
+    selectWindow,
+    retryWindow,
     clearSelection
   };
 }

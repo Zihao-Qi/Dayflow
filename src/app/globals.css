@@ -6470,6 +6470,47 @@ button.note-tag:hover {
   padding: 18px;
 }
 
+.review-window-picker {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(280px, auto);
+  align-items: end;
+  gap: 14px;
+  padding: 13px;
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.review-window-picker h3 {
+  margin: 4px 0 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.review-window-form {
+  display: flex;
+  align-items: flex-end;
+  gap: 9px;
+}
+
+.review-window-form label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 700;
+}
+
+.review-window-form input {
+  min-height: 36px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fffefb;
+  color: var(--ink);
+  font: inherit;
+}
+
 .review-history-list {
   display: grid;
   gap: 8px;
@@ -7553,6 +7594,21 @@ html[data-layout-mode="phone"] {
 
   .review-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .review-window-picker {
+    grid-template-columns: 1fr;
+  }
+
+  .review-window-form {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .review-window-form input,
+  .review-window-form .secondary-button {
+    width: 100%;
+    min-height: 44px;
   }
 
   .activity-dialog-grid {

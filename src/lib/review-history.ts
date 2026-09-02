@@ -1,7 +1,13 @@
 import type { PrismaClient } from "@prisma/client";
 import { listProjectSummaries } from "@/lib/projects";
 import { buildReviewSummary } from "@/lib/review-domain";
-import { reviewPeriodRange } from "@/lib/dates";
+import {
+  addDays,
+  localDateKey,
+  parseLocalDate,
+  reviewPeriodRange,
+  startOfLocalDay
+} from "@/lib/dates";
 
 export const REVIEW_HISTORY_DEFAULT_LIMIT = 20;
 export const REVIEW_HISTORY_MAX_LIMIT = 100;
@@ -31,6 +37,10 @@ export type ReviewPeriodInterval = {
 export type ReviewCursor = {
   periodStart: Date;
   id: string;
+};
+
+export type ReviewWindowRequest = ReviewPeriodInterval & {
+  ending: string;
 };
 
 /**
@@ -90,6 +100,78 @@ export async function readReviewPeriodEvidence(
   };
 
   return { activities, diaries, completedTasks, notes, materials, projects, summary };
+}
+
+export function parseReviewWindowRequest(
+  searchParams: URLSearchParams,
+  now = new Date()
+): ReviewWindowRequest {
+  const values = searchParams.getAll("ending");
+  if (values.length !== 1) {
+    throw new ReviewHistoryRequestError(
+      "VALIDATION_ERROR",
+      values.length
+        ? "Provide only one Review Window ending day."
+        : "Choose a Review Window ending day."
+    );
+  }
+
+  const ending = values[0];
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ending)) {
+    throw new ReviewHistoryRequestError(
+      "VALIDATION_ERROR",
+      "A Review Window ending day must be a calendar date such as 2026-08-31."
+    );
+  }
+
+  const endingDay = parseLocalDate(ending);
+  if (!endingDay || localDateKey(endingDay) !== ending) {
+    throw new ReviewHistoryRequestError(
+      "VALIDATION_ERROR",
+      "That Review Window ending day is not a real calendar date."
+    );
+  }
+  if (endingDay.getTime() >= startOfLocalDay(now).getTime()) {
+    throw new ReviewHistoryRequestError(
+      "VALIDATION_ERROR",
+      "Review Windows must end before today."
+    );
+  }
+
+  return {
+    ending,
+    start: addDays(endingDay, -6),
+    end: addDays(endingDay, 1)
+  };
+}
+
+export async function readReviewWindow(
+  database: PrismaClient,
+  searchParams: URLSearchParams,
+  now = new Date()
+) {
+  const window = parseReviewWindowRequest(searchParams, now);
+  const period = { start: window.start, end: window.end };
+  const [{ summary, projects }, review] = await Promise.all([
+    readReviewPeriodEvidence(database, period),
+    database.review.findUnique({
+      where: {
+        periodStart_periodEnd: {
+          periodStart: period.start,
+          periodEnd: period.end
+        }
+      }
+    })
+  ]);
+
+  return {
+    ending: window.ending,
+    periodStart: period.start,
+    periodEnd: period.end,
+    review: review ? { ...review, persisted: true } : null,
+    reviewSummary: summary,
+    projects
+  };
 }
 
 export function parseReviewHistoryPage(searchParams: URLSearchParams) {

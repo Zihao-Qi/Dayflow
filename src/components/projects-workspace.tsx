@@ -53,6 +53,8 @@ type ProjectsWorkspaceProps = {
   }) => void;
 };
 
+type ProjectView = "cards" | "compact";
+
 type ProjectPatch = Partial<{
   name: string;
   desiredOutcome: string;
@@ -162,10 +164,22 @@ export function ProjectsWorkspace({
   onStartFocus
 }: ProjectsWorkspaceProps) {
   const [filter, setFilter] = useState<ProjectStatus>("ACTIVE");
+  const [view, setView] = useState<ProjectView>("cards");
   const [detail, setDetail] = useState<ProjectDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [error, setError] = useState("");
   const createButtonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    try {
+      const storedView = window.localStorage.getItem("dayflow-projects-view");
+      if (storedView === "cards" || storedView === "compact") {
+        setView(storedView);
+      }
+    } catch {
+      // Keep the session-only default when storage is unavailable.
+    }
+  }, []);
 
   useEffect(() => {
     if (!selectedProjectId) {
@@ -207,6 +221,15 @@ export function ProjectsWorkspace({
   function closeCreateForm() {
     onCreateOpenChange(false);
     window.setTimeout(() => createButtonRef.current?.focus(), 0);
+  }
+
+  function switchView(nextView: ProjectView) {
+    setView(nextView);
+    try {
+      window.localStorage.setItem("dayflow-projects-view", nextView);
+    } catch {
+      // The selected view still lasts for this session.
+    }
   }
 
   async function updateProject(patch: ProjectPatch, reportError = true) {
@@ -340,40 +363,86 @@ export function ProjectsWorkspace({
           />
         )}
 
-        <div className="project-filters" aria-label="Project status filters">
-          {(["ACTIVE", "PAUSED", "COMPLETED", "ARCHIVED"] as ProjectStatus[]).map((status) => (
-            <button
-              key={status}
-              className={filter === status ? "active" : ""}
-              aria-pressed={filter === status}
-              onClick={() => setFilter(status)}
-            >
-              {projectStatusLabel(status)}
-              <span>{projects.filter((project) => project.status === status).length}</span>
-            </button>
-          ))}
+        <div className="project-filter-row">
+          <div className="project-filters" aria-label="Project status filters">
+            {(["ACTIVE", "PAUSED", "COMPLETED", "ARCHIVED"] as ProjectStatus[]).map((status) => (
+              <button
+                key={status}
+                className={filter === status ? "active" : ""}
+                aria-pressed={filter === status}
+                onClick={() => setFilter(status)}
+              >
+                {projectStatusLabel(status)}
+                <span>{projects.filter((project) => project.status === status).length}</span>
+              </button>
+            ))}
+          </div>
+          <div
+            className="segmented-control project-view-control"
+            role="group"
+            aria-label="Project view"
+          >
+            {(["cards", "compact"] as ProjectView[]).map((option) => (
+              <button
+                key={option}
+                type="button"
+                className={view === option ? "active" : ""}
+                aria-pressed={view === option}
+                onClick={() => switchView(option)}
+              >
+                {option === "cards" ? "Cards" : "Compact"}
+              </button>
+            ))}
+          </div>
         </div>
       </section>
 
       {error && <p className="project-error">{error}</p>}
 
-      <section className="project-card-grid" aria-label={`${projectStatusLabel(filter)} projects`}>
-        {visibleProjects.map((project) => (
-          <ProjectCard
-            key={project.id}
-            project={project}
-            onOpen={() => onSelectedProjectChange(project.id)}
-            onStartFocus={onStartFocus}
-          />
-        ))}
-        <button
-          className="project-create-card"
-          onClick={() => onCreateOpenChange(true)}
-        >
-          <Plus size={20} />
-          <strong>Start a finishable outcome</strong>
-          <span>Name it first. Duration, weekly effort and phases are optional.</span>
-        </button>
+      <section
+        className={
+          view === "compact" && visibleProjects.length
+            ? "project-list panel"
+            : "project-card-grid"
+        }
+        aria-label={`${projectStatusLabel(filter)} projects`}
+      >
+        {view === "compact" && visibleProjects.length
+          ? visibleProjects.map((project) => (
+              <ProjectRow
+                key={project.id}
+                project={project}
+                onOpen={() => onSelectedProjectChange(project.id)}
+                onStartFocus={onStartFocus}
+              />
+            ))
+          : visibleProjects.map((project) => (
+              <ProjectCard
+                key={project.id}
+                project={project}
+                onOpen={() => onSelectedProjectChange(project.id)}
+                onStartFocus={onStartFocus}
+              />
+            ))}
+        {view === "compact" && visibleProjects.length ? (
+          <button
+            type="button"
+            className="project-create-row"
+            onClick={() => onCreateOpenChange(true)}
+          >
+            <Plus size={15} />
+            New project
+          </button>
+        ) : (
+          <button
+            className="project-create-card"
+            onClick={() => onCreateOpenChange(true)}
+          >
+            <Plus size={20} />
+            <strong>Start a finishable outcome</strong>
+            <span>Name it first. Duration, weekly effort and phases are optional.</span>
+          </button>
+        )}
         {!visibleProjects.length && (
           <div className="panel project-empty">
             <FolderKanban size={32} />
@@ -582,6 +651,75 @@ function ProjectCreateForm({
         </footer>
       </section>
     </div>
+  );
+}
+
+function ProjectRow({
+  project,
+  onOpen,
+  onStartFocus
+}: {
+  project: ProjectSummary;
+  onOpen: () => void;
+  onStartFocus: ProjectsWorkspaceProps["onStartFocus"];
+}) {
+  const statusLabel = projectStatusLabel(project.status);
+  const plannedMinutes = project.nextTaskEstimateMinutes ?? 30;
+  const nextTaskTitle = project.nextTaskTitle ?? "Add a first task";
+
+  return (
+    <article className="project-row">
+      <span
+        className={`project-row-dot status-${project.status.toLowerCase()}`}
+        role="img"
+        aria-label={statusLabel}
+        title={statusLabel}
+      />
+      <button
+        type="button"
+        className="project-row-open"
+        title={project.name}
+        onClick={onOpen}
+      >
+        {project.name}
+      </button>
+      <div className="project-row-progress">
+        <div
+          className="meter slim"
+          aria-label={`${project.progressPercent ?? 0}% of current plan`}
+        >
+          <i style={{ width: `${project.progressPercent ?? 0}%` }} />
+        </div>
+        <span>{project.progressPercent === null ? "—" : `${project.progressPercent}%`}</span>
+      </div>
+      <span className="project-row-tasks">
+        {project.taskCount
+          ? `${project.completedTaskCount}/${project.taskCount} tasks`
+          : "No tasks yet"}
+      </span>
+      <span className="project-row-next" title={nextTaskTitle}>
+        <span>Next:</span>
+        <strong>{nextTaskTitle}</strong>
+      </span>
+      {project.nextTaskId && (
+        <button
+          type="button"
+          className="secondary-button focus-button project-row-focus"
+          aria-label={`Focus ${plannedMinutes}m on ${nextTaskTitle}`}
+          onClick={() =>
+            onStartFocus({
+              taskId: project.nextTaskId ?? undefined,
+              projectId: project.id,
+              label: project.nextTaskTitle ?? project.name,
+              plannedMinutes
+            })
+          }
+        >
+          <Play size={13} />
+          {plannedMinutes}m
+        </button>
+      )}
+    </article>
   );
 }
 

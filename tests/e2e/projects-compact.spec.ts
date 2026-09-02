@@ -1,5 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
-import { resetTestDatabase } from "./database";
+import {
+  resetTestDatabase,
+  seedProjectWithManyTasks
+} from "./database";
 
 test.beforeEach(() => {
   resetTestDatabase();
@@ -26,19 +29,27 @@ async function createProject(page: Page, name: string) {
 async function openCompactProjects(page: Page) {
   await openDashboard(page);
   await page.getByRole("button", { name: /^Projects/ }).click();
-  await page.getByRole("button", { name: "Compact", exact: true }).click();
+  await page.getByRole("radio", { name: "Compact", exact: true }).click();
 }
 
 test("keeps the Projects controls inside a phone viewport", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
+  await createProject(page, "Rendered phone Project");
   await openCompactProjects(page);
 
-  const pageWidth = await page.evaluate(() => ({
-    clientWidth: document.documentElement.clientWidth,
-    scrollWidth: document.documentElement.scrollWidth
+  const widths = await page.evaluate(() => ({
+    documentClientWidth: document.documentElement.clientWidth,
+    documentScrollWidth: document.documentElement.scrollWidth,
+    listClientWidth: document.querySelector<HTMLElement>(".project-list")
+      ?.clientWidth,
+    listScrollWidth: document.querySelector<HTMLElement>(".project-list")
+      ?.scrollWidth
   }));
 
-  expect(pageWidth.scrollWidth).toBe(pageWidth.clientWidth);
+  expect(widths.documentScrollWidth).toBe(widths.documentClientWidth);
+  expect(widths.listClientWidth).toBeGreaterThan(0);
+  expect(widths.listScrollWidth).toBe(widths.listClientWidth);
+  await expect(page.locator(".project-row-tasks")).toBeHidden();
 });
 
 test("keeps Compact Project open controls touch-sized on phone", async ({
@@ -53,6 +64,95 @@ test("keeps Compact Project open controls touch-sized on phone", async ({
     .boundingBox();
   expect(openTarget).not.toBeNull();
   expect(openTarget!.height).toBeGreaterThanOrEqual(44);
+});
+
+test("defaults to Cards and persists Compact without a Cards flash", async ({
+  page
+}) => {
+  await createProject(page, "Persistent view Project");
+  await openDashboard(page);
+  await page.getByRole("button", { name: /^Projects/ }).click();
+
+  const projectView = page.getByRole("radiogroup", { name: "Project view" });
+  await expect(
+    projectView.getByRole("radio", { name: "Cards", exact: true })
+  ).toBeChecked();
+
+  await projectView.getByRole("radio", { name: "Compact", exact: true }).click();
+  await expect(page.locator(".project-row")).toHaveCount(1);
+  await page.reload();
+  await expect(page.getByRole("heading", { name: /blocks? left$/ })).toBeVisible();
+
+  await page.evaluate(() => {
+    document.documentElement.dataset.projectsViewHistory = "";
+    const recordProjectsView = () => {
+      const root = document.documentElement;
+      const history = root.dataset.projectsViewHistory ?? "";
+      if (document.querySelector(".project-card")) {
+        root.dataset.projectsViewHistory = `${history}cards,`;
+      } else if (document.querySelector(".project-row")) {
+        root.dataset.projectsViewHistory = `${history}compact,`;
+      }
+    };
+    new MutationObserver(recordProjectsView).observe(document.body, {
+      childList: true,
+      subtree: true
+    });
+  });
+
+  await page.getByRole("button", { name: /^Projects/ }).click();
+  await expect(
+    page
+      .getByRole("radiogroup", { name: "Project view" })
+      .getByRole("radio", { name: "Compact", exact: true })
+  ).toBeChecked();
+  await expect(page.locator(".project-row")).toHaveCount(1);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.dataset.projectsViewHistory
+    )
+  ).not.toContain("cards");
+});
+
+test("supports roving keyboard selection for the Project view", async ({ page }) => {
+  await createProject(page, "Keyboard view Project");
+  await openDashboard(page);
+  await page.getByRole("button", { name: /^Projects/ }).click();
+
+  const projectView = page.getByRole("radiogroup", { name: "Project view" });
+  const cards = projectView.getByRole("radio", { name: "Cards", exact: true });
+  const compact = projectView.getByRole("radio", {
+    name: "Compact",
+    exact: true
+  });
+
+  await cards.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(compact).toBeChecked();
+  await expect(compact).toBeFocused();
+  await expect(cards).toHaveAttribute("tabindex", "-1");
+  await expect(compact).toHaveAttribute("tabindex", "0");
+
+  await page.keyboard.press("ArrowLeft");
+  await expect(cards).toBeChecked();
+  await expect(cards).toBeFocused();
+});
+
+test("contains large task counts inside their Compact column", async ({ page }) => {
+  seedProjectWithManyTasks();
+  await openCompactProjects(page);
+
+  const taskCount = page.locator(".project-row-tasks");
+  await expect(taskCount).toHaveText("120/300 tasks");
+  const overflow = await taskCount.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      overflow: style.overflow,
+      textOverflow: style.textOverflow
+    };
+  });
+  expect(overflow.overflow).not.toBe("visible");
+  expect(overflow.textOverflow).toBe("ellipsis");
 });
 
 test("aligns Compact columns for Projects with and without tasks", async ({

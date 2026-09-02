@@ -35,6 +35,7 @@ import {
   projectStatusLabel
 } from "@/lib/project-domain";
 import { SaveStateChip, useSaveState } from "@/components/save-state";
+import { SegmentedControl } from "@/components/workspace-ui";
 
 type ProjectsWorkspaceProps = {
   projects: ProjectSummary[];
@@ -54,6 +55,27 @@ type ProjectsWorkspaceProps = {
 };
 
 type ProjectView = "cards" | "compact";
+
+const PROJECTS_VIEW_STORAGE_KEY = "dayflow-projects-view";
+const PROJECT_VIEW_OPTIONS: Array<[ProjectView, string]> = [
+  ["cards", "Cards"],
+  ["compact", "Compact"]
+];
+
+function parseProjectView(value: string | null): ProjectView {
+  return value === "compact" ? "compact" : "cards";
+}
+
+function readStoredProjectView(): ProjectView {
+  if (typeof window === "undefined") return "cards";
+  try {
+    return parseProjectView(
+      window.localStorage.getItem(PROJECTS_VIEW_STORAGE_KEY)
+    );
+  } catch {
+    return "cards";
+  }
+}
 
 type ProjectPatch = Partial<{
   name: string;
@@ -164,22 +186,11 @@ export function ProjectsWorkspace({
   onStartFocus
 }: ProjectsWorkspaceProps) {
   const [filter, setFilter] = useState<ProjectStatus>("ACTIVE");
-  const [view, setView] = useState<ProjectView>("cards");
+  const [view, setView] = useState<ProjectView>(readStoredProjectView);
   const [detail, setDetail] = useState<ProjectDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [error, setError] = useState("");
   const createButtonRef = useRef<HTMLButtonElement>(null);
-
-  useEffect(() => {
-    try {
-      const storedView = window.localStorage.getItem("dayflow-projects-view");
-      if (storedView === "cards" || storedView === "compact") {
-        setView(storedView);
-      }
-    } catch {
-      // Keep the session-only default when storage is unavailable.
-    }
-  }, []);
 
   useEffect(() => {
     if (!selectedProjectId) {
@@ -226,7 +237,7 @@ export function ProjectsWorkspace({
   function switchView(nextView: ProjectView) {
     setView(nextView);
     try {
-      window.localStorage.setItem("dayflow-projects-view", nextView);
+      window.localStorage.setItem(PROJECTS_VIEW_STORAGE_KEY, nextView);
     } catch {
       // The selected view still lasts for this session.
     }
@@ -325,6 +336,8 @@ export function ProjectsWorkspace({
   }
 
   const visibleProjects = projects.filter((project) => project.status === filter);
+  const compactList = view === "compact" && visibleProjects.length > 0;
+  const ProjectOverviewItem = compactList ? ProjectRow : ProjectCard;
 
   return (
     <div className="projects-page">
@@ -377,23 +390,13 @@ export function ProjectsWorkspace({
               </button>
             ))}
           </div>
-          <div
-            className="segmented-control project-view-control"
-            role="group"
-            aria-label="Project view"
-          >
-            {(["cards", "compact"] as ProjectView[]).map((option) => (
-              <button
-                key={option}
-                type="button"
-                className={view === option ? "active" : ""}
-                aria-pressed={view === option}
-                onClick={() => switchView(option)}
-              >
-                {option === "cards" ? "Cards" : "Compact"}
-              </button>
-            ))}
-          </div>
+          <SegmentedControl
+            ariaLabel="Project view"
+            className="project-view-control"
+            value={view}
+            options={PROJECT_VIEW_OPTIONS}
+            onChange={switchView}
+          />
         </div>
       </section>
 
@@ -401,30 +404,19 @@ export function ProjectsWorkspace({
 
       <section
         className={
-          view === "compact" && visibleProjects.length
-            ? "project-list panel"
-            : "project-card-grid"
+          compactList ? "project-list panel" : "project-card-grid"
         }
         aria-label={`${projectStatusLabel(filter)} projects`}
       >
-        {view === "compact" && visibleProjects.length
-          ? visibleProjects.map((project) => (
-              <ProjectRow
-                key={project.id}
-                project={project}
-                onOpen={() => onSelectedProjectChange(project.id)}
-                onStartFocus={onStartFocus}
-              />
-            ))
-          : visibleProjects.map((project) => (
-              <ProjectCard
-                key={project.id}
-                project={project}
-                onOpen={() => onSelectedProjectChange(project.id)}
-                onStartFocus={onStartFocus}
-              />
-            ))}
-        {view === "compact" && visibleProjects.length ? (
+        {visibleProjects.map((project) => (
+          <ProjectOverviewItem
+            key={project.id}
+            project={project}
+            onOpen={() => onSelectedProjectChange(project.id)}
+            onStartFocus={onStartFocus}
+          />
+        ))}
+        {compactList ? (
           <button
             type="button"
             className="project-create-row"
@@ -435,6 +427,7 @@ export function ProjectsWorkspace({
           </button>
         ) : (
           <button
+            type="button"
             className="project-create-card"
             onClick={() => onCreateOpenChange(true)}
           >
@@ -666,13 +659,15 @@ function ProjectRow({
   const statusLabel = projectStatusLabel(project.status);
   const plannedMinutes = project.nextTaskEstimateMinutes ?? 30;
   const nextTaskTitle = project.nextTaskTitle ?? "Add a first task";
+  const taskProgressLabel = project.taskCount
+    ? `${project.completedTaskCount}/${project.taskCount} tasks`
+    : "No tasks yet";
 
   return (
     <article className="project-row">
       <span
         className={`project-row-dot status-${project.status.toLowerCase()}`}
-        role="img"
-        aria-label={statusLabel}
+        aria-hidden="true"
         title={statusLabel}
       />
       <button
@@ -692,10 +687,8 @@ function ProjectRow({
         </div>
         <span>{project.progressPercent === null ? "—" : `${project.progressPercent}%`}</span>
       </div>
-      <span className="project-row-tasks">
-        {project.taskCount
-          ? `${project.completedTaskCount}/${project.taskCount} tasks`
-          : "No tasks yet"}
+      <span className="project-row-tasks" title={taskProgressLabel}>
+        {taskProgressLabel}
       </span>
       <span className="project-row-next" title={nextTaskTitle}>
         <span>Next:</span>
@@ -706,14 +699,7 @@ function ProjectRow({
           type="button"
           className="secondary-button focus-button project-row-focus"
           aria-label={`Focus ${plannedMinutes}m on ${nextTaskTitle}`}
-          onClick={() =>
-            onStartFocus({
-              taskId: project.nextTaskId ?? undefined,
-              projectId: project.id,
-              label: project.nextTaskTitle ?? project.name,
-              plannedMinutes
-            })
-          }
+          onClick={() => onStartFocus(focusTargetFor(project))}
         >
           <Play size={13} />
           {plannedMinutes}m
@@ -747,7 +733,7 @@ function ProjectCard({
           </time>
         )}
       </div>
-      <button className="project-card-open" onClick={onOpen}>
+      <button type="button" className="project-card-open" onClick={onOpen}>
         <h3>{project.name}</h3>
         {project.desiredOutcome && <p>{project.desiredOutcome}</p>}
       </button>
@@ -782,15 +768,9 @@ function ProjectCard({
         </div>
         {project.nextTaskId && (
           <button
+            type="button"
             className="secondary-button focus-button"
-            onClick={() =>
-              onStartFocus({
-                taskId: project.nextTaskId ?? undefined,
-                projectId: project.id,
-                label: project.nextTaskTitle ?? project.name,
-                plannedMinutes: project.nextTaskEstimateMinutes ?? 30
-              })
-            }
+            onClick={() => onStartFocus(focusTargetFor(project))}
           >
             <Play size={14} />
             Focus {project.nextTaskEstimateMinutes ?? 30}m
@@ -799,6 +779,17 @@ function ProjectCard({
       </div>
     </article>
   );
+}
+
+function focusTargetFor(
+  project: ProjectSummary
+): Parameters<ProjectsWorkspaceProps["onStartFocus"]>[0] {
+  return {
+    taskId: project.nextTaskId ?? undefined,
+    projectId: project.id,
+    label: project.nextTaskTitle ?? project.name,
+    plannedMinutes: project.nextTaskEstimateMinutes ?? 30
+  };
 }
 
 function ProjectDetailWorkspace({

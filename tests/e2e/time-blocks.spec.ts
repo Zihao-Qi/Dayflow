@@ -22,7 +22,7 @@ async function openDashboard(page: Page) {
 
 async function openTimeline(page: Page) {
   await page.getByRole("button", { name: "Log", exact: true }).click();
-  await page.getByRole("button", { name: "Timeline", exact: true }).click();
+  await page.getByRole("radio", { name: "Timeline", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Add time block", exact: true })
   ).toBeVisible();

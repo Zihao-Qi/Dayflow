@@ -7058,6 +7058,30 @@ button.note-tag:hover {
   line-height: 1.45;
 }
 
+:is(.project-status, .project-row-dot) {
+  --project-status-background: var(--sage-soft);
+  --project-status-foreground: #40503a;
+  --project-status-accent: var(--sage);
+}
+
+:is(.project-status, .project-row-dot).status-paused {
+  --project-status-background: #f3ead8;
+  --project-status-foreground: #795f36;
+  --project-status-accent: #795f36;
+}
+
+:is(.project-status, .project-row-dot).status-completed {
+  --project-status-background: #e4edf0;
+  --project-status-foreground: #496b75;
+  --project-status-accent: var(--blue);
+}
+
+:is(.project-status, .project-row-dot).status-archived {
+  --project-status-background: var(--surface-2);
+  --project-status-foreground: var(--muted);
+  --project-status-accent: var(--neutral-gray);
+}
+
 .project-status {
   justify-self: start;
   display: inline-flex;
@@ -7065,27 +7089,12 @@ button.note-tag:hover {
   min-height: 24px;
   padding: 0 8px;
   border-radius: 999px;
-  background: var(--sage-soft);
-  color: #40503a;
+  background: var(--project-status-background);
+  color: var(--project-status-foreground);
   font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-}
-
-.project-status.status-paused {
-  background: #f3ead8;
-  color: #795f36;
-}
-
-.project-status.status-completed {
-  background: #e4edf0;
-  color: #496b75;
-}
-
-.project-status.status-archived {
-  background: var(--surface-2);
-  color: var(--muted);
 }
 
 .project-next {
@@ -10325,22 +10334,7 @@ html[data-layout-mode="phone"] .data-restore-actions button {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-}
-
-.project-row-dot.status-active {
-  background: var(--sage);
-}
-
-.project-row-dot.status-paused {
-  background: #b08a4f;
-}
-
-.project-row-dot.status-completed {
-  background: var(--blue);
-}
-
-.project-row-dot.status-archived {
-  background: var(--neutral-gray);
+  background: var(--project-status-accent);
 }
 
 .project-row-open {
@@ -10373,8 +10367,11 @@ html[data-layout-mode="phone"] .data-restore-actions button {
 }
 
 .project-row-tasks {
+  min-width: 0;
+  overflow: hidden;
   color: var(--muted);
   font-size: 11.5px;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 

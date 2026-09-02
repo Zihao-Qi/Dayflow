@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
 import type { FocusSessionRecord } from "@/lib/focus-domain";
 import {
   focusElapsedSeconds,
@@ -29,22 +29,55 @@ export function PageHeader({
 }
 
 export function SegmentedControl<T extends string>({
+  ariaLabel,
+  className,
   value,
   options,
   onChange
 }: {
+  ariaLabel: string;
+  className?: string;
   value: T;
   options: Array<[T, string]>;
   onChange: (value: T) => void;
 }) {
+  function moveSelection(
+    event: KeyboardEvent<HTMLButtonElement>,
+    index: number
+  ) {
+    if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
+      return;
+    }
+    event.preventDefault();
+    const direction =
+      event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 1;
+    const nextIndex = (index + direction + options.length) % options.length;
+    const group = event.currentTarget.parentElement;
+    onChange(options[nextIndex][0]);
+    window.requestAnimationFrame(() => {
+      group
+        ?.querySelectorAll<HTMLButtonElement>('[role="radio"]')
+        [nextIndex]?.focus();
+    });
+  }
+
   return (
-    <div className="segmented-control">
-      {options.map(([id, label]) => (
+    <div
+      className={`segmented-control${className ? ` ${className}` : ""}`}
+      role="radiogroup"
+      aria-label={ariaLabel}
+      aria-orientation="horizontal"
+    >
+      {options.map(([id, label], index) => (
         <button
           key={id}
-          className={value === id ? "active" : ""}
-          onClick={() => onChange(id)}
           type="button"
+          role="radio"
+          aria-checked={value === id}
+          tabIndex={value === id ? 0 : -1}
+          className={value === id ? "active" : ""}
+          onKeyDown={(event) => moveSelection(event, index)}
+          onClick={() => onChange(id)}
         >
           {label}
         </button>

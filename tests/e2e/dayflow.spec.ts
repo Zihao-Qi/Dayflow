@@ -2113,7 +2113,7 @@ test("captures direct Project evidence from Activity, Notes, and Materials", asy
   expect((await saveActivity).ok()).toBe(true);
 
   await page.getByRole("button", { name: "Journal", exact: true }).click();
-  await page.getByRole("button", { name: /Notes/ }).click();
+  await page.getByRole("radio", { name: /Notes/ }).click();
   const noteForm = page.locator(".capture-form").filter({ hasText: "New note" });
   await noteForm
     .getByPlaceholder("Capture a thought, decision, or reminder.")
@@ -2127,7 +2127,7 @@ test("captures direct Project evidence from Activity, Notes, and Materials", asy
   await noteForm.getByRole("button", { name: "Save note" }).click();
   expect((await saveNote).ok()).toBe(true);
 
-  await page.getByRole("button", { name: /References/ }).click();
+  await page.getByRole("radio", { name: /References/ }).click();
   const materialForm = page
     .locator(".capture-form")
     .filter({ hasText: "Save reference" });
@@ -2850,7 +2850,7 @@ test("supports the redesigned Journal and Review destinations", async ({ page })
   await expect(
     page.locator(".journal-card-heading").getByText("Saved", { exact: true })
   ).toBeVisible();
-  await page.getByRole("button", { name: /Notes/ }).click();
+  await page.getByRole("radio", { name: /Notes/ }).click();
   await page
     .getByPlaceholder("Capture a thought, decision, or reminder.")
     .fill("Keep the interface calm.");
@@ -2863,7 +2863,7 @@ test("supports the redesigned Journal and Review destinations", async ({ page })
   expect((await saveNote).ok()).toBe(true);
   await expect(page.getByText("Keep the interface calm.", { exact: true })).toBeVisible();
 
-  await page.getByRole("button", { name: /References/ }).click();
+  await page.getByRole("radio", { name: /References/ }).click();
   await page.getByPlaceholder("Title").fill("Interface notes");
   await page.getByPlaceholder("URL").fill("https://example.com/interface-notes");
   const saveReference = page.waitForResponse(
@@ -2940,8 +2940,8 @@ test("reaches complete Note and Material history through stable pagination", asy
   await openDashboard(page);
   await page.getByRole("button", { name: "Journal", exact: true }).click();
 
-  await page.getByRole("button", { name: /Notes/ }).click();
-  await expect(page.getByRole("button", { name: "Notes · 105" })).toBeVisible();
+  await page.getByRole("radio", { name: /Notes/ }).click();
+  await expect(page.getByRole("radio", { name: "Notes · 105" })).toBeVisible();
   await expect(page.getByText("History note 104", { exact: true })).toBeVisible();
   await expect(page.getByText("History note 000", { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Load more" }).click();
@@ -2950,9 +2950,9 @@ test("reaches complete Note and Material history through stable pagination", asy
   await expect(page.getByText("History note 000", { exact: true })).toBeVisible();
   await expect(page.getByText("All 105 notes loaded.", { exact: true })).toBeVisible();
 
-  await page.getByRole("button", { name: /References/ }).click();
+  await page.getByRole("radio", { name: /References/ }).click();
   await expect(
-    page.getByRole("button", { name: "References · 105" })
+    page.getByRole("radio", { name: "References · 105" })
   ).toBeVisible();
   await expect(
     page.getByText("History reference 104", { exact: true })
@@ -2993,7 +2993,7 @@ test("preserves Note and Material drafts when a write is rejected", async ({
 }) => {
   await openDashboard(page);
   await page.getByRole("button", { name: "Journal", exact: true }).click();
-  await page.getByRole("button", { name: /Notes/ }).click();
+  await page.getByRole("radio", { name: /Notes/ }).click();
 
   await page.route("**/api/notes", async (route) => {
     if (route.request().method() === "POST") {
@@ -3021,7 +3021,7 @@ test("preserves Note and Material drafts when a write is rejected", async ({
   ).toBeVisible();
   await page.unroute("**/api/notes");
 
-  await page.getByRole("button", { name: /References/ }).click();
+  await page.getByRole("radio", { name: /References/ }).click();
   await page.route("**/api/materials", async (route) => {
     if (route.request().method() === "POST") {
       await route.fulfill({

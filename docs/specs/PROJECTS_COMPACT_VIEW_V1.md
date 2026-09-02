@@ -46,8 +46,9 @@ the status filters, right-aligned:
 ```
 
 - Two options only: **Cards** (current layout, default) and **Compact**.
-- Buttons carry `aria-pressed`, matching the existing filter buttons.
-- The control is labeled `aria-label="Project view"`.
+- The control follows the shared segmented-control radio pattern: its wrapper
+  is a `radiogroup` labeled `aria-label="Project view"`, and each option is a
+  `radio` with `aria-checked` and roving `tabIndex`.
 - Switching views never changes the selected status filter, scroll intent, or
   any data.
 
@@ -57,7 +58,8 @@ Compact view replaces the card grid with a single vertical list. Each project
 is one row inside one shared panel, so density comes from removing per-card
 chrome, not from shrinking text below readable sizes.
 
-Desktop / compact layout row (one line, ~52px tall):
+Desktop / compact layout row (one line, ~60px tall including the 44px open
+target and row padding):
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -72,9 +74,9 @@ Row anatomy, left to right:
 1. **Status dot** — a small colored dot reusing the existing status palette
    (`status-active`, `status-paused`, …). The textual status pill is dropped;
    the status filter already establishes context, and the dot carries an
-   `aria-label` / tooltip with the full status name. When mixed statuses can
-   never appear (the filter guarantees one status per list), the dot is
-   decorative reinforcement, not the only signal.
+   tooltip with the full status name. Because the status filter guarantees one
+   status per list, the dot is decorative (`aria-hidden="true"`) and is not the
+   only signal.
 2. **Name** — the row's open control (a button, like `.project-card-open`),
    single line, ellipsized. `desiredOutcome` is not shown in Compact view; it
    remains available in Cards view and the detail page.
@@ -100,9 +102,11 @@ end of the list (`+ New project`), and the empty state is unchanged.
 Compact view keys off the existing `data-layout-mode` attribute; no new
 breakpoints are introduced.
 
-- **Desktop / compact modes**: the single-line row above. Columns use a CSS
-  grid (`auto 1fr auto auto minmax(0, 1fr) auto`) so nothing forces
-  horizontal scrolling; name and next step are the two truncating columns.
+- **Desktop / compact modes**: the single-line row above. Columns use a stable
+  CSS grid (`auto 1fr auto 100px minmax(0, 1fr) 65px`) so rows with and without
+  a Focus action stay aligned. Name, task count, and next step truncate inside
+  their tracks, and the full name/task/next-step copy remains available through
+  a tooltip.
 - **Phone mode**: the row wraps to two lines and drops the tasks count
   (progress percent already summarizes it):
 
@@ -120,8 +124,9 @@ screens too.
   with values `"cards"` and `"compact"`, following the existing
   `dayflow-first-run-seen` precedent.
 - Missing, unreadable, or unrecognized values fall back to `"cards"`.
-- The value is read once on mount and written on every switch. Storage
-  failures (private browsing, quota) degrade silently to a session-only
+- A lazy state initializer reads the value before the first Projects render,
+  avoiding a Cards-to-Compact flash. The value is written on every switch.
+  Storage failures (private browsing, quota) degrade silently to a session-only
   preference.
 - The preference is per device by design; it never round-trips the server.
 
@@ -129,18 +134,19 @@ screens too.
 
 - Tab order per row: open button (name), then Focus button. This matches the
   Cards tab order, so switching views does not change interaction structure.
-- The segmented control is reachable by Tab and operable with Enter/Space,
-  identical to the Backlog arrangement control.
+- The segmented control follows the same radio-group behavior as Backlog:
+  Tab reaches the checked option, Enter/Space selects it, and arrow keys wrap
+  through the options while moving selection and focus.
 - Row height stays ≥ 44px so touch targets remain adequate.
 - The meter keeps its existing `aria-label` (`"60% of current plan"`).
-- Switching views moves no focus and announces nothing beyond the pressed
-  state; the list itself keeps its `aria-label`
+- Clicking a view keeps focus on that option; arrow-key switching moves focus
+  to the newly checked option. The list itself keeps its `aria-label`
   (`"Active projects"` etc.).
 
 ## Implementation sketch
 
 - `ProjectsWorkspace` gains `view: "cards" | "compact"` state, initialized
-  from `localStorage` in a `useEffect` (SSR-safe, defaulting to `"cards"`).
+  by an SSR-safe lazy `localStorage` reader that defaults to `"cards"`.
 - `ProjectCard` stays untouched; a sibling `ProjectRow` component renders the
   compact row from the same `ProjectSummary` and the same `onOpen` /
   `onStartFocus` props. No API or Prisma changes.
@@ -154,7 +160,7 @@ screens too.
 | Issue criterion | Design answer |
 | --- | --- |
 | Clear way to switch views | Segmented Cards / Compact control in the overview panel |
-| More projects per viewport, no horizontal scroll | ~52px rows vs ≥290px cards (≈5× density); truncating grid columns |
+| More projects per viewport, no horizontal scroll | ~60px rows vs ≥290px cards; rendered phone and large-count overflow checks |
 | Essential info and primary actions remain | Name, status, progress, tasks, next step, open, Focus |
-| Preserved across reloads on the device | `localStorage["dayflow-projects-view"]` |
-| Usable at breakpoints and via keyboard | Reuses layout modes; identical tab structure per row |
+| Preserved across reloads on the device | `localStorage["dayflow-projects-view"]`; no intermediate Cards render |
+| Usable at breakpoints and via keyboard | Reuses layout modes; radio-group arrow-key and roving-tab-stop behavior |

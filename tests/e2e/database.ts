@@ -54,6 +54,31 @@ export function resetTestDatabase() {
   runPrismaDbExecute(["--stdin"], resetSql);
 }
 
+export function seedProjectWithManyTasks() {
+  const timestamp = Date.UTC(2026, 8, 2, 12);
+  const projectId = "project-many-tasks";
+  const statements = [
+    `INSERT INTO "Project"
+     ("id", "name", "desiredOutcome", "status", "createdAt", "updatedAt")
+     VALUES
+     ('${projectId}', 'Large task-count Project', '', 'ACTIVE',
+      ${timestamp}, ${timestamp});`
+  ];
+
+  for (let index = 0; index < 300; index += 1) {
+    const status = index < 120 ? "DONE" : "TODO";
+    statements.push(
+      `INSERT INTO "Task"
+       ("id", "title", "status", "sortOrder", "projectId", "createdAt", "updatedAt")
+       VALUES
+       ('many-task-${index}', 'Task ${index}', '${status}', ${index},
+        '${projectId}', ${timestamp + index}, ${timestamp + index});`
+    );
+  }
+
+  runPrismaDbExecute(["--stdin"], statements.join("\n"));
+}
+
 function resetTestBackupDirectory() {
   const expectedDirectory = join(tmpdir(), "dayflow-playwright-backups");
   if (testBackupDirectory !== expectedDirectory) {

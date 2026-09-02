@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { buildActivityCategorySuggestions } from "@/lib/activity-categories";
 import { prisma } from "@/lib/prisma";
@@ -18,7 +19,38 @@ import {
   resolveEarliestNavigableDayKey
 } from "@/lib/day-view";
 
+const DATABASE_MIGRATION_REQUIRED_MESSAGE =
+  "Dayflow's local database needs an update. Stop Dayflow, run `npm run db:migrate`, then start Dayflow again.";
+
 export async function GET() {
+  try {
+    return await loadBootstrap();
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      (error.code === "P2021" || error.code === "P2022")
+    ) {
+      return NextResponse.json(
+        {
+          code: "DATABASE_MIGRATION_REQUIRED",
+          error: DATABASE_MIGRATION_REQUIRED_MESSAGE
+        },
+        { status: 503 }
+      );
+    }
+
+    console.error("Dayflow bootstrap failed.", error);
+    return NextResponse.json(
+      {
+        code: "INTERNAL_ERROR",
+        error: "Dayflow could not open its local data. Try again."
+      },
+      { status: 500 }
+    );
+  }
+}
+
+async function loadBootstrap() {
   const today = startOfLocalDay();
   const reviewPeriod = reviewPeriodRange(today);
   const weekStart = reviewPeriod.start;

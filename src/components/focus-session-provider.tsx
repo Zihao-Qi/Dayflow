@@ -53,6 +53,7 @@ type FocusSessionContextValue = {
     next: FocusStartInput | null;
   }) => Promise<boolean>;
   retryNextStart: () => Promise<boolean>;
+  reload: () => Promise<boolean>;
   dismissBreakSuggestion: () => void;
   requestNotificationPermission: () => Promise<void>;
 };
@@ -105,6 +106,7 @@ export function FocusSessionProvider({ children }: { children: React.ReactNode }
   const [activityRevision, setActivityRevision] = useState(0);
   const autoFinishingId = useRef<string | null>(null);
   const startAttempt = useRef<FocusStartAttempt | null>(null);
+  const loadController = useRef<AbortController | null>(null);
   const active = snapshot?.active ?? null;
   const pendingCompletion = snapshot?.pendingCompletion ?? null;
   const rememberRetryNext = useCallback((next: FocusStartInput | null) => {
@@ -116,32 +118,43 @@ export function FocusSessionProvider({ children }: { children: React.ReactNode }
     }
   }, []);
 
+  const reload = useCallback(async () => {
+    loadController.current?.abort();
+    const controller = new AbortController();
+    loadController.current = controller;
+    setError("");
+    try {
+      const response = await fetch("/api/focus-session", {
+        cache: "no-store",
+        signal: controller.signal
+      });
+      const result: unknown = await response.json().catch(() => null);
+      if (!response.ok || !isFocusSnapshot(result)) {
+        throw new Error(
+          responseError(result, "Focus timer could not be loaded.")
+        );
+      }
+      if (loadController.current !== controller) return false;
+      setSnapshot(result);
+      if (result.active || result.pendingCompletion) {
+        rememberRetryNext(null);
+      }
+      return true;
+    } catch (caught: unknown) {
+      if (controller.signal.aborted) return false;
+      setError(messageFrom(caught));
+      return false;
+    } finally {
+      if (loadController.current === controller) loadController.current = null;
+    }
+  }, [rememberRetryNext]);
+
   useEffect(() => {
-    let live = true;
     setRetryNext(readStoredRetryNext());
     if ("Notification" in window) setNotificationState(Notification.permission);
-    void fetch("/api/focus-session", { cache: "no-store" })
-      .then(async (response) => {
-        const result: unknown = await response.json().catch(() => null);
-        if (!response.ok || !isFocusSnapshot(result)) {
-          throw new Error(
-            responseError(result, "Focus timer could not be loaded.")
-          );
-        }
-        if (live) {
-          setSnapshot(result);
-          if (result.active || result.pendingCompletion) {
-            rememberRetryNext(null);
-          }
-        }
-      })
-      .catch((caught: unknown) => {
-        if (live) setError(messageFrom(caught));
-      });
-    return () => {
-      live = false;
-    };
-  }, [rememberRetryNext]);
+    void reload();
+    return () => loadController.current?.abort();
+  }, [reload]);
 
   useEffect(() => {
     if (active?.status !== "RUNNING" && active?.status !== "PAUSED") return;
@@ -370,6 +383,7 @@ export function FocusSessionProvider({ children }: { children: React.ReactNode }
       transition,
       enrichCompletion,
       retryNextStart,
+      reload,
       dismissBreakSuggestion: () => setSuggestedBreak(null),
       requestNotificationPermission
     }),
@@ -388,6 +402,7 @@ export function FocusSessionProvider({ children }: { children: React.ReactNode }
       transition,
       enrichCompletion,
       retryNextStart,
+      reload,
       requestNotificationPermission
     ]
   );

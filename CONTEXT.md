@@ -64,6 +64,10 @@ _Avoid_: Today, selected date, current day
 The seven local calendar days ending today, used for period-bound Review evidence.
 _Avoid_: Calendar week, all time
 
+**Review Window**:
+A read-only seven-local-day interval ending on a chosen past day, whether or not a Review was saved for those boundaries. It derives current Evidence and never creates or edits a Review.
+_Avoid_: Unreviewed period, snapshot, Past Review Period when no Review exists
+
 **Past Review Period**:
 The exact seven-local-day window of a Review saved before the current Review Period, identified by that Review's own stored boundaries. It is read-only.
 _Avoid_: Review Period, calendar week, archive, snapshot

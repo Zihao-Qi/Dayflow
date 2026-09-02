@@ -1,6 +1,6 @@
 # Dayflow Project Status and Plan
 
-Last updated: August 30, 2026
+Last updated: September 1, 2026
 
 ## Project Goal
 
@@ -70,6 +70,10 @@ The first-run workspace-readiness and handoff contract is:
 The Review history contract is:
 
 - `docs/specs/REVIEW_PERIOD_BROWSING_V1.md` — implemented August 22, 2026
+
+The arbitrary Review Window browsing contract is:
+
+- `docs/specs/REVIEW_WINDOW_BROWSING_V1.md` — implemented September 1, 2026
 
 The unattended protection contract is:
 
@@ -385,6 +389,10 @@ Funemployment Day has a narrower and immediately understandable promise around r
   intention stay fixed in time.
 - Keeps Past Review Periods read-only and restores the editable current-period
   save flow on return.
+- Opens a read-only seven-local-day Review Window ending on any chosen past
+  day, even when no Review was saved for those exact boundaries.
+- Shows saved writing only for an exact boundary match and otherwise states
+  honestly that the window has Evidence but no saved Review.
 
 ### Agent Export
 

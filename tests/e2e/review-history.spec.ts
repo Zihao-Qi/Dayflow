@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { resetTestDatabase, seedPastReviews } from "./database";
+import { addLocalDays, localDateKey } from "./activity-date-helpers";
 
 test.beforeEach(() => {
   resetTestDatabase();
@@ -21,6 +22,26 @@ async function openReview(page: Page) {
 
 const historyPanel = (page: Page) =>
   page.getByRole("region", { name: "Earlier reviews" });
+
+async function createActivityOn(page: Page, date: string, minutes: number) {
+  const activity = await page.request.post("/api/activities", {
+    data: {
+      date,
+      startTime: "12:00",
+      durationMinutes: minutes,
+      category: "Deep Work",
+      note: `Review Window evidence for ${date}`
+    }
+  });
+  expect(activity.status()).toBe(201);
+}
+
+async function openReviewWindow(page: Page, ending: string) {
+  const panel = historyPanel(page);
+  await panel.getByLabel("Review window ending").fill(ending);
+  await panel.getByRole("button", { name: /Open window|Opening/ }).click();
+  await expect(page.locator(".page-eyebrow")).toContainText("Review window");
+}
 
 test("history reaches Reviews saved any number of days ago", async ({ page }) => {
   // 7 and 14 sit on a seven-day grid anchored at today; 3 and 9 deliberately
@@ -76,6 +97,97 @@ test("a workspace with no earlier Review says so honestly", async ({ page }) => 
   await expect(
     historyPanel(page).getByText("No earlier review has been saved yet.")
   ).toBeVisible();
+});
+
+test("an unsaved Review Window opens derived evidence read-only and returns to this week", async ({
+  page
+}) => {
+  const ending = addLocalDays(localDateKey(new Date()), -9);
+  await createActivityOn(page, ending, 37);
+  await openReview(page);
+  const currentEyebrow = await page.locator(".page-eyebrow").textContent();
+
+  await page.getByRole("button", { name: "Earlier reviews" }).click();
+  await openReviewWindow(page, ending);
+
+  await expect(page.locator(".review-metrics")).toContainText("37m");
+  await expect(
+    page.getByRole("heading", { name: "No review was saved for this window" })
+  ).toBeVisible();
+  await expect(page.locator(".review-page textarea")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Save review$/ })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Back to this week" }).click();
+  await expect(page.locator(".page-eyebrow")).toHaveText(currentEyebrow ?? "");
+  await expect(page.locator(".review-page textarea")).toHaveCount(2);
+});
+
+test("a Review Window shows a saved Review only at matching boundaries", async ({
+  page
+}) => {
+  seedPastReviews([3]);
+  const ending = addLocalDays(localDateKey(new Date()), -3);
+  await openReview(page);
+  await page.getByRole("button", { name: "Earlier reviews" }).click();
+  await openReviewWindow(page, ending);
+
+  const pastCard = page.locator(".review-past-card");
+  await expect(pastCard.getByText("Saved 3 days ago")).toBeVisible();
+  await expect(pastCard.getByText("Intention from 3 days ago")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "No review was saved for this window" })
+  ).toHaveCount(0);
+});
+
+test("Review Window selection is latest-wins and a failed request preserves the visible window", async ({
+  page
+}) => {
+  const today = localDateKey(new Date());
+  const slowEnding = addLocalDays(today, -9);
+  const latestEnding = addLocalDays(today, -30);
+  const failingEnding = addLocalDays(today, -40);
+  await createActivityOn(page, slowEnding, 11);
+  await createActivityOn(page, latestEnding, 22);
+
+  let delaySlowRequest = true;
+  let failRequest = true;
+  await page.route("**/api/review/window?*", async (route) => {
+    const ending = new URL(route.request().url()).searchParams.get("ending");
+    if (ending === slowEnding && delaySlowRequest) {
+      delaySlowRequest = false;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    if (ending === failingEnding && failRequest) {
+      await route.fulfill({ status: 500, json: { error: "temporary" } });
+      return;
+    }
+    await route.continue();
+  });
+
+  await openReview(page);
+  await page.getByRole("button", { name: "Earlier reviews" }).click();
+  const panel = historyPanel(page);
+  await panel.getByLabel("Review window ending").fill(slowEnding);
+  await panel.getByRole("button", { name: "Open window" }).click();
+  await panel.getByLabel("Review window ending").fill(latestEnding);
+  await panel.getByRole("button", { name: "Opening\u2026" }).click();
+  await expect(page.locator(".review-metrics")).toContainText("22m");
+  await page.waitForTimeout(650);
+  await expect(page.locator(".review-metrics")).toContainText("22m");
+
+  const latestEyebrow = await page.locator(".page-eyebrow").textContent();
+  await panel.getByLabel("Review window ending").fill(failingEnding);
+  await panel.getByRole("button", { name: "Open window" }).click();
+  await expect(panel.getByRole("alert")).toContainText(
+    "Review Window could not be opened"
+  );
+  await expect(page.locator(".page-eyebrow")).toHaveText(latestEyebrow ?? "");
+  await expect(page.locator(".review-metrics")).toContainText("22m");
+
+  failRequest = false;
+  await panel.getByRole("button", { name: "Try again" }).click();
+  await expect(panel.getByRole("alert")).toHaveCount(0);
+  await expect(page.locator(".review-metrics")).not.toContainText("22m");
 });
 
 test("a Review saved for the current period stays out of history", async ({
@@ -141,6 +253,7 @@ test("Review history and a past period stay usable at phone width", async ({
   expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
   await entry.click();
   await expect(page.locator(".review-past-card")).toBeVisible();
+  await expect(historyPanel(page).getByLabel("Review window ending")).toBeVisible();
   expect(
     await page.evaluate(
       () =>

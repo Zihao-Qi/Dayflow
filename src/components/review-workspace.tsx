@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { BookOpen, Check, Save } from "lucide-react";
 import { SaveStateChip, useSaveState } from "@/components/save-state";
 import { useReviewHistory } from "@/components/use-review-history";
@@ -13,6 +14,7 @@ import {
 import type { ProjectSummary } from "@/lib/project-domain";
 import { formatInvestedMinutes } from "@/lib/project-domain";
 import type { PastReviewRecord } from "@/lib/review-records";
+import { addDays, localDateKey } from "@/lib/dates";
 import {
   REVIEW_INTENTION_MAX_LENGTH,
   REVIEW_NARRATIVE_MAX_LENGTH
@@ -87,16 +89,28 @@ export function ReviewPage({
 }) {
   const history = useReviewHistory();
   const past = history.selected;
-  const activeSummary: ReviewSummary = past ? past.reviewSummary : summary;
-  const activeProjects: ReviewMovedProject[] = past ? past.projects : projects;
-  const activePeriodEnd = past ? past.review.periodEnd : review.periodEnd;
+  const window = history.window;
+  const detail = window ?? past;
+  const activeSummary: ReviewSummary = detail ? detail.reviewSummary : summary;
+  const activeProjects: ReviewMovedProject[] = detail ? detail.projects : projects;
+  const activePeriodEnd = window
+    ? window.periodEnd
+    : past
+      ? past.review.periodEnd
+      : review.periodEnd;
+  const eyebrow = window
+    ? "Review window \u00b7 seven days ending"
+    : past
+      ? "Past review \u00b7 seven days ending"
+      : "Seven days ending";
+  const latestWindowEnding = localDateKey(
+    addDays(new Date(review.periodEnd), -2)
+  );
 
   return (
     <div className="review-page page-stack">
       <PageHeader
-        eyebrow={`${
-          past ? "Past review \u00b7 seven days ending" : "Seven days ending"
-        } ${formatReviewPeriodEnd(activePeriodEnd)}`}
+        eyebrow={`${eyebrow} ${formatReviewPeriodEnd(activePeriodEnd)}`}
         title="Review"
         actions={
           <button
@@ -112,7 +126,10 @@ export function ReviewPage({
       />
 
       {history.open && (
-        <ReviewHistoryPanel history={history} />
+        <ReviewHistoryPanel
+          history={history}
+          latestWindowEnding={latestWindowEnding}
+        />
       )}
 
       <ReviewEvidenceSections
@@ -121,7 +138,14 @@ export function ReviewPage({
         onOpenProject={onOpenProject}
       />
 
-      {past ? (
+      {window?.review ? (
+        <PastReviewCard
+          review={window.review}
+          onReturnToCurrent={history.clearSelection}
+        />
+      ) : window ? (
+        <EmptyReviewWindowCard onReturnToCurrent={history.clearSelection} />
+      ) : past ? (
         <PastReviewCard
           review={past.review}
           onReturnToCurrent={history.clearSelection}
@@ -136,6 +160,39 @@ export function ReviewPage({
         />
       )}
     </div>
+  );
+}
+
+function EmptyReviewWindowCard({
+  onReturnToCurrent
+}: {
+  onReturnToCurrent: () => void;
+}) {
+  return (
+    <section
+      className="panel review-editor-card review-past-card"
+      aria-labelledby="review-window-empty-heading"
+    >
+      <div className="review-editor-heading">
+        <div>
+          <span className="eyebrow">Evidence without saved writing</span>
+          <h2 id="review-window-empty-heading">
+            No review was saved for this window
+          </h2>
+        </div>
+        <button
+          type="button"
+          className="secondary-button"
+          onClick={onReturnToCurrent}
+        >
+          Back to this week
+        </button>
+      </div>
+      <p className="review-editor-intro">
+        The evidence is still available because Dayflow derives it from your
+        current records. Opening this window did not create or change a Review.
+      </p>
+    </section>
   );
 }
 
@@ -534,10 +591,14 @@ function PastReviewCard({
 }
 
 function ReviewHistoryPanel({
-  history
+  history,
+  latestWindowEnding
 }: {
   history: ReturnType<typeof useReviewHistory>;
+  latestWindowEnding: string;
 }) {
+  const [windowEnding, setWindowEnding] = useState(latestWindowEnding);
+
   return (
     <section
       className="panel review-history-panel"
@@ -552,6 +613,54 @@ function ReviewHistoryPanel({
           <strong>{history.totalCount}</strong>
         )}
       </div>
+
+      <section
+        className="review-window-picker"
+        aria-labelledby="review-window-picker-heading"
+      >
+        <div>
+          <span className="eyebrow">Browse evidence</span>
+          <h3 id="review-window-picker-heading">Open any past seven days</h3>
+        </div>
+        <form
+          className="review-window-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void history.selectWindow(windowEnding);
+          }}
+        >
+          <label htmlFor="review-window-ending">
+            <span>Review window ending</span>
+            <input
+              id="review-window-ending"
+              type="date"
+              required
+              max={latestWindowEnding}
+              value={windowEnding}
+              onChange={(event) => setWindowEnding(event.target.value)}
+            />
+          </label>
+          <button
+            type="submit"
+            className="secondary-button"
+            disabled={!windowEnding}
+          >
+            {history.windowLoading ? "Opening\u2026" : "Open window"}
+          </button>
+        </form>
+        {history.windowError && (
+          <p className="review-history-error" role="alert">
+            <span>{history.windowError}</span>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={history.retryWindow}
+            >
+              Try again
+            </button>
+          </p>
+        )}
+      </section>
 
       {history.error ? (
         <p className="review-history-error" role="alert">

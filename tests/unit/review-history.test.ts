@@ -6,8 +6,10 @@ import {
   decodeReviewCursor,
   encodeReviewCursor,
   isReviewIdentifier,
-  parseReviewHistoryPage
+  parseReviewHistoryPage,
+  parseReviewWindowRequest
 } from "../../src/lib/review-history";
+import { localDateKey } from "../../src/lib/dates";
 
 const params = (query: string) => new URLSearchParams(query);
 
@@ -92,5 +94,44 @@ test("Review identifiers reject path and wildcard characters before querying", (
   assert.equal(isReviewIdentifier("ckreview000000000000"), true);
   for (const value of ["", "../secrets", "a/b", "a b", "%", "a".repeat(65)]) {
     assert.equal(isReviewIdentifier(value), false, value);
+  }
+});
+
+test("Review Window anchors resolve seven local calendar days across daylight saving", () => {
+  const window = parseReviewWindowRequest(
+    params("ending=2026-03-08"),
+    new Date(2026, 2, 10, 12)
+  );
+
+  assert.equal(window.ending, "2026-03-08");
+  assert.equal(localDateKey(window.start), "2026-03-02");
+  assert.equal(localDateKey(window.end), "2026-03-09");
+  assert.equal(
+    (window.end.getTime() - window.start.getTime()) / (60 * 60 * 1_000),
+    167,
+    "spring daylight saving removes one elapsed hour without removing a local day"
+  );
+});
+
+test("Review Window anchors are canonical, singular, real, and strictly past", () => {
+  const now = new Date(2026, 8, 1, 12);
+  for (const query of [
+    "",
+    "ending=",
+    "ending=2026-08-31&ending=2026-08-30",
+    "ending=2026-02-30",
+    "ending=2026-8-31",
+    "ending=%202026-08-31",
+    "ending=2026-09-01",
+    "ending=2026-09-02"
+  ]) {
+    assert.throws(
+      () => parseReviewWindowRequest(params(query), now),
+      (error: unknown) =>
+        error instanceof ReviewHistoryRequestError &&
+        error.code === "VALIDATION_ERROR" &&
+        error.status === 400,
+      query
+    );
   }
 });

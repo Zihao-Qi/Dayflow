@@ -712,6 +712,12 @@ export function Dashboard() {
   async function retryBootstrap() {
     setBootstrapFailure(null);
     try {
+      if (!(await focus.reload())) {
+        throw new BootstrapRequestError(
+          "STARTUP_UNAVAILABLE",
+          GENERIC_BOOTSTRAP_FAILURE
+        );
+      }
       await refresh();
     } catch (error) {
       setBootstrapFailure(describeBootstrapFailure(error));

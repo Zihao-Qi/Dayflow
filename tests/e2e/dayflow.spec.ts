@@ -2597,6 +2597,227 @@ test("creates a project, keeps its plan on one page, and unifies its backlog", a
   ).toBeVisible();
 });
 
+test("moves an existing Project task between Phases and back to Project tasks", async ({
+  page
+}) => {
+  const projectResponse = await page.request.post("/api/projects", {
+    data: { name: "Reorganize the project plan" }
+  });
+  expect(projectResponse.status()).toBe(201);
+  const project = (await projectResponse.json()) as { id: string };
+
+  const foundationResponse = await page.request.post(
+    `/api/projects/${project.id}/phases`,
+    { data: { name: "Foundation" } }
+  );
+  const deliveryResponse = await page.request.post(
+    `/api/projects/${project.id}/phases`,
+    { data: { name: "Delivery" } }
+  );
+  expect(foundationResponse.status()).toBe(201);
+  expect(deliveryResponse.status()).toBe(201);
+  const foundation = (await foundationResponse.json()) as { id: string };
+
+  const taskResponse = await page.request.post("/api/tasks", {
+    data: {
+      title: "Choose the architecture",
+      projectId: project.id,
+      phaseId: foundation.id,
+      date: null
+    }
+  });
+  expect(taskResponse.status()).toBe(201);
+
+  await openDashboard(page);
+  await page.getByRole("button", { name: /Projects/ }).click();
+  await page
+    .getByRole("button", { name: /Reorganize the project plan/ })
+    .click();
+
+  const taskPhase = page.getByLabel("Phase for Choose the architecture");
+  await expect(taskPhase).toHaveValue(foundation.id);
+
+  await taskPhase.selectOption({ label: "Delivery" });
+  await expect(
+    page
+      .locator(".project-phase-section")
+      .filter({ has: page.getByLabel("Phase name: Delivery") })
+      .getByLabel("Task title: Choose the architecture")
+  ).toBeVisible();
+
+  await page
+    .getByLabel("Phase for Choose the architecture")
+    .selectOption({ label: "No phase" });
+  await expect(
+    page
+      .locator(".project-phase-section")
+      .filter({ has: page.getByText("Project tasks", { exact: true }) })
+      .getByLabel("Task title: Choose the architecture")
+  ).toBeVisible();
+});
+
+test("deletes a Project task after explicit confirmation", async ({ page }) => {
+  const projectResponse = await page.request.post("/api/projects", {
+    data: { name: "Remove an obsolete plan step" }
+  });
+  expect(projectResponse.status()).toBe(201);
+  const project = (await projectResponse.json()) as { id: string };
+
+  const taskResponse = await page.request.post("/api/tasks", {
+    data: {
+      title: "Discard the obsolete draft",
+      projectId: project.id,
+      date: null
+    }
+  });
+  expect(taskResponse.status()).toBe(201);
+
+  await openDashboard(page);
+  await page.getByRole("button", { name: /Projects/ }).click();
+  await page
+    .getByRole("button", { name: /Remove an obsolete plan step/ })
+    .click();
+
+  const deleteTask = page.getByRole("button", {
+    name: "Delete task Discard the obsolete draft"
+  });
+  await deleteTask.click();
+  const confirmation = page.getByRole("alertdialog", {
+    name: "Delete task Discard the obsolete draft"
+  });
+  await expect(confirmation).toBeVisible();
+  await expect(
+    confirmation.getByText("This permanently removes the task.", { exact: true })
+  ).toBeVisible();
+  await expect(
+    confirmation.getByRole("button", { name: "Keep task", exact: true })
+  ).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(confirmation).toHaveCount(0);
+  await expect(deleteTask).toBeFocused();
+
+  await deleteTask.click();
+
+  await confirmation
+    .getByRole("button", { name: "Delete task", exact: true })
+    .click();
+  await expect(
+    page.getByLabel("Task title: Discard the obsolete draft")
+  ).toHaveCount(0);
+  await expect(
+    page.getByText("No steps yet. Add one concrete action above.", { exact: true })
+  ).toBeVisible();
+});
+
+test("keeps a Project task and its confirmation open when deletion fails", async ({
+  page
+}) => {
+  const projectResponse = await page.request.post("/api/projects", {
+    data: { name: "Keep a task after failure" }
+  });
+  const project = (await projectResponse.json()) as { id: string };
+  const taskResponse = await page.request.post("/api/tasks", {
+    data: {
+      title: "Preserve this task",
+      projectId: project.id,
+      date: null
+    }
+  });
+  expect(taskResponse.status()).toBe(201);
+
+  await openDashboard(page);
+  await page.getByRole("button", { name: /Projects/ }).click();
+  await page.getByRole("button", { name: /Keep a task after failure/ }).click();
+  await page.route("**/api/tasks/*", async (route) => {
+    if (route.request().method() === "DELETE") {
+      await route.fulfill({
+        status: 500,
+        json: { error: "Task could not be deleted." }
+      });
+      return;
+    }
+    await route.continue();
+  });
+
+  await page
+    .getByRole("button", { name: "Delete task Preserve this task" })
+    .click();
+  const confirmation = page.getByRole("alertdialog", {
+    name: "Delete task Preserve this task"
+  });
+  await confirmation
+    .getByRole("button", { name: "Delete task", exact: true })
+    .click();
+
+  await expect(confirmation).toBeVisible();
+  await expect(
+    confirmation.getByText("Task could not be deleted. Try again.", {
+      exact: true
+    })
+  ).toBeVisible();
+  await expect(page.getByLabel("Task title: Preserve this task")).toHaveCount(1);
+});
+
+test("deletes a Phase while preserving its Tasks at the Project root", async ({
+  page
+}) => {
+  const projectResponse = await page.request.post("/api/projects", {
+    data: { name: "Simplify the project plan" }
+  });
+  expect(projectResponse.status()).toBe(201);
+  const project = (await projectResponse.json()) as { id: string };
+  const phaseResponse = await page.request.post(
+    `/api/projects/${project.id}/phases`,
+    { data: { name: "Temporary grouping" } }
+  );
+  expect(phaseResponse.status()).toBe(201);
+  const phase = (await phaseResponse.json()) as { id: string };
+  const taskResponse = await page.request.post("/api/tasks", {
+    data: {
+      title: "Keep this concrete action",
+      projectId: project.id,
+      phaseId: phase.id,
+      date: null
+    }
+  });
+  expect(taskResponse.status()).toBe(201);
+
+  await openDashboard(page);
+  await page.getByRole("button", { name: /Projects/ }).click();
+  await page.getByRole("button", { name: /Simplify the project plan/ }).click();
+
+  await page
+    .getByRole("button", { name: "Delete phase Temporary grouping" })
+    .click();
+  const confirmation = page.getByRole("alertdialog", {
+    name: "Delete phase Temporary grouping"
+  });
+  await expect(
+    confirmation.getByText(
+      "Its 1 Task will be preserved and moved to the Project root.",
+      { exact: true }
+    )
+  ).toBeVisible();
+  await expect(
+    confirmation.getByRole("button", { name: "Keep phase", exact: true })
+  ).toBeFocused();
+  await confirmation
+    .getByRole("button", { name: "Delete phase", exact: true })
+    .click();
+
+  await expect(page.getByLabel("Phase name: Temporary grouping")).toHaveCount(0);
+  await expect(
+    page
+      .locator(".project-root-tasks")
+      .getByLabel("Task title: Keep this concrete action")
+  ).toBeVisible();
+  await expect(
+    page
+      .locator(".project-next-step")
+      .getByText(/Project root · backlog/)
+  ).toBeVisible();
+});
+
 test("supports the redesigned Journal and Review destinations", async ({ page }) => {
   await openDashboard(page);
 

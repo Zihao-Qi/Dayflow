@@ -8917,6 +8917,22 @@ html[data-figure-arrangement="false"] {
   font-weight: 500;
 }
 
+.project-delete-confirm > p {
+  margin: 0 0 18px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.project-delete-confirm > .project-confirm-error {
+  margin-top: -8px;
+  padding: 9px 10px;
+  border: 1px solid rgba(166, 77, 68, 0.28);
+  border-radius: 8px;
+  background: rgba(166, 77, 68, 0.06);
+  color: var(--danger);
+}
+
 .project-delete-confirm ul {
   display: grid;
   gap: 6px;
@@ -8935,6 +8951,122 @@ html[data-figure-arrangement="false"] {
 
 .project-delete-confirm-button {
   background: var(--clay);
+}
+
+.phase-delete {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  min-width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+}
+
+.phase-delete:hover,
+.phase-delete:focus-visible,
+.project-task-delete:hover,
+.project-task-delete:focus-visible {
+  border-color: rgba(166, 77, 68, 0.28);
+  background: rgba(166, 77, 68, 0.06);
+  color: var(--danger);
+}
+
+.project-task {
+  grid-template-areas: "check title state schedule deadline delete";
+  grid-template-columns: 28px minmax(150px, 1fr) auto auto auto 28px;
+}
+
+.project-task.has-phase-options {
+  grid-template-areas: "check title phase state schedule deadline delete";
+  grid-template-columns: 28px minmax(150px, 1fr) minmax(118px, 148px) auto auto auto 28px;
+}
+
+.project-task > .check-button {
+  grid-area: check;
+}
+
+.project-task-title {
+  grid-area: title;
+}
+
+.project-task-phase {
+  grid-area: phase;
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  font-size: 11.5px;
+}
+
+.project-task-focus,
+.project-task-state {
+  grid-area: state;
+}
+
+.project-schedule-button,
+.project-task-meta {
+  grid-area: schedule;
+}
+
+.project-task-deadline,
+.project-task-deadline-spacer {
+  grid-area: deadline;
+}
+
+.project-task-delete {
+  grid-area: delete;
+  width: 28px;
+  min-width: 28px;
+  min-height: 28px;
+  height: 28px;
+}
+
+html[data-layout-mode="compact"] {
+  .project-task,
+  .project-task.has-phase-options {
+    grid-template-areas:
+      "check title title delete"
+      ". phase state schedule"
+      ". deadline deadline deadline";
+    grid-template-columns: 28px minmax(120px, 1fr) auto auto;
+  }
+
+  .project-task:not(.has-phase-options) {
+    grid-template-areas:
+      "check title title delete"
+      ". state schedule schedule"
+      ". deadline deadline deadline";
+  }
+}
+
+html[data-layout-mode="phone"] {
+  .project-task,
+  .project-task.has-phase-options {
+    grid-template-areas:
+      "check title delete"
+      ". phase phase"
+      ". state schedule"
+      ". deadline deadline";
+    grid-template-columns: 34px minmax(0, 1fr) auto;
+  }
+
+  .project-task:not(.has-phase-options) {
+    grid-template-areas:
+      "check title delete"
+      ". state schedule"
+      ". deadline deadline";
+  }
+
+  .project-task-delete,
+  .phase-delete {
+    width: 44px;
+    min-width: 44px;
+    min-height: 44px;
+    height: 44px;
+  }
 }
 
 .journal-footer input[type="range"] {

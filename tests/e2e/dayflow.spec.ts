@@ -2786,6 +2786,14 @@ test("deletes a Phase while preserving its Tasks at the Project root", async ({
   await page.getByRole("button", { name: /Projects/ }).click();
   await page.getByRole("button", { name: /Simplify the project plan/ }).click();
 
+  const addTaskPanel = page.locator(".project-plan-add");
+  await addTaskPanel
+    .getByLabel("New Project task")
+    .fill("Add this after deleting the Phase");
+  await addTaskPanel
+    .getByLabel("Task phase")
+    .selectOption({ label: "Temporary grouping" });
+
   await page
     .getByRole("button", { name: "Delete phase Temporary grouping" })
     .click();
@@ -2815,6 +2823,19 @@ test("deletes a Phase while preserving its Tasks at the Project root", async ({
     page
       .locator(".project-next-step")
       .getByText(/Project root · backlog/)
+  ).toBeVisible();
+
+  const createTask = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/tasks") &&
+      response.request().method() === "POST"
+  );
+  await addTaskPanel.getByRole("button", { name: "Add", exact: true }).click();
+  expect((await createTask).ok()).toBe(true);
+  await expect(
+    page
+      .locator(".project-root-tasks")
+      .getByLabel("Task title: Add this after deleting the Phase")
   ).toBeVisible();
 });
 

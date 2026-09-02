@@ -863,7 +863,7 @@ function ProjectDetailWorkspace({
   }
 
   async function deletePhase(id: string) {
-    return request(
+    const deleted = await request(
       `/api/phases/${id}`,
       { method: "DELETE" },
       (value) =>
@@ -874,6 +874,12 @@ function ProjectDetailWorkspace({
             value.ok === true
         )
     );
+    if (deleted) {
+      setNewTaskPhase((selectedPhase) =>
+        selectedPhase === id ? "" : selectedPhase
+      );
+    }
+    return deleted;
   }
 
   async function completeProject() {

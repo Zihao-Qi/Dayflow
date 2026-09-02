@@ -283,6 +283,32 @@ type Bootstrap = {
   reviewSummary: ReviewSummary;
 };
 
+type BootstrapFailure = {
+  code: string;
+  message: string;
+};
+
+const GENERIC_BOOTSTRAP_FAILURE =
+  "Dayflow could not open its local data. Check that the local server is running, then try again.";
+
+class BootstrapRequestError extends Error {
+  code: string;
+
+  constructor(code: string, message: string) {
+    super(message);
+    this.name = "BootstrapRequestError";
+    this.code = code;
+  }
+}
+
+function describeBootstrapFailure(error: unknown): BootstrapFailure {
+  if (error instanceof BootstrapRequestError) {
+    return { code: error.code, message: error.message };
+  }
+
+  return { code: "BOOTSTRAP_UNAVAILABLE", message: GENERIC_BOOTSTRAP_FAILURE };
+}
+
 const emptyNoteCaptureDraft: NoteCaptureDraft = {
   content: "",
   tags: "",
@@ -485,6 +511,8 @@ export function Dashboard() {
   const compactLayout = layoutMode !== "desktop";
   const phoneLayout = layoutMode === "phone";
   const [data, setData] = useState<Bootstrap | null>(null);
+  const [bootstrapFailure, setBootstrapFailure] =
+    useState<BootstrapFailure | null>(null);
   const [screen, setScreen] = useState<Screen>("today");
   const [railExpanded, setRailExpanded] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -587,7 +615,9 @@ export function Dashboard() {
       time: formatTimeInput(new Date())
     }));
     setFirstRunSeen(window.localStorage.getItem("dayflow-first-run-seen") === "1");
-    void refresh();
+    void refresh().catch((error: unknown) => {
+      if (!disposed) setBootstrapFailure(describeBootstrapFailure(error));
+    });
     scheduleDayRefresh();
 
     return () => {
@@ -637,8 +667,24 @@ export function Dashboard() {
   async function refresh() {
     const response = await fetch("/api/bootstrap", { cache: "no-store" });
     const result = await response.json().catch(() => null);
+    if (!response.ok) {
+      const code =
+        result &&
+        typeof result === "object" &&
+        "code" in result &&
+        typeof result.code === "string"
+          ? result.code
+          : "BOOTSTRAP_UNAVAILABLE";
+      const message =
+        result &&
+        typeof result === "object" &&
+        "error" in result &&
+        typeof result.error === "string"
+          ? result.error
+          : GENERIC_BOOTSTRAP_FAILURE;
+      throw new BootstrapRequestError(code, message);
+    }
     if (
-      !response.ok ||
       !result ||
       typeof result !== "object" ||
       typeof result.workspaceEmpty !== "boolean" ||
@@ -654,9 +700,22 @@ export function Dashboard() {
         (category: unknown) => typeof category === "string"
       )
     ) {
-      throw new Error("Dayflow could not refresh its latest data.");
+      throw new BootstrapRequestError(
+        "INVALID_BOOTSTRAP_RESPONSE",
+        "Dayflow received an invalid local data response. Try again."
+      );
     }
     setData(result as Bootstrap);
+    setBootstrapFailure(null);
+  }
+
+  async function retryBootstrap() {
+    setBootstrapFailure(null);
+    try {
+      await refresh();
+    } catch (error) {
+      setBootstrapFailure(describeBootstrapFailure(error));
+    }
   }
 
   async function refreshAfterConfirmedMutation() {
@@ -2148,6 +2207,44 @@ export function Dashboard() {
     } finally {
       setTimeBlockSaving(false);
     }
+  }
+
+  if (!data && bootstrapFailure) {
+    const migrationRequired =
+      bootstrapFailure.code === "DATABASE_MIGRATION_REQUIRED";
+    return (
+      <main className="startup-error-screen">
+        <section className="startup-error-card" role="alert">
+          <span className="eyebrow">Local data</span>
+          <h1>
+            {migrationRequired
+              ? "Update Dayflow's local database"
+              : "Dayflow could not open"}
+          </h1>
+          {migrationRequired ? (
+            <>
+              <p>
+                Your data is still in place, but this version of Dayflow needs
+                the latest checked-in database migrations.
+              </p>
+              <code>npm run db:migrate</code>
+              <p className="startup-error-note">
+                Stop Dayflow before running the command, then start it again.
+              </p>
+            </>
+          ) : (
+            <p>{bootstrapFailure.message}</p>
+          )}
+          <button
+            className="primary-button"
+            onClick={() => void retryBootstrap()}
+          >
+            <RefreshCw aria-hidden="true" size={16} />
+            Try again
+          </button>
+        </section>
+      </main>
+    );
   }
 
   if (!data) {

@@ -52,6 +52,9 @@ app runs locally without accounts or hosted services.
 - Browser-installable Dayflow identity with a standalone launch surface,
   deterministic branded icons, and explicit desktop and Apple metadata. The
   installed app still requires the local Dayflow server.
+- Actionable startup recovery when the local database is behind the checked-in
+  schema, replacing an indefinite loading state with the safe migration command
+  and a retry path.
 - Deadline-aware urgency that increases as a due date approaches.
 - Portable, formula-safe CSV downloads for complete Task and Activity history,
   alongside a versioned JSON export for agents.
@@ -132,6 +135,11 @@ When updating an existing local checkout after a schema change, run:
 ```bash
 npm run db:migrate
 ```
+
+If Dayflow starts against an older schema, the app shows this migration command
+instead of remaining on its opening screen. Dayflow does not attempt to migrate
+a database while the application has connections open; stop the development
+server, run the command, and start Dayflow again.
 
 For a recognized existing Dayflow database, this first creates and verifies a
 retained `dayflow-safety-before-migration-…dayflow-backup` artifact beside the

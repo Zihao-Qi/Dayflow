@@ -58,6 +58,50 @@ button {
   color: var(--muted);
 }
 
+.startup-error-screen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.startup-error-card {
+  width: min(100%, 520px);
+  padding: 28px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.startup-error-card h1 {
+  margin: 8px 0 10px;
+  font-size: clamp(24px, 5vw, 34px);
+  line-height: 1.1;
+}
+
+.startup-error-card p {
+  margin: 0 0 18px;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.startup-error-card code {
+  display: block;
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  overflow-wrap: anywhere;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--ink);
+}
+
+.startup-error-card .startup-error-note {
+  margin-bottom: 20px;
+  font-size: 13px;
+}
+
 .spin {
   animation: spin 0.9s linear infinite;
 }

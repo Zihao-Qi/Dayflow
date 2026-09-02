@@ -1,6 +1,6 @@
 # Dayflow Project Status and Plan
 
-Last updated: July 29, 2026
+Last updated: August 30, 2026
 
 ## Project Goal
 
@@ -79,6 +79,11 @@ The day-navigation contract is:
 
 - `docs/specs/DAY_NAVIGATION_V1.md` — implemented August 23, 2026, amending
   the today-only rule in `docs/specs/TIME_BLOCKS_V1.md`
+
+Startup recovery was hardened on August 30, 2026. A database that is behind the
+checked-in Prisma schema now produces a typed migration-required response and a
+browser-visible recovery screen with the safe migration command and retry
+action, instead of leaving Dayflow on an indefinite opening state.
 
 The canonical workspace navigation decision is:
 
@@ -201,6 +206,9 @@ Funemployment Day has a narrower and immediately understandable promise around r
   safety copy that was actually created.
 - Runs browser, migration, and destructive backup tests against disposable
   databases outside the user’s active data path.
+- Classifies missing-table and missing-column bootstrap failures as an outdated
+  local schema, gives the user the checked-in migration command without
+  exposing database details, and keeps generic startup failures retryable.
 
 ### Projects and Multi-Layer Planning
 
@@ -455,6 +463,11 @@ npm run typecheck
 npm run build
 ```
 
+The complete August 30, 2026 reliability gate passed with 168 unit tests, 35
+backup/integration tests, every migration fixture, the production build, and
+129 Chromium browser tests. This includes a real outdated-schema bootstrap
+contract test and browser coverage for actionable migration recovery and retry.
+
 The Playwright browser suite runs against a disposable SQLite database in the
 operating system's temporary directory. It covers focus-session persistence and
 Activity recording, activity deletion, task completion, section navigation,
@@ -640,8 +653,10 @@ Additional front-end debugging recorded in `DAYFLOW_CHANGELOG.md`:
    resumes.
 2. Validate Manual Time Blocks, Activity editing, and the weekly Review through
    daily use before widening those workflows.
-3. Validate installed launch behavior and specify useful offline semantics as
+3. Specify browsing an arbitrary seven-day Review window by anchor day, using
+   the existing resolved-interval read path without changing saved Reviews.
+4. Validate installed launch behavior and specify useful offline semantics as
    a separate reliability contract.
-4. Keep the handoff convention:
+5. Keep the handoff convention:
    - Gemini records front-end design and UI changes in `DAYFLOW_CHANGELOG.md`.
    - This file records product status, implementation status, limitations, and development plan.

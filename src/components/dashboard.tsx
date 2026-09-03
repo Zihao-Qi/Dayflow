@@ -2478,21 +2478,25 @@ function TodayPage({
   const firstCarry = unfinishedTasks[0];
   const [reorderMode, setReorderMode] = useState(false);
   // On a phone the day's own list is the page; Later stays folded away behind
-  // it. But when nothing is scheduled at all, these backlog tasks are the only
+  // it. But with nothing left to act on, these backlog tasks are the only
   // useful content on the screen, so lead with them instead of hiding them.
-  const dayIsEmpty = tasks.length === 0;
-  const [laterOpen, setLaterOpen] = useState(dayIsEmpty);
-  const dayWasEmpty = useRef(dayIsEmpty);
+  //
+  // This counts open tasks, not all tasks: `tasks` keeps completed ones, so
+  // checking its length would miss the most common way a day empties out —
+  // ticking off the last thing on it.
+  const nothingLeftToday = open.length === 0;
+  const [laterOpen, setLaterOpen] = useState(nothingLeftToday);
+  const hadNothingLeft = useRef(nothingLeftToday);
   const reorderButtonRef = useRef<HTMLButtonElement | null>(null);
   const instructionDoneRef = useRef<HTMLButtonElement | null>(null);
 
-  // Completing or unscheduling the last task empties the day after mount, so
-  // the initial value alone is not enough. Only the transition into empty
-  // reopens the section; while it stays empty, an explicit collapse sticks.
+  // Completing, deleting or unscheduling the last open task empties the day
+  // after mount, so the initial value alone is not enough. Only the transition
+  // into empty reopens the section; while it stays empty, a collapse sticks.
   useEffect(() => {
-    if (dayIsEmpty && !dayWasEmpty.current) setLaterOpen(true);
-    dayWasEmpty.current = dayIsEmpty;
-  }, [dayIsEmpty]);
+    if (nothingLeftToday && !hadNothingLeft.current) setLaterOpen(true);
+    hadNothingLeft.current = nothingLeftToday;
+  }, [nothingLeftToday]);
 
   useEffect(() => {
     if (!reorderMode) return;

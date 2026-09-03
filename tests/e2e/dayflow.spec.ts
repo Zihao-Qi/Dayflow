@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { localDateKey } from "./activity-date-helpers";
 import { DEFAULT_FOCUS_MINUTES } from "../../src/lib/focus-domain";
 import {
   resetTestDatabase,
@@ -3177,6 +3178,46 @@ test("keeps phone, tablet, and desktop navigation modes exclusive at their bound
   expect(
     (desktopSidebarBox?.x ?? 0) + (desktopSidebarBox?.width ?? 0)
   ).toBeLessThanOrEqual((desktopWorkspaceBox?.x ?? 0) + 1);
+});
+
+test("reopens Later on a phone once the last open task is completed", async ({
+  page
+}) => {
+  // `tasks` retains completed tasks, so an emptiness check based on its length
+  // misses this path entirely: ticking off the last task leaves one DONE task
+  // behind and the day still looks occupied. That is the most common way a day
+  // empties out, so it is pinned here.
+  await page.setViewportSize({ width: 390, height: 900 });
+
+  // Both tasks exist before the first render, so the day starts occupied and
+  // Later starts folded away. Adding them through the UI would leave it open,
+  // since an already-open section is never auto-collapsed.
+  for (const task of [
+    { title: "Waiting in the backlog", date: null },
+    { title: "The only thing today", date: localDateKey(new Date()) }
+  ]) {
+    const created = await page.request.post("/api/tasks", {
+      data: { ...task, estimateMinutes: 30, urgentScore: 4, importanceScore: 4 }
+    });
+    expect(created.ok()).toBe(true);
+  }
+
+  await openDashboard(page);
+
+  const later = page.locator(".responsive-later-section");
+  await expect(later).not.toHaveAttribute("open", /.*/);
+
+  await page
+    .getByRole("button", { name: "Complete The only thing today", exact: true })
+    .click();
+
+  await expect(
+    page.getByRole("heading", { name: "All done for today" })
+  ).toBeVisible();
+  await expect(later).toHaveAttribute("open", /.*/);
+  await expect(
+    later.getByRole("button", { name: /Waiting in the backlog/ })
+  ).toBeVisible();
 });
 
 test("stamps the layout mode before hydration, with no app bundle at all", async ({

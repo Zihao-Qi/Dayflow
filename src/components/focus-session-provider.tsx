@@ -171,7 +171,7 @@ export function FocusSessionProvider({ children }: { children: React.ReactNode }
     const title = session.kind === "BREAK" ? "Break complete" : "Focus session complete";
     const body =
       session.kind === "BREAK"
-        ? "Ready for the next focused block?"
+        ? "Ready for the next focus session?"
         : `${session.label} is complete. Add details whenever you are ready.`;
     new Notification(title, { body });
   }, []);

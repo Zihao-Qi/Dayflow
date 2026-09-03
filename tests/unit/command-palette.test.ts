@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { DEFAULT_FOCUS_MINUTES } from "../../src/lib/focus-domain";
 import {
   MATERIAL_URL_MAX_LENGTH,
   NOTE_CONTENT_MAX_LENGTH
@@ -61,9 +62,11 @@ test("empty query returns fixed actions and deterministic Project suggestions", 
       "project:d"
     ]
   );
+  // The palette must propose the same duration as the Focus Rail, the sidebar
+  // button and ⌘⇧F, so this asserts the shared constant rather than a literal.
   assert.deepEqual(resolution.items[0]?.intent, {
     kind: "start-focus",
-    plannedMinutes: 50
+    plannedMinutes: DEFAULT_FOCUS_MINUTES
   });
   assert.deepEqual(resolution.items[1]?.intent, {
     kind: "draft-task",

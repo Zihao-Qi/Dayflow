@@ -160,3 +160,10 @@ export function suggestedBreakMinutes(focusMinutes: number) {
   if (focusMinutes >= 25) return 5;
   return Math.max(2, Math.round(focusMinutes / 5));
 }
+
+/**
+ * The focus duration every entry point proposes before the user chooses one.
+ * The Focus Rail, the sidebar button, the ⌘⇧F shortcut, and the Capture
+ * palette must all open on the same number.
+ */
+export const DEFAULT_FOCUS_MINUTES = 25;

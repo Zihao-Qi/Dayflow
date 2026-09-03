@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { DEFAULT_FOCUS_MINUTES } from "../../src/lib/focus-domain";
 import {
   resetTestDatabase,
   seedJournalHistory,
@@ -14,7 +15,7 @@ async function openDashboard(page: Page) {
     window.localStorage.setItem("dayflow-first-run-seen", "1");
   });
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: /blocks? left$/ })).toBeVisible({
+  await expect(page.getByRole("heading", { name: /(tasks? left|Nothing scheduled yet|All done for today)$/ })).toBeVisible({
     timeout: 30_000
   });
 }
@@ -43,7 +44,7 @@ async function addBacklogTask(page: Page, title: string) {
   });
   expect(response.ok()).toBe(true);
   await page.reload();
-  await expect(page.getByRole("heading", { name: /blocks? left$/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /(tasks? left|Nothing scheduled yet|All done for today)$/ })).toBeVisible();
 }
 
 /**
@@ -105,7 +106,9 @@ test("uses the redesigned navigation, command palette, and contextual focus rail
   const palette = page.getByRole("dialog", { name: "Search or add" });
   await expect(palette).toBeVisible();
   await expect(
-    palette.getByText("Start a 50m Focus Session", { exact: true })
+    palette.getByText(`Start a ${DEFAULT_FOCUS_MINUTES}m Focus Session`, {
+      exact: true
+    })
   ).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(palette).toHaveCount(0);
@@ -1014,7 +1017,7 @@ test("persists a focus session in the rail and collapses it to a strip", async (
 
   await expect(reloadedRail.getByRole("heading", { name: "2m counted" })).toBeVisible();
   await reloadedRail
-    .getByPlaceholder("Add a note if it will help you remember this block.")
+    .getByPlaceholder("Add a note if it will help you remember this session.")
     .fill("Verified the persistent completion record");
   await reloadedRail.getByRole("button", { name: "Still going" }).click();
   await reloadedRail.getByRole("button", { name: "Continue to a 2m break" }).click();
@@ -1790,7 +1793,7 @@ test("keeps completed evidence committed when the next Focus start fails", async
     })
   );
 
-  await expect(rail.getByText("Start a block", { exact: true })).toBeVisible();
+  await expect(rail.getByText("Start a focus session", { exact: true })).toBeVisible();
   await expect(
     rail.getByText("The next queue item could not be started.", { exact: true })
   ).toBeVisible();
@@ -2923,7 +2926,7 @@ test("supports the redesigned Journal and Review destinations", async ({ page })
   );
 
   await page.reload();
-  await expect(page.getByRole("heading", { name: /blocks? left$/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /(tasks? left|Nothing scheduled yet|All done for today)$/ })).toBeVisible();
   await page.getByRole("button", { name: "Review", exact: true }).click();
   await expect(
     page.getByLabel("What moved forward?", { exact: true })

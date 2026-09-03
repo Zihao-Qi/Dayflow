@@ -192,7 +192,7 @@ export function DayPage({
           className="log-totals"
           aria-label={isToday ? "Today’s log totals" : "Log totals for this day"}
         >
-          <span>{formatMinutes(blockedMinutes)} blocked</span>
+          <span>{formatMinutes(blockedMinutes)} planned</span>
           <strong>{formatMinutes(recordedMinutes)} recorded</strong>
           <span>
             {activities.length} {activities.length === 1 ? "session" : "sessions"}
@@ -352,13 +352,18 @@ function DayStream({
       ? tasks.filter((task) => task.id !== activeFocus.taskId)
       : tasks.slice(1)
     : tasks;
+  // The marker only means something once there is something on one side of
+  // it. On an empty day the sentence explains a diagram that isn't drawn yet.
+  const hasEntries = activities.length > 0 || tasks.length > 0;
   return (
     <section className="day-view">
-      <p className="view-explainer">
-        {canAct
-          ? "Above the marker is what happened. Below it is what is still planned — that part you can still change."
-          : "Recorded activity and scheduled work for this day are shown without present-time actions."}
-      </p>
+      {hasEntries && (
+        <p className="view-explainer">
+          {canAct
+            ? "Above the marker is what happened. Below it is what is still planned — that part you can still change."
+            : "Recorded activity and scheduled work for this day are shown without present-time actions."}
+        </p>
+      )}
       <div className="day-stream">
         {[...activities].reverse().map((activity) => {
           const projectId =
@@ -595,7 +600,7 @@ function DayTimeline({
                     0
                   )
                 )}`
-              : "No time blocked yet"}
+              : "No time blocks yet"}
           </strong>
         </div>
         {onCreateBlock && (

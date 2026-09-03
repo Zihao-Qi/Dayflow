@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 
 export type LayoutMode = "phone" | "compact" | "desktop";
 
-const layoutBreakpoints = {
+export const layoutBreakpoints = {
   phone: 620,
   // Chrome changes at 1180 because the sidebar and rail no longer fit; Figure
   // changes at 700 because its data no longer fits. Those constraints cannot

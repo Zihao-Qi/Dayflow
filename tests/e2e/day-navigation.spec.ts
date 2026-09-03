@@ -10,7 +10,7 @@ async function openLog(page: Page) {
     window.localStorage.setItem("dayflow-first-run-seen", "1");
   });
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: /blocks? left$/ })).toBeVisible({
+  await expect(page.getByRole("heading", { name: /(tasks? left|Nothing scheduled yet|All done for today)$/ })).toBeVisible({
     timeout: 30_000
   });
   await page.getByRole("button", { name: "Log", exact: true }).click();

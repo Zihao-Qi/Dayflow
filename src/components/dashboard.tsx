@@ -42,6 +42,15 @@ import {
   formatLongLocalDateKey,
   formatMinutes
 } from "@/components/dashboard-formatters";
+import {
+  ActivityDraft,
+  ActivityEntry,
+  ActivityTaskOption,
+  PendingMutation,
+  isActivityResponse,
+  mutationIdFor
+} from "@/components/activity-records";
+import { useActivityCapture } from "@/components/use-activity-capture";
 import { ProjectsWorkspace } from "@/components/projects-workspace";
 import { ReviewPage } from "@/components/review-workspace";
 import { FocusDraft, FocusRail } from "@/components/focus-timer";
@@ -71,6 +80,7 @@ import {
   useLayoutMode
 } from "@/components/use-layout-mode";
 import {
+  DEFAULT_FOCUS_MINUTES,
   focusRemainingSeconds,
   formatFocusClock
 } from "@/lib/focus-domain";
@@ -92,10 +102,7 @@ import {
   type JournalMaterialRecord,
   type JournalNoteRecord
 } from "@/lib/journal-records";
-import {
-  ACTIVITY_CATEGORY_MAX_LENGTH,
-  DEFAULT_ACTIVITY_CATEGORY
-} from "@/lib/activity-categories";
+import { ACTIVITY_CATEGORY_MAX_LENGTH } from "@/lib/activity-categories";
 import { ProjectSummary } from "@/lib/project-domain";
 import {
   resolvePalette,
@@ -125,26 +132,12 @@ type DayView = "stream" | "timeline";
 type JournalView = "daily" | "notes" | "references";
 type BacklogArrange = "figure" | "quadrant" | "project" | "due";
 type FocusTarget = Omit<FocusDraft, "revision">;
-type PendingMutation = { id: string; fingerprint: string };
 type TimeBlockEditor = {
   id: string | null;
   date: string;
   originalTask: TimeBlockTaskSummary | null;
   linkedTask: TimeBlockTaskSummary | null;
   draft: TimeBlockEditorDraft;
-};
-type ActivityDraft = {
-  date: string;
-  time: string;
-  duration: string;
-  category: string;
-  taskId: string;
-  projectId: string;
-  note: string;
-};
-type ActivityEditor = {
-  original: ActivityEntry;
-  draft: ActivityDraft;
 };
 type Task = {
   id: string;
@@ -174,7 +167,6 @@ type PaletteTaskRecord = Pick<
   | "focusQueuePosition"
   | "projectId"
 >;
-type ActivityTaskOption = Pick<Task, "id" | "title" | "projectId">;
 type JournalTaskOption = Pick<Task, "id" | "title" | "projectId">;
 
 type Note = JournalNoteRecord;
@@ -218,20 +210,6 @@ type MaterialCaptureDraft = {
 
 type TimeBlock = TimeBlockRecord;
 
-type ActivityEntry = {
-  id: string;
-  startedAt: string;
-  durationMinutes: number;
-  category: string;
-  note: string;
-  origin: "MANUAL" | "FOCUS";
-  taskId: string | null;
-  projectId: string | null;
-  attributedProjectId: string | null;
-  focusSessionId: string | null;
-  createdAt: string;
-  updatedAt: string;
-};
 
 type DayStat = {
   day: string;
@@ -402,28 +380,6 @@ function isTaskResponse(value: unknown): value is Task {
   );
 }
 
-function isActivityResponse(value: unknown): value is ActivityEntry {
-  if (!value || typeof value !== "object") return false;
-  const activity = value as Partial<ActivityEntry>;
-  return (
-    typeof activity.id === "string" &&
-    typeof activity.startedAt === "string" &&
-    Number.isInteger(activity.durationMinutes) &&
-    typeof activity.category === "string" &&
-    typeof activity.note === "string" &&
-    ["MANUAL", "FOCUS"].includes(String(activity.origin)) &&
-    (activity.taskId === null || typeof activity.taskId === "string") &&
-    (activity.projectId === null || typeof activity.projectId === "string") &&
-    (activity.attributedProjectId === null ||
-      typeof activity.attributedProjectId === "string") &&
-    (activity.focusSessionId === null ||
-      typeof activity.focusSessionId === "string") &&
-    typeof activity.createdAt === "string" &&
-    Number.isFinite(Date.parse(activity.createdAt)) &&
-    typeof activity.updatedAt === "string" &&
-    Number.isFinite(Date.parse(activity.updatedAt))
-  );
-}
 
 function timeBlockErrorFieldFrom(
   value: unknown
@@ -489,21 +445,6 @@ function isTaskReorderResponse(
   );
 }
 
-function mutationIdFor(
-  reference: React.MutableRefObject<PendingMutation | null>,
-  payload: unknown
-) {
-  const fingerprint = JSON.stringify(payload);
-  if (reference.current?.fingerprint === fingerprint) {
-    return reference.current.id;
-  }
-  const id =
-    typeof crypto.randomUUID === "function"
-      ? crypto.randomUUID()
-      : `dayflow-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  reference.current = { id, fingerprint };
-  return id;
-}
 
 export function Dashboard() {
   const focus = useFocusSession();
@@ -548,21 +489,6 @@ export function Dashboard() {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [projectCreateOpen, setProjectCreateOpen] = useState(false);
   const [focusDraft, setFocusDraft] = useState<FocusDraft | null>(null);
-  const [activityOpen, setActivityOpen] = useState(false);
-  const [activityCreateDraft, setActivityCreateDraft] =
-    useState<ActivityDraft>({
-      date: "",
-      time: "",
-      duration: "30",
-      category: DEFAULT_ACTIVITY_CATEGORY,
-      taskId: "",
-      projectId: "",
-      note: ""
-    });
-  const [activityEditor, setActivityEditor] =
-    useState<ActivityEditor | null>(null);
-  const [activityError, setActivityError] = useState("");
-  const [activitySaving, setActivitySaving] = useState(false);
   const [timeBlockEditor, setTimeBlockEditor] =
     useState<TimeBlockEditor | null>(null);
   const [timeBlockError, setTimeBlockError] = useState("");
@@ -581,12 +507,9 @@ export function Dashboard() {
   const taskCreateWasInError = useRef(false);
   const noteCreateWasInError = useRef(false);
   const materialCreateWasInError = useRef(false);
-  const activityCreateWasInError = useRef(false);
-  const activityEditWasInError = useRef(false);
   const taskCreateMutation = useRef<PendingMutation | null>(null);
   const noteCreateMutation = useRef<PendingMutation | null>(null);
   const materialCreateMutation = useRef<PendingMutation | null>(null);
-  const activityCreateMutation = useRef<PendingMutation | null>(null);
   const timeBlockCreateMutation = useRef<PendingMutation | null>(null);
   const paletteOpener = useRef<HTMLElement | null>(null);
 
@@ -610,10 +533,7 @@ export function Dashboard() {
       }, millisecondsUntilNextLocalDay() + 100);
     }
 
-    setActivityCreateDraft((current) => ({
-      ...current,
-      time: formatTimeInput(new Date())
-    }));
+    activity.initializeClock();
     setFirstRunSeen(window.localStorage.getItem("dayflow-first-run-seen") === "1");
     void refresh().catch((error: unknown) => {
       if (!disposed) setBootstrapFailure(describeBootstrapFailure(error));
@@ -655,7 +575,7 @@ export function Dashboard() {
       if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "f") {
         event.preventDefault();
         if (!focus.active) {
-          setFocusDraft({ revision: Date.now(), plannedMinutes: 25 });
+          setFocusDraft({ revision: Date.now(), plannedMinutes: DEFAULT_FOCUS_MINUTES });
           if (screen !== "today") setRailExpanded(true);
         }
       }
@@ -750,37 +670,32 @@ export function Dashboard() {
 
   const openTodayTasks = todayTasks.filter((task) => task.status !== "DONE");
   const doneTodayTasks = todayTasks.filter((task) => task.status === "DONE");
-  const activeActivityDraft =
-    activityEditor?.draft ?? activityCreateDraft;
-  const activityDialogTasks = useMemo(() => {
-    const options: ActivityTaskOption[] = todayTasks.map(
-      ({ id, title, projectId }) => ({ id, title, projectId })
-    );
-    const original = activityEditor?.original;
-    if (!original?.taskId || options.some(({ id }) => id === original.taskId)) {
-      return options;
-    }
-    const task =
-      data?.tasks.find(({ id }) => id === original.taskId) ??
-      data?.paletteTasks.find(({ id }) => id === original.taskId);
-    options.push(
-      task
-        ? {
-            id: task.id,
-            title: task.title,
-            projectId: task.projectId
-          }
-        : {
-            id: original.taskId,
-            title: "Previously linked task",
-            projectId:
-              original.projectId === null
-                ? original.attributedProjectId
-                : null
-          }
-    );
-    return options;
-  }, [activityEditor?.original, data?.paletteTasks, data?.tasks, todayTasks]);
+  const activityKnownTasks = useMemo(
+    () => [...(data?.tasks ?? []), ...(data?.paletteTasks ?? [])],
+    [data?.paletteTasks, data?.tasks]
+  );
+  const activity = useActivityCapture({
+    todayKey: data?.todayKey ?? null,
+    todayTasks,
+    knownTasks: activityKnownTasks,
+    replaceActivity: (saved) =>
+      setData((current) =>
+        current
+          ? {
+              ...current,
+              activities: current.activities
+                .map((entry) => (entry.id === saved.id ? saved : entry))
+                .sort(
+                  (left, right) =>
+                    new Date(right.startedAt).getTime() -
+                    new Date(left.startedAt).getTime()
+                )
+            }
+          : current
+      ),
+    announce: setAppAnnouncement,
+    refreshAfterConfirmedMutation
+  });
   const journalTaskOptions = useMemo(() => {
     const byId = new Map<string, JournalTaskOption>();
     for (const task of [...(data?.paletteTasks ?? []), ...(data?.tasks ?? [])]) {
@@ -952,57 +867,6 @@ export function Dashboard() {
     setRailExpanded(true);
   }
 
-  function openActivityCreate() {
-    setActivityCreateDraft((current) =>
-      current.note
-        ? current
-        : {
-            ...current,
-            date: data?.todayKey ?? current.date,
-            time: formatTimeInput(new Date())
-          }
-    );
-    setActivityEditor(null);
-    setActivityError("");
-    setActivityOpen(true);
-  }
-
-  function openActivityEdit(activity: ActivityEntry) {
-    if (activity.origin !== "MANUAL" || activity.focusSessionId) return;
-    setActivityEditor({
-      original: activity,
-      draft: {
-        date: localDateKey(new Date(activity.startedAt)),
-        time: formatTimeInput(new Date(activity.startedAt)),
-        duration: String(activity.durationMinutes),
-        category: activity.category,
-        taskId: activity.taskId ?? "",
-        projectId: activity.projectId ?? "",
-        note: activity.note
-      }
-    });
-    setActivityError("");
-    setActivityOpen(true);
-  }
-
-  function changeActivityDraft(patch: Partial<ActivityDraft>) {
-    if (activityEditor) {
-      setActivityEditor((current) =>
-        current
-          ? { ...current, draft: { ...current.draft, ...patch } }
-          : current
-      );
-    } else {
-      setActivityCreateDraft((current) => ({ ...current, ...patch }));
-    }
-    setActivityError("");
-  }
-
-  function closeActivityDialog() {
-    setActivityOpen(false);
-    setActivityEditor(null);
-    setActivityError("");
-  }
 
   function activatePaletteItem(item: PaletteItem) {
     closeCommandPaletteForHandoff();
@@ -1041,7 +905,7 @@ export function Dashboard() {
         focusTaskDraft();
         return;
       case "draft-activity":
-        openActivityCreate();
+        activity.openCreate();
         return;
       case "draft-note":
         applyPaletteDraft(item.intent.content, (content) =>
@@ -1211,7 +1075,7 @@ export function Dashboard() {
         openFocus({
           taskId: result.id,
           label: result.title,
-          plannedMinutes: 25
+          plannedMinutes: DEFAULT_FOCUS_MINUTES
         });
       }
     } catch {
@@ -1768,178 +1632,6 @@ export function Dashboard() {
     setAppError("");
   }
 
-  async function saveActivity() {
-    if (activitySaving) return;
-    const editor = activityEditor;
-    const draft = editor?.draft ?? activityCreateDraft;
-    const minutes = Number(draft.duration);
-    if (!draft.note.trim()) {
-      setActivityError("Add a short note about what happened.");
-      return;
-    }
-    if (!Number.isFinite(minutes) || minutes < 1 || minutes > 1440) {
-      setActivityError("Duration must be between 1 and 1440 minutes.");
-      return;
-    }
-    const selectedDate = draft.date.trim();
-    if (
-      !editor &&
-      (!parseLocalDate(selectedDate) ||
-        !data?.todayKey ||
-        selectedDate > data.todayKey)
-    ) {
-      setActivityError("Choose today or an earlier Activity date.");
-      return;
-    }
-    const selectedCategory = draft.category.trim();
-    if (
-      !selectedCategory ||
-      selectedCategory.length > ACTIVITY_CATEGORY_MAX_LENGTH
-    ) {
-      setActivityError(
-        `Category must contain 1 to ${ACTIVITY_CATEGORY_MAX_LENGTH} characters.`
-      );
-      return;
-    }
-    const editable = {
-      startTime: draft.time,
-      durationMinutes: minutes,
-      category: selectedCategory,
-      taskId: draft.taskId || null,
-      projectId: draft.projectId || null,
-      note: draft.note.trim()
-    };
-    const selectedTaskProjectId =
-      activityDialogTasks.find(({ id }) => id === editable.taskId)?.projectId ??
-      null;
-    const expectedAttributedProjectId =
-      editor &&
-      editable.taskId === editor.original.taskId &&
-      editable.projectId === editor.original.projectId &&
-      editor.original.projectId === null &&
-      editor.original.attributedProjectId
-        ? editor.original.attributedProjectId
-        : selectedTaskProjectId ?? editable.projectId;
-    const payload = editor
-      ? editable
-      : { ...editable, date: selectedDate };
-    const mutationId = editor
-      ? null
-      : mutationIdFor(activityCreateMutation, payload);
-    setActivitySaving(true);
-    try {
-      const response = await fetch(
-        editor
-          ? `/api/activities/${encodeURIComponent(editor.original.id)}`
-          : "/api/activities",
-        {
-          method: editor ? "PUT" : "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(mutationId
-              ? { "X-Dayflow-Mutation-Id": mutationId }
-              : {})
-          },
-          body: JSON.stringify(payload)
-        }
-      );
-      const result = await response.json().catch(() => null);
-      const expectedDate = editor
-        ? localDateKey(new Date(editor.original.startedAt))
-        : selectedDate;
-      if (
-        !response.ok ||
-        !isActivityResponse(result) ||
-        (editor && result.id !== editor.original.id) ||
-        (editor && result.createdAt !== editor.original.createdAt) ||
-        (editor &&
-          Date.parse(result.updatedAt) <=
-            Date.parse(editor.original.updatedAt)) ||
-        result.origin !== "MANUAL" ||
-        result.focusSessionId !== null ||
-        localDateKey(new Date(result.startedAt)) !== expectedDate ||
-        formatTimeInput(new Date(result.startedAt)) !== editable.startTime ||
-        result.note !== payload.note ||
-        result.durationMinutes !== payload.durationMinutes ||
-        result.category !== payload.category ||
-        result.taskId !== editable.taskId ||
-        result.projectId !== editable.projectId ||
-        result.attributedProjectId !== expectedAttributedProjectId
-      ) {
-        setActivityError(
-          result && typeof result.error === "string"
-            ? result.error
-            : editor
-              ? "Activity could not be updated. Your draft is still here."
-              : "Activity could not be saved. Your draft is still here."
-        );
-        if (editor) {
-          activityEditWasInError.current = true;
-        } else {
-          activityCreateWasInError.current = true;
-        }
-        return;
-      }
-      if (editor) {
-        setData((current) =>
-          current
-            ? {
-                ...current,
-                activities: current.activities
-                  .map((activity) =>
-                    activity.id === result.id ? result : activity
-                  )
-                  .sort(
-                    (left, right) =>
-                      new Date(right.startedAt).getTime() -
-                      new Date(left.startedAt).getTime()
-                  )
-              }
-            : current
-        );
-        setActivityEditor(null);
-      } else {
-        setActivityCreateDraft((current) => ({
-          ...current,
-          date: data?.todayKey ?? current.date,
-          note: "",
-          taskId: "",
-          projectId: ""
-        }));
-        activityCreateMutation.current = null;
-        if (selectedDate !== data?.todayKey) {
-          setAppAnnouncement(
-            `Activity saved for ${formatLongLocalDateKey(selectedDate)}.`
-          );
-        }
-      }
-      setActivityError("");
-      setActivityOpen(false);
-      if (
-        editor
-          ? activityEditWasInError.current
-          : activityCreateWasInError.current
-      ) {
-        activityEditWasInError.current = false;
-        activityCreateWasInError.current = false;
-        setAppAnnouncement("Saved.");
-      }
-      await refreshAfterConfirmedMutation();
-    } catch {
-      setActivityError(
-        editor
-          ? "Activity could not be updated. Your draft is still here."
-          : "Activity could not be saved. Your draft is still here."
-      );
-      if (editor) {
-        activityEditWasInError.current = true;
-      } else {
-        activityCreateWasInError.current = true;
-      }
-    } finally {
-      setActivitySaving(false);
-    }
-  }
 
   function defaultTimeBlockTimes(durationMinutes: number) {
     const now = new Date();
@@ -2342,7 +2034,7 @@ export function Dashboard() {
           <button
             className="sidebar-focus-button focus-button"
             onClick={() => {
-              setFocusDraft({ revision: Date.now(), plannedMinutes: 25 });
+              setFocusDraft({ revision: Date.now(), plannedMinutes: DEFAULT_FOCUS_MINUTES });
               setRailExpanded(true);
             }}
           >
@@ -2362,12 +2054,12 @@ export function Dashboard() {
         <footer className="sidebar-focus-summary">
           <span className="eyebrow">Today&apos;s focus</span>
           <strong>{formatMinutes(focusedMinutes)}</strong>
-          <div className="focus-pips" aria-label={`${completedSessions} of 4 planned blocks`}>
+          <div className="focus-pips" aria-label={`${completedSessions} of 4 focus sessions`}>
             {[0, 1, 2, 3].map((index) => (
               <i key={index} className={index < completedSessions ? "filled" : ""} />
             ))}
           </div>
-          <small>{completedSessions} of 4 planned blocks</small>
+          <small>{completedSessions} of 4 focus sessions</small>
         </footer>
       </aside>
 
@@ -2465,7 +2157,7 @@ export function Dashboard() {
             onOpenPalette={openCommandPalette}
             onCreateTimeBlock={openTimeBlockEditor}
             onEditTimeBlock={editTimeBlock}
-            onEditActivity={openActivityEdit}
+            onEditActivity={activity.openEdit}
           />
         )}
 
@@ -2664,26 +2356,26 @@ export function Dashboard() {
         />
       )}
 
-      {activityOpen && (
+      {activity.open && (
         <ActivityDialog
-          mode={activityEditor ? "edit" : "create"}
-          tasks={activityDialogTasks}
+          mode={activity.editor ? "edit" : "create"}
+          tasks={activity.dialogTasks}
           projects={data.projects}
           todayKey={data.todayKey}
           categorySuggestions={data.activityCategorySuggestions}
-          draft={activeActivityDraft}
-          originalTaskId={activityEditor?.original.taskId ?? null}
+          draft={activity.draft}
+          originalTaskId={activity.editor?.original.taskId ?? null}
           originalInheritedProjectId={
-            activityEditor?.original.taskId &&
-            activityEditor.original.projectId === null
-              ? activityEditor.original.attributedProjectId
+            activity.editor?.original.taskId &&
+            activity.editor.original.projectId === null
+              ? activity.editor.original.attributedProjectId
               : null
           }
-          error={activityError}
-          saving={activitySaving}
-          onDraftChange={changeActivityDraft}
-          onClose={closeActivityDialog}
-          onSave={saveActivity}
+          error={activity.error}
+          saving={activity.saving}
+          onDraftChange={activity.changeDraft}
+          onClose={activity.close}
+          onSave={activity.save}
         />
       )}
       {dataManagementOpen && (
@@ -2785,7 +2477,10 @@ function TodayPage({
   const done = tasks.filter((task) => task.status === "DONE");
   const firstCarry = unfinishedTasks[0];
   const [reorderMode, setReorderMode] = useState(false);
-  const [laterOpen, setLaterOpen] = useState(false);
+  // On a phone the day's own list is the page; Later stays folded away behind
+  // it. But when nothing is scheduled at all, these backlog tasks are the only
+  // useful content on the screen, so lead with them instead of hiding them.
+  const [laterOpen, setLaterOpen] = useState(() => tasks.length === 0);
   const reorderButtonRef = useRef<HTMLButtonElement | null>(null);
   const instructionDoneRef = useRef<HTMLButtonElement | null>(null);
 
@@ -2829,7 +2524,7 @@ function TodayPage({
     <div className="today-page page-stack">
       <PageHeader
         eyebrow={formatLongDate(today)}
-        title={`${numberWord(open.length)} ${open.length === 1 ? "block" : "blocks"} left`}
+        title={todayHeadline(open.length, done.length)}
         actions={
           <div className="today-metrics">
             <span>{plannedMinutes}m planned</span>
@@ -3021,7 +2716,7 @@ function TodayPage({
           {!open.length && (
             <div className="quiet-empty">
               <strong>The day is clear.</strong>
-              <span>Add one deliberate block when you are ready.</span>
+              <span>Add one deliberate task when you are ready.</span>
             </div>
           )}
         </div>
@@ -4059,14 +3754,19 @@ function JournalPage({
               ["daily", "Daily page"],
               [
                 "notes",
-                `Notes · ${noteHistory.totalCount ?? (view === "notes" ? notes.length : "…")}`
+                countedLabel(
+                  "Notes",
+                  noteHistory.totalCount ??
+                    (view === "notes" ? notes.length : null)
+                )
               ],
               [
                 "references",
-                `References · ${
+                countedLabel(
+                  "References",
                   materialHistory.totalCount ??
-                  (view === "references" ? materials.length : "…")
-                }`
+                    (view === "references" ? materials.length : null)
+                )
               ]
             ]}
             onChange={onViewChange}
@@ -4873,6 +4573,15 @@ function ReferenceCards({
   );
 }
 
+/**
+ * A tab count is only shown once it is actually known. These histories load on
+ * demand, so promising a number and rendering an ellipsis forever is worse
+ * than the plain name.
+ */
+function countedLabel(name: string, count: number | null) {
+  return count === null ? name : `${name} · ${count}`;
+}
+
 function noteOptionLabel(note: Note) {
   const summary = note.content.replace(/\s+/g, " ").trim();
   return summary.length > 72 ? `${summary.slice(0, 71).trimEnd()}…` : summary;
@@ -5215,13 +4924,19 @@ function formatBacklogDue(value: string | null, today: string) {
   return formatShortDate(value);
 }
 
-function formatTimeInput(value: Date) {
-  return `${String(value.getHours()).padStart(2, "0")}:${String(
-    value.getMinutes()
-  ).padStart(2, "0")}`;
-}
 
 function numberWord(value: number) {
   const words = ["No", "One", "Two", "Three", "Four", "Five", "Six"];
   return words[value] ?? String(value);
+}
+
+/**
+ * A day with nothing on it has not been finished — it was never planned.
+ * Saying "none left" in both cases claims a completion that did not happen.
+ */
+function todayHeadline(openCount: number, doneCount: number) {
+  if (openCount === 0) {
+    return doneCount === 0 ? "Nothing scheduled yet" : "All done for today";
+  }
+  return `${numberWord(openCount)} ${openCount === 1 ? "task" : "tasks"} left`;
 }

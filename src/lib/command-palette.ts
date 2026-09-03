@@ -1,3 +1,4 @@
+import { DEFAULT_FOCUS_MINUTES } from "@/lib/focus-domain";
 import {
   MATERIAL_URL_MAX_LENGTH,
   NOTE_CONTENT_MAX_LENGTH
@@ -140,10 +141,13 @@ function defaultFocusAction(hasActiveFocus: boolean): SearchableAction {
         item: {
           id: "action:start-focus",
           group: "action",
-          label: "Start a 50m Focus Session",
-          intent: { kind: "start-focus", plannedMinutes: 50 }
+          label: `Start a ${DEFAULT_FOCUS_MINUTES}m Focus Session`,
+          intent: {
+            kind: "start-focus",
+            plannedMinutes: DEFAULT_FOCUS_MINUTES
+          }
         },
-        aliases: ["focus", "start focus", "timer", "focus 50"]
+        aliases: ["focus", "start focus", "timer", `focus ${DEFAULT_FOCUS_MINUTES}`]
       };
 }
 

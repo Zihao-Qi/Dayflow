@@ -2298,7 +2298,7 @@ test("caps and aligns the wide Backlog slab without recoloring focus states", as
   expect(controlStyle.troughRadius).toBe("8px");
   expect(controlStyle.troughBackground).toBe("rgb(247, 244, 237)");
   expect(controlStyle.activeHeight).toBeCloseTo(26, 0);
-  expect(controlStyle.activeFontSize).toBe("11.5px");
+  expect(controlStyle.activeFontSize).toBe("12px");
   expect(controlStyle.activeRadius).toBe("6px");
   expect(controlStyle.activeBackground).toBe("rgb(255, 253, 248)");
   expect(controlStyle.activeWeight).toBe("700");

@@ -7,6 +7,7 @@ import {
   CalendarDays,
   Check,
   ChevronDown,
+  ChevronRight,
   ChevronUp,
   Circle,
   Clock3,
@@ -54,16 +55,20 @@ type ProjectsWorkspaceProps = {
   }) => void;
 };
 
-type ProjectView = "cards" | "compact";
+type ProjectView = "cards" | "list";
 
 const PROJECTS_VIEW_STORAGE_KEY = "dayflow-projects-view";
 const PROJECT_VIEW_OPTIONS: Array<[ProjectView, string]> = [
   ["cards", "Cards"],
-  ["compact", "Compact"]
+  ["list", "List"]
 ];
 
+/**
+ * "compact" is the value this view was stored under before it was renamed.
+ * It is still accepted so an existing preference survives the rename.
+ */
 function parseProjectView(value: string | null): ProjectView {
-  return value === "compact" ? "compact" : "cards";
+  return value === "list" || value === "compact" ? "list" : "cards";
 }
 
 function readStoredProjectView(): ProjectView {
@@ -336,8 +341,8 @@ export function ProjectsWorkspace({
   }
 
   const visibleProjects = projects.filter((project) => project.status === filter);
-  const compactList = view === "compact" && visibleProjects.length > 0;
-  const ProjectOverviewItem = compactList ? ProjectRow : ProjectCard;
+  const showList = view === "list" && visibleProjects.length > 0;
+  const ProjectOverviewItem = showList ? ProjectRow : ProjectCard;
 
   return (
     <div className="projects-page">
@@ -404,7 +409,7 @@ export function ProjectsWorkspace({
 
       <section
         className={
-          compactList ? "project-list panel" : "project-card-grid"
+          showList ? "project-list panel" : "project-card-grid"
         }
         aria-label={`${projectStatusLabel(filter)} projects`}
       >
@@ -416,7 +421,7 @@ export function ProjectsWorkspace({
             onStartFocus={onStartFocus}
           />
         ))}
-        {compactList ? (
+        {showList ? (
           <button
             type="button"
             className="project-create-row"
@@ -647,6 +652,14 @@ function ProjectCreateForm({
   );
 }
 
+/**
+ * One project as a single row, with an optional drawer of its tasks.
+ *
+ * The disclosure is a dedicated button rather than a `<details>`/`<summary>`
+ * wrapper: the row already carries two controls (the name opens the Project,
+ * the Focus button starts a session) and anything inside a `<summary>` toggles
+ * it when clicked, so those would fight each other.
+ */
 function ProjectRow({
   project,
   onOpen,
@@ -656,15 +669,61 @@ function ProjectRow({
   onOpen: () => void;
   onStartFocus: ProjectsWorkspaceProps["onStartFocus"];
 }) {
+  const [expanded, setExpanded] = useState(false);
+  const [plan, setPlan] = useState<ProjectRowPlan | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const statusLabel = projectStatusLabel(project.status);
   const plannedMinutes = project.nextTaskEstimateMinutes ?? 30;
   const nextTaskTitle = project.nextTaskTitle ?? "Add a first task";
   const taskProgressLabel = project.taskCount
     ? `${project.completedTaskCount}/${project.taskCount} tasks`
     : "No tasks yet";
+  const drawerId = `project-tasks-${project.id}`;
+
+  // Tasks are not in the overview payload, so the first expand fetches the
+  // same detail the Project page uses and keeps it for later toggles.
+  async function toggle() {
+    const next = !expanded;
+    setExpanded(next);
+    if (!next || plan || loading) return;
+    setLoading(true);
+    setLoadError("");
+    try {
+      const response = await fetch(`/api/projects/${project.id}`, {
+        cache: "no-store"
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result || !Array.isArray(result.tasks)) {
+        throw new Error("unavailable");
+      }
+      setPlan({
+        tasks: result.tasks as ProjectTaskRecord[],
+        phases: Array.isArray(result.phases)
+          ? (result.phases as ProjectPhaseRecord[])
+          : []
+      });
+    } catch {
+      setLoadError("These tasks could not be loaded. Try again.");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   return (
-    <article className="project-row">
+    <article className={expanded ? "project-row is-expanded" : "project-row"}>
+      <button
+        type="button"
+        className="project-row-disclosure"
+        aria-expanded={expanded}
+        aria-controls={drawerId}
+        aria-label={
+          expanded ? `Hide tasks in ${project.name}` : `Show tasks in ${project.name}`
+        }
+        onClick={() => void toggle()}
+      >
+        <ChevronRight size={14} aria-hidden="true" />
+      </button>
       <span
         className={`project-row-dot status-${project.status.toLowerCase()}`}
         aria-hidden="true"
@@ -705,7 +764,134 @@ function ProjectRow({
           {plannedMinutes}m
         </button>
       )}
+      {expanded && (
+        <div className="project-row-drawer" id={drawerId}>
+          <ProjectRowTasks
+            projectName={project.name}
+            plan={plan}
+            loading={loading}
+            error={loadError}
+            onOpen={onOpen}
+            onRetry={() => void toggle()}
+          />
+        </div>
+      )}
     </article>
+  );
+}
+
+type ProjectRowPlan = {
+  tasks: ProjectTaskRecord[];
+  phases: ProjectPhaseRecord[];
+};
+
+/**
+ * Read-only on purpose. Editing, scheduling and phase management all live on
+ * the Project page; repeating them here would mean two places to keep in step.
+ */
+function ProjectRowTasks({
+  projectName,
+  plan,
+  loading,
+  error,
+  onOpen,
+  onRetry
+}: {
+  projectName: string;
+  plan: ProjectRowPlan | null;
+  loading: boolean;
+  error: string;
+  onOpen: () => void;
+  onRetry: () => void;
+}) {
+  if (loading) {
+    return (
+      <p className="project-row-drawer-state" role="status">
+        Loading tasks…
+      </p>
+    );
+  }
+
+  if (error) {
+    return (
+      <p className="project-row-drawer-state" role="alert">
+        {error}{" "}
+        <button type="button" className="text-button" onClick={onRetry}>
+          Try again
+        </button>
+      </p>
+    );
+  }
+
+  if (!plan) return null;
+
+  if (!plan.tasks.length) {
+    return (
+      <p className="project-row-drawer-state">
+        No tasks yet.{" "}
+        <button type="button" className="text-button" onClick={onOpen}>
+          Add the first one
+        </button>
+      </p>
+    );
+  }
+
+  const phaseName = new Map(plan.phases.map((phase) => [phase.id, phase.name]));
+  const groups: Array<{ key: string; label: string | null; tasks: ProjectTaskRecord[] }> = [];
+  const groupFor = (key: string, label: string | null) => {
+    const existing = groups.find((group) => group.key === key);
+    if (existing) return existing;
+    const created = { key, label, tasks: [] as ProjectTaskRecord[] };
+    groups.push(created);
+    return created;
+  };
+  for (const task of sortTasks(plan.tasks)) {
+    if (task.phaseId) {
+      groupFor(
+        `phase:${task.phaseId}`,
+        phaseName.get(task.phaseId) ?? "Other phase"
+      ).tasks.push(task);
+    } else {
+      groupFor("root", plan.phases.length ? "No phase" : null).tasks.push(task);
+    }
+  }
+
+  return (
+    <>
+      {groups.map((group) => (
+        <div key={group.key} className="project-row-task-group">
+          {group.label && (
+            <span className="project-row-phase">{group.label}</span>
+          )}
+          <ul className="project-row-task-list">
+            {group.tasks.map((task) => (
+              <li
+                key={task.id}
+                className={task.status === "DONE" ? "is-done" : undefined}
+              >
+                <span className="project-row-task-mark" aria-hidden="true">
+                  {task.status === "DONE" ? <Check size={11} /> : null}
+                </span>
+                <span className="project-row-task-title">{task.title}</span>
+                <span className="project-row-task-meta">
+                  {task.status === "DONE"
+                    ? "Done"
+                    : task.date
+                      ? "Scheduled"
+                      : "Backlog"}
+                </span>
+                <span className="project-row-task-estimate">
+                  {task.estimateMinutes}m
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+      <button type="button" className="text-button project-row-drawer-open" onClick={onOpen}>
+        Open {projectName}
+      </button>
+    </>
   );
 }
 

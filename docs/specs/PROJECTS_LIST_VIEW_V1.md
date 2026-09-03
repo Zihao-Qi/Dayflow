@@ -1,8 +1,9 @@
-# Projects Compact View v1
+# Projects List View v1
 
-Status: Proposed
+Status: Implemented
 Date: September 2, 2026
-Scope: An optional dense list presentation for the Projects overview
+Scope: An optional dense list presentation for the Projects overview,
+with per-Project task disclosure
 Issue: #36
 
 ## Purpose
@@ -11,17 +12,17 @@ The Projects overview renders every project as a spacious card with a
 290px minimum height. With more than a handful of projects, scanning and
 comparing them requires long vertical scrolling.
 
-Projects Compact View v1 adds a second, denser presentation of the same
+Projects List View v1 adds a second, denser presentation of the same
 overview. It is purely presentational: it changes how project summaries are
 laid out, not what a Project is, how it progresses, or what actions exist.
 
 ## Goals
 
 - Offer a clear, always-visible switch between the existing Cards view and a
-  new Compact view.
-- Show meaningfully more projects per viewport in Compact view without
+  new List view.
+- Show meaningfully more projects per viewport in List view without
   horizontal scrolling.
-- Keep essential information in every Compact row: name, status, progress,
+- Keep essential information in every List row: name, status, progress,
   next step, and the primary actions (open, start Focus).
 - Persist the chosen view on the same device across reloads.
 - Remain usable at the phone, compact, and desktop layout modes and with
@@ -42,19 +43,19 @@ arrangements use) appears in the Projects overview panel, on the same row as
 the status filters, right-aligned:
 
 ```
-[ Active 4 ] [ Paused 1 ] [ Completed 2 ] [ Archived 0 ]      [ Cards | Compact ]
+[ Active 4 ] [ Paused 1 ] [ Completed 2 ] [ Archived 0 ]      [ Cards | List ]
 ```
 
-- Two options only: **Cards** (current layout, default) and **Compact**.
+- Two options only: **Cards** (current layout, default) and **List**.
 - The control follows the shared segmented-control radio pattern: its wrapper
   is a `radiogroup` labeled `aria-label="Project view"`, and each option is a
   `radio` with `aria-checked` and roving `tabIndex`.
 - Switching views never changes the selected status filter, scroll intent, or
   any data.
 
-## Compact layout
+## List layout
 
-Compact view replaces the card grid with a single vertical list. Each project
+List view replaces the card grid with a single vertical list. Each project
 is one row inside one shared panel, so density comes from removing per-card
 chrome, not from shrinking text below readable sizes.
 
@@ -78,7 +79,7 @@ Row anatomy, left to right:
    status per list, the dot is decorative (`aria-hidden="true"`) and is not the
    only signal.
 2. **Name** — the row's open control (a button, like `.project-card-open`),
-   single line, ellipsized. `desiredOutcome` is not shown in Compact view; it
+   single line, ellipsized. `desiredOutcome` is not shown in List view; it
    remains available in Cards view and the detail page.
 3. **Progress** — a thin inline meter (reusing `.meter`, height reduced to
    4px) plus the percent, or an em dash when `progressPercent` is null.
@@ -89,17 +90,17 @@ Row anatomy, left to right:
    minutes (`▶ 25m`), rendered only when `nextTaskId` exists. Same handler
    and payload as Cards view.
 
-Deliberately omitted from Compact rows (still in Cards view and detail):
+Deliberately omitted from List rows (still in Cards view and detail):
 target date / duration remaining, invested minutes, weekly budget, phase
 count, and the outcome description. These are secondary for quick scanning;
-Compact view optimizes for "which project, how far along, what's next."
+List view optimizes for "which project, how far along, what's next."
 
 The "Start a finishable outcome" create card becomes a single slim row at the
 end of the list (`+ New project`), and the empty state is unchanged.
 
 ## Responsive behavior
 
-Compact view keys off the existing `data-layout-mode` attribute; no new
+List view keys off the existing `data-layout-mode` attribute; no new
 breakpoints are introduced.
 
 - **Desktop / compact modes**: the single-line row above. Columns use a stable
@@ -125,7 +126,7 @@ screens too.
   `dayflow-first-run-seen` precedent.
 - Missing, unreadable, or unrecognized values fall back to `"cards"`.
 - A lazy state initializer reads the value before the first Projects render,
-  avoiding a Cards-to-Compact flash. The value is written on every switch.
+  avoiding a Cards-to-List flash. The value is written on every switch.
   Storage failures (private browsing, quota) degrade silently to a session-only
   preference.
 - The preference is per device by design; it never round-trips the server.
@@ -159,8 +160,53 @@ screens too.
 
 | Issue criterion | Design answer |
 | --- | --- |
-| Clear way to switch views | Segmented Cards / Compact control in the overview panel |
+| Clear way to switch views | Segmented Cards / List control in the overview panel |
 | More projects per viewport, no horizontal scroll | ~60px rows vs ≥290px cards; rendered phone and large-count overflow checks |
 | Essential info and primary actions remain | Name, status, progress, tasks, next step, open, Focus |
 | Preserved across reloads on the device | `localStorage["dayflow-projects-view"]`; no intermediate Cards render |
 | Usable at breakpoints and via keyboard | Reuses layout modes; radio-group arrow-key and roving-tab-stop behavior |
+
+
+## Task disclosure (added with the rename)
+
+Each List row carries a leading disclosure control that reveals that
+Project's tasks in place.
+
+- The control is a dedicated `button` with `aria-expanded` and
+  `aria-controls`, **not** a `<details>` / `<summary>` wrapper. The row
+  already holds two controls — the Project name opens the Project, and the
+  Focus button starts a session — and any control inside a `summary` toggles
+  it when clicked, so the three would fight each other.
+- It sits in a new leading column, before the status dot, which is the
+  conventional position for a disclosure and reads as hierarchy rather than
+  as another row action.
+- Expanded rows tint faintly and the chevron rotates a quarter turn. Both
+  respect `prefers-reduced-motion`.
+- On phone the control spans both summary rows as a 44px-tall touch target.
+
+### Drawer contents
+
+Tasks are grouped by Phase when the Project defines any, otherwise listed
+flat. Each task shows its completion mark, title, whether it is Scheduled or
+in the Backlog, and its estimate. A trailing "Open <Project>" control leads
+to the Project workspace.
+
+The drawer is **read-only**. Editing, scheduling, and Phase management stay
+on the Project page; duplicating them here would mean two implementations to
+keep in step.
+
+### Loading
+
+Task lists are not part of the Projects overview payload, so the first
+expand fetches `GET /api/projects/:id` — the same detail the Project page
+uses — and keeps the result for later toggles of that row. The drawer
+reports its own loading, empty, and failure states, and a failed load offers
+a retry without collapsing the row.
+
+### Naming
+
+The view was called "Compact" through its first release. "Compact" describes
+density while its counterpart "Cards" describes form, and once rows expand
+the label is no longer even accurate. "List" pairs with "Cards" and survives
+the disclosure. The stored preference value `compact` is still read so an
+existing choice is not lost.

@@ -13,7 +13,7 @@ async function openDashboard(page: Page) {
     window.localStorage.setItem("dayflow-first-run-seen", "1");
   });
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: /blocks? left$/ })).toBeVisible({
+  await expect(page.getByRole("heading", { name: /(tasks? left|Nothing scheduled yet|All done for today)$/ })).toBeVisible({
     timeout: 30_000
   });
 }
@@ -81,7 +81,7 @@ test("defaults to Cards and persists Compact without a Cards flash", async ({
   await projectView.getByRole("radio", { name: "Compact", exact: true }).click();
   await expect(page.locator(".project-row")).toHaveCount(1);
   await page.reload();
-  await expect(page.getByRole("heading", { name: /blocks? left$/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /(tasks? left|Nothing scheduled yet|All done for today)$/ })).toBeVisible();
 
   await page.evaluate(() => {
     document.documentElement.dataset.projectsViewHistory = "";

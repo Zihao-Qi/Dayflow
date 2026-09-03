@@ -53,7 +53,7 @@ test("uses global workspace readiness instead of windowed bootstrap records", as
   expect(bootstrap.paletteTasks.some(({ id }) => id === task.id)).toBe(false);
 
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: /blocks? left$/ })).toBeVisible({
+  await expect(page.getByRole("heading", { name: /(tasks? left|Nothing scheduled yet|All done for today)$/ })).toBeVisible({
     timeout: 30_000
   });
   await expect(

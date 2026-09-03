@@ -227,7 +227,6 @@ function ReviewEvidenceSections({
       : `across ${summary.diaryDayCount} saved Diary ${
           summary.diaryDayCount === 1 ? "day" : "days"
         }`;
-
   return (
     <>
       <dl className="review-metrics" aria-label="Review period totals">

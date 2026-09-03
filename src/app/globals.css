@@ -1907,7 +1907,8 @@ html[data-layout-mode="phone"] {
   .matrix-persistent-task,
   .matrix-row-unroll,
   .matrix-figure-furniture,
-  .matrix-table-heading {
+  .matrix-table-heading,
+  .responsive-later-section > summary::after {
     transition-duration: 0.01ms !important;
     transition-delay: 0ms !important;
   }
@@ -9377,19 +9378,26 @@ html[data-layout-mode="phone"] {
     display: none;
   }
 
+  /* A chevron, not a plus: this control reveals the list, it does not add to
+     it. The adjacent hint already offers the "add" reading on its own. */
   .responsive-later-section > summary::after {
-    color: var(--muted);
-    content: "+";
-    font-size: var(--text-lg);
+    width: 9px;
+    height: 9px;
+    margin-right: 3px;
+    border-right: 2px solid var(--muted);
+    border-bottom: 2px solid var(--muted);
+    content: "";
+    transform: translateY(-2px) rotate(45deg);
+    transition: transform 0.18s ease;
   }
 
   .responsive-later-section[open] > summary::after {
-    content: "−";
+    transform: translateY(2px) rotate(225deg);
   }
 
   .responsive-later-section > summary small {
     margin-left: auto;
-    padding-right: 10px;
+    padding-right: 12px;
     color: var(--muted);
     font-size: var(--text-2xs);
   }

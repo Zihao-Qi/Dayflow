@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { useFocusSession } from "@/components/focus-session-provider";
 import {
+  DEFAULT_FOCUS_MINUTES,
   FocusSessionRecord,
   focusElapsedSeconds,
   focusRemainingSeconds,
@@ -112,7 +113,9 @@ export function FocusRail({
     error,
     notificationState
   } = focus;
-  const [preset, setPreset] = useState<"25" | "50" | "custom">("25");
+  const [preset, setPreset] = useState<"25" | "50" | "custom">(
+    `${DEFAULT_FOCUS_MINUTES}`
+  );
   const [customMinutes, setCustomMinutes] = useState("30");
   const [taskId, setTaskId] = useState("");
   const [projectId, setProjectId] = useState("");
@@ -163,6 +166,43 @@ export function FocusRail({
       }),
     [tasks, todayKey]
   );
+
+  // Rendering order only. `orderedTasks` still decides which task is
+  // preselected; this regroups the same tasks so a title like "edge" arrives
+  // with the Project that gives it meaning.
+  const taskGroups = useMemo(() => {
+    const projectName = new Map(
+      projects.map((project) => [project.id, project.name])
+    );
+    // Keyed by a stable id, not by the label: a Project genuinely named
+    // "Backlog" or "Scheduled today", or two Projects sharing a name, would
+    // otherwise be merged into one group and lose the context this exists to
+    // provide.
+    const groups = new Map<string, { label: string; items: FocusTask[] }>();
+    const push = (key: string, label: string, task: FocusTask) => {
+      const existing = groups.get(key);
+      if (existing) existing.items.push(task);
+      else groups.set(key, { label, items: [task] });
+    };
+
+    for (const task of orderedTasks) {
+      if (task.focusQueuePosition !== null && task.focusQueuePosition !== undefined) {
+        push("queue", "In the focus queue", task);
+      } else if (task.date?.slice(0, 10) === todayKey) {
+        push("today", "Scheduled today", task);
+      } else if (task.projectId) {
+        push(
+          `project:${task.projectId}`,
+          projectName.get(task.projectId) ?? "Other projects",
+          task
+        );
+      } else {
+        push("backlog", "Backlog", task);
+      }
+    }
+
+    return [...groups].map(([key, group]) => ({ key, ...group }));
+  }, [orderedTasks, projects, todayKey]);
 
   useEffect(() => {
     if (selectionInitialized || active || draft) return;
@@ -408,7 +448,7 @@ export function FocusRail({
           </>
         ) : (
           <section className="rail-card focus-idle-card">
-            <span className="eyebrow">Start a block</span>
+            <span className="eyebrow">Start a focus session</span>
             {focus.retryNext && (
               <button
                 className="secondary-button"
@@ -473,10 +513,14 @@ export function FocusRail({
                 }}
               >
                 <option value="">Choose a task or focus freely</option>
-                {orderedTasks.map((task) => (
-                  <option key={task.id} value={task.id}>
-                    {task.title}
-                  </option>
+                {taskGroups.map((group) => (
+                  <optgroup key={group.key} label={group.label}>
+                    {group.items.map((task) => (
+                      <option key={task.id} value={task.id}>
+                        {task.title}
+                      </option>
+                    ))}
+                  </optgroup>
                 ))}
               </select>
             </label>
@@ -548,7 +592,7 @@ export function FocusRail({
               </div>
             ))}
             {!activities.length && (
-              <p>No activity recorded yet. Your completed focus blocks will appear here.</p>
+              <p>No activity recorded yet. Your completed focus sessions will appear here.</p>
             )}
           </div>
           <button className="rail-link" onClick={onOpenPalette}>
@@ -950,7 +994,7 @@ function CompletionFocusCard({
           aria-label="Completion note"
           value={note}
           onChange={(event) => setNote(event.target.value)}
-          placeholder="Add a note if it will help you remember this block."
+          placeholder="Add a note if it will help you remember this session."
         />
       </label>
       <fieldset className="completion-categories">
@@ -1092,7 +1136,7 @@ function BreakFocusCard({
             {recordedBefore.note} · {recordedBefore.durationMinutes}m
           </strong>
         ) : (
-          <strong>Your completed focus block is safe in Log.</strong>
+          <strong>Your completed focus session is safe in Log.</strong>
         )}
       </section>
       {nextTask && <footer><span className="eyebrow">Up next</span><strong>{nextTask.title} · {nextTask.estimateMinutes || 25}m</strong></footer>}

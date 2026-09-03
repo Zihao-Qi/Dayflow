@@ -1,4 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
+import { localDateKey } from "./activity-date-helpers";
+import { DEFAULT_FOCUS_MINUTES } from "../../src/lib/focus-domain";
 import {
   resetTestDatabase,
   seedJournalHistory,
@@ -14,7 +16,7 @@ async function openDashboard(page: Page) {
     window.localStorage.setItem("dayflow-first-run-seen", "1");
   });
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: /blocks? left$/ })).toBeVisible({
+  await expect(page.getByRole("heading", { name: /(tasks? left|Nothing scheduled yet|All done for today)$/ })).toBeVisible({
     timeout: 30_000
   });
 }
@@ -43,7 +45,7 @@ async function addBacklogTask(page: Page, title: string) {
   });
   expect(response.ok()).toBe(true);
   await page.reload();
-  await expect(page.getByRole("heading", { name: /blocks? left$/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /(tasks? left|Nothing scheduled yet|All done for today)$/ })).toBeVisible();
 }
 
 /**
@@ -105,7 +107,9 @@ test("uses the redesigned navigation, command palette, and contextual focus rail
   const palette = page.getByRole("dialog", { name: "Search or add" });
   await expect(palette).toBeVisible();
   await expect(
-    palette.getByText("Start a 50m Focus Session", { exact: true })
+    palette.getByText(`Start a ${DEFAULT_FOCUS_MINUTES}m Focus Session`, {
+      exact: true
+    })
   ).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(palette).toHaveCount(0);
@@ -1014,7 +1018,7 @@ test("persists a focus session in the rail and collapses it to a strip", async (
 
   await expect(reloadedRail.getByRole("heading", { name: "2m counted" })).toBeVisible();
   await reloadedRail
-    .getByPlaceholder("Add a note if it will help you remember this block.")
+    .getByPlaceholder("Add a note if it will help you remember this session.")
     .fill("Verified the persistent completion record");
   await reloadedRail.getByRole("button", { name: "Still going" }).click();
   await reloadedRail.getByRole("button", { name: "Continue to a 2m break" }).click();
@@ -1790,7 +1794,7 @@ test("keeps completed evidence committed when the next Focus start fails", async
     })
   );
 
-  await expect(rail.getByText("Start a block", { exact: true })).toBeVisible();
+  await expect(rail.getByText("Start a focus session", { exact: true })).toBeVisible();
   await expect(
     rail.getByText("The next queue item could not be started.", { exact: true })
   ).toBeVisible();
@@ -2923,7 +2927,7 @@ test("supports the redesigned Journal and Review destinations", async ({ page })
   );
 
   await page.reload();
-  await expect(page.getByRole("heading", { name: /blocks? left$/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /(tasks? left|Nothing scheduled yet|All done for today)$/ })).toBeVisible();
   await page.getByRole("button", { name: "Review", exact: true }).click();
   await expect(
     page.getByLabel("What moved forward?", { exact: true })
@@ -3174,6 +3178,84 @@ test("keeps phone, tablet, and desktop navigation modes exclusive at their bound
   expect(
     (desktopSidebarBox?.x ?? 0) + (desktopSidebarBox?.width ?? 0)
   ).toBeLessThanOrEqual((desktopWorkspaceBox?.x ?? 0) + 1);
+});
+
+test("reopens Later on a phone once the last open task is completed", async ({
+  page
+}) => {
+  // `tasks` retains completed tasks, so an emptiness check based on its length
+  // misses this path entirely: ticking off the last task leaves one DONE task
+  // behind and the day still looks occupied. That is the most common way a day
+  // empties out, so it is pinned here.
+  await page.setViewportSize({ width: 390, height: 900 });
+
+  // Both tasks exist before the first render, so the day starts occupied and
+  // Later starts folded away. Adding them through the UI would leave it open,
+  // since an already-open section is never auto-collapsed.
+  for (const task of [
+    { title: "Waiting in the backlog", date: null },
+    { title: "The only thing today", date: localDateKey(new Date()) }
+  ]) {
+    const created = await page.request.post("/api/tasks", {
+      data: { ...task, estimateMinutes: 30, urgentScore: 4, importanceScore: 4 }
+    });
+    expect(created.ok()).toBe(true);
+  }
+
+  await openDashboard(page);
+
+  const later = page.locator(".responsive-later-section");
+  await expect(later).not.toHaveAttribute("open", /.*/);
+
+  await page
+    .getByRole("button", { name: "Complete The only thing today", exact: true })
+    .click();
+
+  await expect(
+    page.getByRole("heading", { name: "All done for today" })
+  ).toBeVisible();
+  await expect(later).toHaveAttribute("open", /.*/);
+  await expect(
+    later.getByRole("button", { name: /Waiting in the backlog/ })
+  ).toBeVisible();
+});
+
+test("stamps the layout mode before hydration, with no app bundle at all", async ({
+  page
+}) => {
+  // Every other layout-mode assertion runs after hydration, so useLayoutMode's
+  // effect can satisfy them even when the pre-paint script is broken. Blocking
+  // fetched scripts leaves the inline script as the only thing that can set
+  // these attributes. If layoutBreakpoints regresses to an import from a
+  // "use client" module it serializes as `undefined`, the script throws into
+  // its own catch, and nothing is stamped -- which this catches.
+  await page.route("**/*", (route) =>
+    route.request().resourceType() === "script"
+      ? route.abort()
+      : route.continue()
+  );
+
+  await page.setViewportSize({ width: 390, height: 900 });
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-layout-mode",
+    "phone"
+  );
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-figure-arrangement",
+    "false"
+  );
+
+  await page.setViewportSize({ width: 1300, height: 900 });
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-layout-mode",
+    "desktop"
+  );
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-figure-arrangement",
+    "true"
+  );
 });
 
 test("uses the 68px tablet rails and keeps captured activity in Today", async ({ page }) => {

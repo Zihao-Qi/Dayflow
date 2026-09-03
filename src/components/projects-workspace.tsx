@@ -1136,7 +1136,11 @@ function ProjectDetailWorkspace({
                 : "Open"}
             </strong>
             <small>
-              {detail.targetDate ? `Ends ${formatShortDate(detail.targetDate)}` : "No target date"}
+              {detail.targetDate
+                ? `Ends ${formatShortDate(detail.targetDate)}`
+                : detail.targetDurationValue && detail.targetDurationUnit
+                  ? "Intended span · no fixed end date"
+                  : "No target date"}
             </small>
           </div>
           <button
@@ -1239,7 +1243,7 @@ function ProjectDetailWorkspace({
                 onClick={() => document.getElementById("project-new-task")?.focus()}
               >
                 <Plus size={15} />
-                Add a step
+                Add a task
               </button>
             )}
           </>
@@ -1259,7 +1263,7 @@ function ProjectDetailWorkspace({
                 onKeyDown={(event) => {
                   if (event.key === "Enter") void addTask();
                 }}
-                placeholder="Add a step"
+                placeholder="Add a task"
                 aria-label="New Project task"
               />
               <select

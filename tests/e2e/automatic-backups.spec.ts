@@ -10,7 +10,7 @@ async function openDataAndBackups(page: Page) {
     window.localStorage.setItem("dayflow-first-run-seen", "1");
   });
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: /blocks? left$/ })).toBeVisible({
+  await expect(page.getByRole("heading", { name: /(tasks? left|Nothing scheduled yet|All done for today)$/ })).toBeVisible({
     timeout: 30_000
   });
   // On phone layouts the sidebar is replaced by the bottom tab bar, and

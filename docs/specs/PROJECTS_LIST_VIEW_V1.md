@@ -172,14 +172,19 @@ screens too.
 Each List row carries a leading disclosure control that reveals that
 Project's tasks in place.
 
-- The control is a dedicated `button` with `aria-expanded` and
-  `aria-controls`, **not** a `<details>` / `<summary>` wrapper. The row
-  already holds two controls — the Project name opens the Project, and the
-  Focus button starts a session — and any control inside a `summary` toggles
-  it when clicked, so the three would fight each other.
-- It sits in a new leading column, before the status dot, which is the
-  conventional position for a disclosure and reads as hierarchy rather than
-  as another row action.
+- The chevron, the status dot and the Project name are **one button**, so the
+  target is the whole left half of the row rather than a 14px glyph. Seeing
+  and editing a Project's tasks is the frequent errand; reading its metrics
+  is the rare one, so the frequent action gets the large target.
+- It is a `button` with `aria-expanded` and `aria-controls`, **not** a
+  `<details>` / `<summary>` wrapper. The row also carries a Focus button and
+  an overview button, and any control inside a `summary` toggles it when
+  clicked, so all three would fight each other.
+- The status dot is decorative, so the status is announced through the
+  button: its accessible name is "<Project>, <Status>".
+- Opening the Project workspace is its own small icon button at the end of
+  the row, pinned to its grid column because the Focus button beside it is
+  only rendered when the Project has a next task.
 - The chevron rotates a quarter turn, respecting `prefers-reduced-motion`.
   The row is not tinted and the drawer is not a card: it is separated by a
   hairline and an indent, the same treatment `.completed-group` and

@@ -26,6 +26,18 @@ async function createProject(page: Page, name: string) {
   return (await response.json()) as { id: string };
 }
 
+/**
+ * The toggle's accessible name is "<Project>, <Status>" — the status dot is
+ * decorative, so the status is announced through the button instead.
+ */
+function projectToggle(page: Page, name: string) {
+  return page.locator(".project-row-toggle").filter({ hasText: name });
+}
+
+function projectRowFor(page: Page, name: string) {
+  return page.locator(".project-row").filter({ has: projectToggle(page, name) });
+}
+
 async function openListProjects(page: Page) {
   await openDashboard(page);
   await page.getByRole("button", { name: /^Projects/ }).click();
@@ -59,9 +71,7 @@ test("keeps List Project open controls touch-sized on phone", async ({
   await createProject(page, "Touch-sized Project");
   await openListProjects(page);
 
-  const openTarget = await page
-    .getByRole("button", { name: "Touch-sized Project", exact: true })
-    .boundingBox();
+  const openTarget = await projectToggle(page, "Touch-sized Project").boundingBox();
   expect(openTarget).not.toBeNull();
   expect(openTarget!.height).toBeGreaterThanOrEqual(44);
 });
@@ -172,18 +182,8 @@ test("aligns List columns for Projects with and without tasks", async ({
   expect(taskResponse.status()).toBe(201);
   await openListProjects(page);
 
-  const withTaskRow = page.locator(".project-row").filter({
-    has: page.getByRole("button", {
-      name: "Project with a next task",
-      exact: true
-    })
-  });
-  const withoutTasksRow = page.locator(".project-row").filter({
-    has: page.getByRole("button", {
-      name: "Project without tasks",
-      exact: true
-    })
-  });
+  const withTaskRow = projectRowFor(page, "Project with a next task");
+  const withoutTasksRow = projectRowFor(page, "Project without tasks");
 
   for (const selector of [
     ".project-row-progress",
@@ -223,12 +223,8 @@ test("expands a List row to its tasks and leaves the row's own controls alone", 
 
   await openListProjects(page);
 
-  const row = page.locator(".project-row").filter({
-    has: page.getByRole("button", { name: "Expandable Project", exact: true })
-  });
-  const disclosure = row.getByRole("button", {
-    name: "Show tasks in Expandable Project"
-  });
+  const row = projectRowFor(page, "Expandable Project");
+  const disclosure = projectToggle(page, "Expandable Project");
 
   // Collapsed: the drawer does not exist, so its tasks are not merely hidden.
   await expect(disclosure).toHaveAttribute("aria-expanded", "false");
@@ -241,18 +237,17 @@ test("expands a List row to its tasks and leaves the row's own controls alone", 
   await expect(drawer.getByText("Still to do")).toBeVisible();
   await expect(drawer.getByText("Already finished")).toBeVisible();
   await expect(drawer.locator("li.is-done")).toHaveCount(1);
-  await expect(
-    row.getByRole("button", { name: "Hide tasks in Expandable Project" })
-  ).toHaveAttribute("aria-expanded", "true");
+  await expect(disclosure).toHaveAttribute("aria-expanded", "true");
 
-  // The row already carries an "open the Project" control and a Focus button.
-  // Expanding must not have navigated, and the Project name must still open
-  // the detail workspace rather than toggle the drawer.
+  // Expanding is not navigation: the overview is still on screen.
   await expect(
     page.getByRole("radiogroup", { name: "Project view" })
   ).toBeVisible();
 
-  await row.getByRole("button", { name: "Expandable Project", exact: true }).click();
+  // Opening the Project is its own explicit control at the end of the row.
+  await row
+    .getByRole("button", { name: "Open Expandable Project overview" })
+    .click();
   await expect(
     page.getByRole("heading", { name: "Expandable Project" })
   ).toBeVisible();
@@ -273,26 +268,18 @@ test("keeps each List row's drawer independent", async ({ page }) => {
 
   await openListProjects(page);
 
-  const firstRow = page.locator(".project-row").filter({
-    has: page.getByRole("button", { name: "First Project", exact: true })
-  });
-  const secondRow = page.locator(".project-row").filter({
-    has: page.getByRole("button", { name: "Second Project", exact: true })
-  });
+  const firstRow = projectRowFor(page, "First Project");
+  const secondRow = projectRowFor(page, "Second Project");
   // Scoped to the drawer: this title also appears as the row's "Next:" summary.
   const firstDrawerTask = firstRow
     .locator(".project-row-drawer")
     .getByText("Only in the first");
 
-  await page
-    .getByRole("button", { name: "Show tasks in First Project" })
-    .click();
+  await projectToggle(page, "First Project").click();
   await expect(firstDrawerTask).toBeVisible();
   await expect(secondRow.locator(".project-row-drawer")).toHaveCount(0);
 
-  await page
-    .getByRole("button", { name: "Show tasks in Second Project" })
-    .click();
+  await projectToggle(page, "Second Project").click();
   await expect(secondRow.getByText("No tasks yet.")).toBeVisible();
   await expect(firstDrawerTask).toBeVisible();
 });
@@ -319,7 +306,7 @@ test("labels only the scheduled tasks in a List drawer", async ({ page }) => {
   }
 
   await openListProjects(page);
-  await page.getByRole("button", { name: "Show tasks in Mixed Project" }).click();
+  await projectToggle(page, "Mixed Project").click();
 
   const drawer = page.locator(".project-row-drawer");
   const metaFor = (title: string) =>

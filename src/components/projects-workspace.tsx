@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   Archive,
   ArrowLeft,
+  ArrowUpRight,
   CalendarDays,
   Check,
   ChevronDown,
@@ -712,30 +713,30 @@ function ProjectRow({
 
   return (
     <article className={expanded ? "project-row is-expanded" : "project-row"}>
+      {/*
+        Chevron, status dot and name are one control. Opening the Project is
+        the rarer errand, so it gets the small explicit button at the end of
+        the row and this large target does the thing you came here to do.
+      */}
       <button
         type="button"
-        className="project-row-disclosure"
+        className="project-row-toggle"
         aria-expanded={expanded}
         aria-controls={drawerId}
-        aria-label={
-          expanded ? `Hide tasks in ${project.name}` : `Show tasks in ${project.name}`
-        }
+        title={project.name}
         onClick={() => void toggle()}
       >
-        <ChevronRight size={14} aria-hidden="true" />
-      </button>
-      <span
-        className={`project-row-dot status-${project.status.toLowerCase()}`}
-        aria-hidden="true"
-        title={statusLabel}
-      />
-      <button
-        type="button"
-        className="project-row-open"
-        title={project.name}
-        onClick={onOpen}
-      >
-        {project.name}
+        <ChevronRight
+          className="project-row-chevron"
+          size={14}
+          aria-hidden="true"
+        />
+        <span
+          className={`project-row-dot status-${project.status.toLowerCase()}`}
+          aria-hidden="true"
+        />
+        <span className="project-row-name">{project.name}</span>
+        <span className="sr-only">, {statusLabel}</span>
       </button>
       <div className="project-row-progress">
         <div
@@ -764,6 +765,15 @@ function ProjectRow({
           {plannedMinutes}m
         </button>
       )}
+      <button
+        type="button"
+        className="project-row-details"
+        aria-label={`Open ${project.name} overview`}
+        title={`Open ${project.name} overview`}
+        onClick={onOpen}
+      >
+        <ArrowUpRight size={15} aria-hidden="true" />
+      </button>
       {expanded && (
         <div className="project-row-drawer" id={drawerId}>
           <ProjectRowTasks

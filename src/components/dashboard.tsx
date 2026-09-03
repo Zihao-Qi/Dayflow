@@ -2480,9 +2480,19 @@ function TodayPage({
   // On a phone the day's own list is the page; Later stays folded away behind
   // it. But when nothing is scheduled at all, these backlog tasks are the only
   // useful content on the screen, so lead with them instead of hiding them.
-  const [laterOpen, setLaterOpen] = useState(() => tasks.length === 0);
+  const dayIsEmpty = tasks.length === 0;
+  const [laterOpen, setLaterOpen] = useState(dayIsEmpty);
+  const dayWasEmpty = useRef(dayIsEmpty);
   const reorderButtonRef = useRef<HTMLButtonElement | null>(null);
   const instructionDoneRef = useRef<HTMLButtonElement | null>(null);
+
+  // Completing or unscheduling the last task empties the day after mount, so
+  // the initial value alone is not enough. Only the transition into empty
+  // reopens the section; while it stays empty, an explicit collapse sticks.
+  useEffect(() => {
+    if (dayIsEmpty && !dayWasEmpty.current) setLaterOpen(true);
+    dayWasEmpty.current = dayIsEmpty;
+  }, [dayIsEmpty]);
 
   useEffect(() => {
     if (!reorderMode) return;

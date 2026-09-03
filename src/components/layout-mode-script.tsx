@@ -1,4 +1,4 @@
-import { layoutBreakpoints } from "@/components/use-layout-mode";
+import { layoutBreakpoints } from "@/lib/layout-breakpoints";
 
 /**
  * Dayflow's responsive rules key off `data-layout-mode` on the root element
@@ -9,12 +9,29 @@ import { layoutBreakpoints } from "@/components/use-layout-mode";
  *
  * This runs synchronously before first paint and stamps the same attributes
  * `useLayoutMode` would, from the same breakpoints, so the first frame is
- * already correct. It only touches `documentElement`, never React-rendered
- * DOM, so it cannot cause a hydration mismatch.
+ * already correct.
+ *
+ * It writes to `documentElement`, which React renders and therefore diffs, so
+ * `RootLayout` carries `suppressHydrationWarning` on `<html>`. Without it,
+ * React reports these attributes as a mismatch on every load.
+ *
+ * `layoutBreakpoints` must come from a module with no "use client" directive.
+ * Imported across a client boundary it would serialize here as a client
+ * reference, not as these values, and the script would stamp nothing at all.
  */
 export function LayoutModeScript() {
+  const breakpoints = JSON.stringify(layoutBreakpoints);
+
+  // Fails the build rather than shipping a script that silently does nothing.
+  if (!breakpoints.startsWith("{") || !breakpoints.includes("phone")) {
+    throw new Error(
+      `LayoutModeScript could not serialize layoutBreakpoints (got ${breakpoints}). ` +
+        "It must be imported from a module without a \"use client\" directive."
+    );
+  }
+
   const source = `(function(){try{
-var b=${JSON.stringify(layoutBreakpoints)};
+var b=${breakpoints};
 var w=window.innerWidth;
 var r=document.documentElement;
 r.dataset.layoutMode=w<b.phone?"phone":w<b.desktop?"compact":"desktop";

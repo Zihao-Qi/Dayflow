@@ -3179,6 +3179,44 @@ test("keeps phone, tablet, and desktop navigation modes exclusive at their bound
   ).toBeLessThanOrEqual((desktopWorkspaceBox?.x ?? 0) + 1);
 });
 
+test("stamps the layout mode before hydration, with no app bundle at all", async ({
+  page
+}) => {
+  // Every other layout-mode assertion runs after hydration, so useLayoutMode's
+  // effect can satisfy them even when the pre-paint script is broken. Blocking
+  // fetched scripts leaves the inline script as the only thing that can set
+  // these attributes. If layoutBreakpoints regresses to an import from a
+  // "use client" module it serializes as `undefined`, the script throws into
+  // its own catch, and nothing is stamped -- which this catches.
+  await page.route("**/*", (route) =>
+    route.request().resourceType() === "script"
+      ? route.abort()
+      : route.continue()
+  );
+
+  await page.setViewportSize({ width: 390, height: 900 });
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-layout-mode",
+    "phone"
+  );
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-figure-arrangement",
+    "false"
+  );
+
+  await page.setViewportSize({ width: 1300, height: 900 });
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-layout-mode",
+    "desktop"
+  );
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-figure-arrangement",
+    "true"
+  );
+});
+
 test("uses the 68px tablet rails and keeps captured activity in Today", async ({ page }) => {
   await page.setViewportSize({ width: 900, height: 900 });
   await openDashboard(page);

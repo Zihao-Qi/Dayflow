@@ -41,7 +41,12 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en">
+    // LayoutModeScript stamps data-layout-mode and the breakpoint custom
+    // properties onto this element before React hydrates, because the server
+    // cannot know the viewport width. React owns <html>, so it reports those
+    // additions as a hydration mismatch unless they are suppressed here. The
+    // flag applies to this element's own attributes, not to its subtree.
+    <html lang="en" suppressHydrationWarning>
       <head>
         <LayoutModeScript />
       </head>

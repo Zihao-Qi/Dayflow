@@ -174,26 +174,34 @@ export function FocusRail({
     const projectName = new Map(
       projects.map((project) => [project.id, project.name])
     );
-    const groups = new Map<string, FocusTask[]>();
-    const push = (label: string, task: FocusTask) => {
-      const existing = groups.get(label);
-      if (existing) existing.push(task);
-      else groups.set(label, [task]);
+    // Keyed by a stable id, not by the label: a Project genuinely named
+    // "Backlog" or "Scheduled today", or two Projects sharing a name, would
+    // otherwise be merged into one group and lose the context this exists to
+    // provide.
+    const groups = new Map<string, { label: string; items: FocusTask[] }>();
+    const push = (key: string, label: string, task: FocusTask) => {
+      const existing = groups.get(key);
+      if (existing) existing.items.push(task);
+      else groups.set(key, { label, items: [task] });
     };
 
     for (const task of orderedTasks) {
       if (task.focusQueuePosition !== null && task.focusQueuePosition !== undefined) {
-        push("In the focus queue", task);
+        push("queue", "In the focus queue", task);
       } else if (task.date?.slice(0, 10) === todayKey) {
-        push("Scheduled today", task);
+        push("today", "Scheduled today", task);
       } else if (task.projectId) {
-        push(projectName.get(task.projectId) ?? "Other projects", task);
+        push(
+          `project:${task.projectId}`,
+          projectName.get(task.projectId) ?? "Other projects",
+          task
+        );
       } else {
-        push("Backlog", task);
+        push("backlog", "Backlog", task);
       }
     }
 
-    return [...groups].map(([label, items]) => ({ label, items }));
+    return [...groups].map(([key, group]) => ({ key, ...group }));
   }, [orderedTasks, projects, todayKey]);
 
   useEffect(() => {
@@ -506,7 +514,7 @@ export function FocusRail({
               >
                 <option value="">Choose a task or focus freely</option>
                 {taskGroups.map((group) => (
-                  <optgroup key={group.label} label={group.label}>
+                  <optgroup key={group.key} label={group.label}>
                     {group.items.map((task) => (
                       <option key={task.id} value={task.id}>
                         {task.title}

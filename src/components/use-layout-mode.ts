@@ -1,18 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import type { LayoutMode } from "@/lib/layout-breakpoints";
+import {
+  layoutBreakpoints,
+  layoutModeForWidth
+} from "@/lib/layout-breakpoints";
 
-export type LayoutMode = "phone" | "compact" | "desktop";
-
-export const layoutBreakpoints = {
-  phone: 620,
-  // Chrome changes at 1180 because the sidebar and rail no longer fit; Figure
-  // changes at 700 because its data no longer fits. Those constraints cannot
-  // share a breakpoint.
-  figure: 700,
-  desktop: 1180,
-  wideFocusRail: 1400
-} as const;
+export type { LayoutMode };
 
 type LayoutState = {
   mode: LayoutMode;
@@ -33,12 +28,7 @@ function readLayoutState(): LayoutState {
 
   const width = window.innerWidth;
   return {
-    mode:
-      width < layoutBreakpoints.phone
-        ? "phone"
-        : width < layoutBreakpoints.desktop
-          ? "compact"
-          : "desktop",
+    mode: layoutModeForWidth(width),
     figureArrangement: width >= layoutBreakpoints.figure,
     wideFocusRail: width >= layoutBreakpoints.wideFocusRail
   };

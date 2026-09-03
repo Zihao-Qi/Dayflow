@@ -299,6 +299,5 @@ JSON and CSV exports are supplemental and are not restore formats; use
 - [Project status and plan](PROJECT_STATUS.md)
 - [Projects v1 feature specification](docs/specs/PROJECTS_V1.md)
 - [Focus Timer v1 feature specification](docs/specs/FOCUS_TIMER_V1.md)
-- [UX acceptance audit and next redesign batch](docs/UX_ACCEPTANCE_AUDIT_2026-07-23.md)
 - [Dayflow domain language](CONTEXT.md)
 - [Front-end development log](DAYFLOW_CHANGELOG.md)

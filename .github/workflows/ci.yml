@@ -1,9 +1,11 @@
 name: CI
 
 on:
+  # Every pull request, whatever it targets. Filtering on `main` meant a
+  # stacked pull request - one opened against another branch so the two can be
+  # reviewed separately - ran no checks at all and still reported a clean,
+  # mergeable state.
   pull_request:
-    branches:
-      - main
   push:
     branches:
       - main

@@ -869,13 +869,21 @@ function ProjectRowTasks({
                 <span className="project-row-task-mark" aria-hidden="true">
                   {task.status === "DONE" ? <Check size={11} /> : null}
                 </span>
-                <span className="project-row-task-title">{task.title}</span>
+                <span className="project-row-task-title">
+                  {task.status === "DONE" && <span className="sr-only">Done: </span>}
+                  {task.title}
+                </span>
+                {/*
+                  Only the exception is labelled. Nearly every Project task is
+                  unscheduled, so "Backlog" on every row separated nothing; the
+                  fact worth surfacing is which few tasks are on a day, and
+                  when. Completion is already carried by the filled mark and
+                  the muted title.
+                */}
                 <span className="project-row-task-meta">
-                  {task.status === "DONE"
-                    ? "Done"
-                    : task.date
-                      ? "Scheduled"
-                      : "Backlog"}
+                  {task.status !== "DONE" && task.date
+                    ? formatShortDate(task.date)
+                    : ""}
                 </span>
                 <span className="project-row-task-estimate">
                   {task.estimateMinutes}m

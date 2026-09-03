@@ -190,8 +190,16 @@ Project's tasks in place.
 ### Drawer contents
 
 Tasks are grouped by Phase when the Project defines any, otherwise listed
-flat. Each task shows its completion mark, title, whether it is Scheduled or
-in the Backlog, and its estimate.
+flat. Each task shows its completion mark, title, its scheduled day when it has
+one, and its estimate.
+
+Only the scheduled day is labelled. Nearly every Project task is a Backlog
+Task — unscheduled is the resting state for Project work — so labelling that
+state marked every row and distinguished none of them. On the Project page
+the "Backlog" label earns its place by sitting beside the Schedule control it
+explains; the drawer has no such control, so the label carried no meaning
+there. Completion is carried by the filled mark and the muted title, and
+announced to assistive technology, rather than spelled out a third time.
 
 Tasks are not themselves interactive, and the drawer carries no "open the
 Project" control: the Project name in the row directly above already does

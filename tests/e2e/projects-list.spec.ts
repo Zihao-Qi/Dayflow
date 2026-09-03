@@ -296,3 +296,42 @@ test("keeps each List row's drawer independent", async ({ page }) => {
   await expect(secondRow.getByText("No tasks yet.")).toBeVisible();
   await expect(firstDrawerTask).toBeVisible();
 });
+
+test("labels only the scheduled tasks in a List drawer", async ({ page }) => {
+  // Nearly every Project task is unscheduled, so labelling that state marked
+  // every row and separated none of them. Only the exception is labelled.
+  const project = await createProject(page, "Mixed Project");
+  const today = new Date();
+  const todayKey = [
+    today.getFullYear(),
+    String(today.getMonth() + 1).padStart(2, "0"),
+    String(today.getDate()).padStart(2, "0")
+  ].join("-");
+  for (const [title, status, date] of [
+    ["Unscheduled work", "TODO", null],
+    ["Planned for a day", "TODO", todayKey],
+    ["Finished already", "DONE", null]
+  ] as const) {
+    const created = await page.request.post("/api/tasks", {
+      data: { title, status, projectId: project.id, date, estimateMinutes: 45 }
+    });
+    expect(created.status()).toBe(201);
+  }
+
+  await openListProjects(page);
+  await page.getByRole("button", { name: "Show tasks in Mixed Project" }).click();
+
+  const drawer = page.locator(".project-row-drawer");
+  const metaFor = (title: string) =>
+    drawer.locator("li").filter({ hasText: title }).locator(".project-row-task-meta");
+
+  await expect(metaFor("Planned for a day")).not.toBeEmpty();
+  await expect(metaFor("Unscheduled work")).toBeEmpty();
+  await expect(metaFor("Finished already")).toBeEmpty();
+
+  // Completion is carried by the mark and the muted title, so it is announced
+  // rather than spelled out a third time in the column.
+  await expect(
+    drawer.locator("li.is-done").getByText("Done:")
+  ).toBeAttached();
+});

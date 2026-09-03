@@ -180,16 +180,24 @@ Project's tasks in place.
 - It sits in a new leading column, before the status dot, which is the
   conventional position for a disclosure and reads as hierarchy rather than
   as another row action.
-- Expanded rows tint faintly and the chevron rotates a quarter turn. Both
-  respect `prefers-reduced-motion`.
+- The chevron rotates a quarter turn, respecting `prefers-reduced-motion`.
+  The row is not tinted and the drawer is not a card: it is separated by a
+  hairline and an indent, the same treatment `.completed-group` and
+  `.project-evidence-details` use. A nested surface inside the list panel
+  reads as a raised card, which no other disclosure in Dayflow does.
 - On phone the control spans both summary rows as a 44px-tall touch target.
 
 ### Drawer contents
 
 Tasks are grouped by Phase when the Project defines any, otherwise listed
 flat. Each task shows its completion mark, title, whether it is Scheduled or
-in the Backlog, and its estimate. A trailing "Open <Project>" control leads
-to the Project workspace.
+in the Backlog, and its estimate.
+
+Tasks are not themselves interactive, and the drawer carries no "open the
+Project" control: the Project name in the row directly above already does
+that, so a second control would have been a duplicate. The one exception is
+an empty Project, where the drawer has nothing to show and offers the next
+step instead.
 
 The drawer is **read-only**. Editing, scheduling, and Phase management stay
 on the Project page; duplicating them here would mean two implementations to

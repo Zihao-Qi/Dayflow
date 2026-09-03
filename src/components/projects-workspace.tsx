@@ -767,7 +767,6 @@ function ProjectRow({
       {expanded && (
         <div className="project-row-drawer" id={drawerId}>
           <ProjectRowTasks
-            projectName={project.name}
             plan={plan}
             loading={loading}
             error={loadError}
@@ -790,14 +789,12 @@ type ProjectRowPlan = {
  * the Project page; repeating them here would mean two places to keep in step.
  */
 function ProjectRowTasks({
-  projectName,
   plan,
   loading,
   error,
   onOpen,
   onRetry
 }: {
-  projectName: string;
   plan: ProjectRowPlan | null;
   loading: boolean;
   error: string;
@@ -888,9 +885,6 @@ function ProjectRowTasks({
           </ul>
         </div>
       ))}
-      <button type="button" className="text-button project-row-drawer-open" onClick={onOpen}>
-        Open {projectName}
-      </button>
     </>
   );
 }

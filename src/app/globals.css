@@ -10349,9 +10349,6 @@ html[data-layout-mode="phone"] .data-restore-actions button {
   border-bottom: 1px solid var(--line);
 }
 
-.project-row.is-expanded {
-  background: color-mix(in srgb, var(--surface-2) 45%, transparent);
-}
 
 .project-row-disclosure {
   display: grid;
@@ -10380,11 +10377,9 @@ html[data-layout-mode="phone"] .data-restore-actions button {
   grid-column: 1 / -1;
   display: grid;
   gap: 10px;
-  margin: 2px 0 6px 24px;
-  padding: 12px 14px;
-  border-left: 2px solid var(--sage-soft);
-  background: var(--surface);
-  border-radius: var(--radius);
+  margin: 4px 0 4px 36px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
 }
 
 .project-row-drawer-state {
@@ -10461,9 +10456,6 @@ html[data-layout-mode="phone"] .data-restore-actions button {
   text-align: right;
 }
 
-.project-row-drawer-open {
-  justify-self: start;
-}
 
 .project-row-dot {
   width: 8px;

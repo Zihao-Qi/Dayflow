@@ -235,9 +235,13 @@ test("expands a List row to its tasks and leaves the row's own controls alone", 
 
   const drawer = row.locator(".project-row-drawer");
   await expect(drawer).toBeVisible();
-  await expect(drawer.getByText("Still to do")).toBeVisible();
-  await expect(drawer.getByText("Already finished")).toBeVisible();
-  await expect(drawer.locator("li.is-done")).toHaveCount(1);
+  await expect(
+    drawer.getByRole("textbox", { name: "Task title: Still to do" })
+  ).toBeVisible();
+  await expect(
+    drawer.getByRole("textbox", { name: "Task title: Already finished" })
+  ).toBeVisible();
+  await expect(drawer.locator(".project-task.done")).toHaveCount(1);
   await expect(disclosure).toHaveAttribute("aria-expanded", "true");
 
   // Expanding is not navigation: the overview is still on screen.
@@ -274,7 +278,7 @@ test("keeps each List row's drawer independent", async ({ page }) => {
   // Scoped to the drawer: this title also appears as the row's "Next:" summary.
   const firstDrawerTask = firstRow
     .locator(".project-row-drawer")
-    .getByText("Only in the first");
+    .getByRole("textbox", { name: "Task title: Only in the first" });
 
   await projectToggle(page, "First Project").click();
   await expect(firstDrawerTask).toBeVisible();
@@ -283,45 +287,6 @@ test("keeps each List row's drawer independent", async ({ page }) => {
   await projectToggle(page, "Second Project").click();
   await expect(secondRow.getByText("No tasks yet.")).toBeVisible();
   await expect(firstDrawerTask).toBeVisible();
-});
-
-test("labels only the scheduled tasks in a List drawer", async ({ page }) => {
-  // Nearly every Project task is unscheduled, so labelling that state marked
-  // every row and separated none of them. Only the exception is labelled.
-  const project = await createProject(page, "Mixed Project");
-  const today = new Date();
-  const todayKey = [
-    today.getFullYear(),
-    String(today.getMonth() + 1).padStart(2, "0"),
-    String(today.getDate()).padStart(2, "0")
-  ].join("-");
-  for (const [title, status, date] of [
-    ["Unscheduled work", "TODO", null],
-    ["Planned for a day", "TODO", todayKey],
-    ["Finished already", "DONE", null]
-  ] as const) {
-    const created = await page.request.post("/api/tasks", {
-      data: { title, status, projectId: project.id, date, estimateMinutes: 45 }
-    });
-    expect(created.status()).toBe(201);
-  }
-
-  await openListProjects(page);
-  await projectToggle(page, "Mixed Project").click();
-
-  const drawer = page.locator(".project-row-drawer");
-  const metaFor = (title: string) =>
-    drawer.locator("li").filter({ hasText: title }).locator(".project-row-task-meta");
-
-  await expect(metaFor("Planned for a day")).not.toBeEmpty();
-  await expect(metaFor("Unscheduled work")).toBeEmpty();
-  await expect(metaFor("Finished already")).toBeEmpty();
-
-  // Completion is carried by the mark and the muted title, so it is announced
-  // rather than spelled out a third time in the column.
-  await expect(
-    drawer.locator("li.is-done").getByText("Done:")
-  ).toBeAttached();
 });
 
 test("retries a failed task load in place instead of collapsing", async ({
@@ -360,7 +325,9 @@ test("retries a failed task load in place instead of collapsing", async ({
 
   // The drawer must still be open, now showing the tasks.
   await expect(toggle).toHaveAttribute("aria-expanded", "true");
-  await expect(drawer.getByText("Arrives on the retry")).toBeVisible();
+  await expect(
+    drawer.getByRole("textbox", { name: "Task title: Arrives on the retry" })
+  ).toBeVisible();
 });
 
 test("keeps the configured Phase order in a List drawer", async ({ page }) => {
@@ -468,8 +435,8 @@ test("refreshes a cached drawer when Focus marks its Task done", async ({
   await projectToggle(page, "Refreshing Project").click();
 
   const drawer = row.locator(".project-row-drawer");
-  await expect(drawer.locator("li")).toHaveCount(1);
-  await expect(drawer.locator("li.is-done")).toHaveCount(0);
+  await expect(drawer.locator(".project-task")).toHaveCount(1);
+  await expect(drawer.locator(".project-task.done")).toHaveCount(0);
 
   // The row's Focus button only prefills the rail; the session starts there.
   await row.getByRole("button", { name: /^Focus \d+m on Finish me$/ }).click();
@@ -491,7 +458,7 @@ test("refreshes a cached drawer when Focus marks its Task done", async ({
 
   // The summary moves, and the drawer must move with it.
   await expect(row.locator(".project-row-tasks")).toContainText("1/1");
-  await expect(drawer.locator("li.is-done")).toHaveCount(1);
+  await expect(drawer.locator(".project-task.done")).toHaveCount(1);
 });
 
 test("reloads after a stale in-flight task request settles", async ({ page }) => {
@@ -566,7 +533,95 @@ test("reloads after a stale in-flight task request settles", async ({ page }) =>
   // Only now let the pre-change response land.
   releaseStaleResponse();
 
-  await expect(row.locator(".project-row-drawer li.is-done")).toHaveCount(1, {
-    timeout: 15_000
+  await expect(
+    row.locator(".project-row-drawer .project-task.done")
+  ).toHaveCount(1, { timeout: 15_000 });
+});
+
+test("renames a task from the List drawer without leaving Projects", async ({
+  page
+}) => {
+  const project = await createProject(page, "Editable Project");
+  const created = await page.request.post("/api/tasks", {
+    data: {
+      title: "Original title",
+      projectId: project.id,
+      date: null,
+      estimateMinutes: 30
+    }
   });
+  expect(created.status()).toBe(201);
+
+  await openListProjects(page);
+  await projectToggle(page, "Editable Project").click();
+
+  const drawer = projectRowFor(page, "Editable Project").locator(
+    ".project-row-drawer"
+  );
+  const title = drawer.getByRole("textbox", { name: "Task title: Original title" });
+  await expect(title).toBeVisible();
+  await title.fill("Renamed in the drawer");
+  await title.blur();
+
+  // Still on the overview, and the change reached the server.
+  await expect(
+    page.getByRole("radiogroup", { name: "Project view" })
+  ).toBeVisible();
+  await expect(
+    drawer.getByRole("textbox", { name: "Task title: Renamed in the drawer" })
+  ).toBeVisible();
+
+  const detail = await page.request.get(`/api/projects/${project.id}`);
+  const body = (await detail.json()) as { tasks: Array<{ title: string }> };
+  expect(body.tasks.map((task) => task.title)).toEqual([
+    "Renamed in the drawer"
+  ]);
+});
+
+test("adds a task from the List drawer and updates the row summary", async ({
+  page
+}) => {
+  const project = await createProject(page, "Growing Project");
+
+  await openListProjects(page);
+  const row = projectRowFor(page, "Growing Project");
+  await projectToggle(page, "Growing Project").click();
+
+  const drawer = row.locator(".project-row-drawer");
+  await expect(drawer.getByText("No tasks yet.")).toBeVisible();
+
+  await drawer.getByRole("textbox", { name: "New Project task" }).fill("Brand new task");
+  await drawer.getByRole("button", { name: /^Add$/ }).click();
+
+  // The drawer reloads and the summary beside it moves with it.
+  await expect(
+    drawer.getByRole("textbox", { name: "Task title: Brand new task" })
+  ).toBeVisible();
+  await expect(row.locator(".project-row-tasks")).toContainText("0/1");
+});
+
+test("deletes a task from the List drawer", async ({ page }) => {
+  const project = await createProject(page, "Shrinking Project");
+  const created = await page.request.post("/api/tasks", {
+    data: {
+      title: "Doomed task",
+      projectId: project.id,
+      date: null,
+      estimateMinutes: 30
+    }
+  });
+  expect(created.status()).toBe(201);
+
+  await openListProjects(page);
+  const row = projectRowFor(page, "Shrinking Project");
+  await projectToggle(page, "Shrinking Project").click();
+
+  const drawer = row.locator(".project-row-drawer");
+  await drawer.getByRole("button", { name: "Delete task Doomed task" }).click();
+  await drawer
+    .getByRole("button", { name: "Delete task", exact: true })
+    .click();
+
+  await expect(drawer.getByText("No tasks yet.")).toBeVisible();
+  await expect(row.locator(".project-row-tasks")).toContainText("No tasks yet");
 });

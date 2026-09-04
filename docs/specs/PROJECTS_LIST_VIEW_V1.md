@@ -201,16 +201,21 @@ Unphased tasks come first, then each Phase in the Project's configured
 order, matching how the Project workspace renders "Project tasks" above its
 phase list. Groups are seeded from the Phase list rather than from the order
 tasks happen to sort in, so a Phase holding only completed work keeps its
-place. Each task shows its completion mark, title, its scheduled day when it has
-one, and its estimate.
+place. Tasks are rendered with `ProjectTaskItem`, the same row the Project page
+uses, so the drawer supports completing, renaming, re-phasing, scheduling,
+focusing and deleting without a second implementation to keep in step. A
+compact add control closes the set.
 
-Only the scheduled day is labelled. Nearly every Project task is a Backlog
-Task — unscheduled is the resting state for Project work — so labelling that
-state marked every row and distinguished none of them. On the Project page
-the "Backlog" label earns its place by sitting beside the Schedule control it
-explains; the drawer has no such control, so the label carried no meaning
-there. Completion is carried by the filled mark and the muted title, and
-announced to assistive technology, rather than spelled out a third time.
+This restores the "Backlog" state label, which an earlier read-only version
+of the drawer had dropped. That was the right call then and the wrong one
+now: the label is meaningful precisely because it sits beside the Schedule
+control it explains, and the drawer now has that control.
+
+The drawer does not offer reordering. `sortOrder` is assigned per day, so
+every unscheduled Task across every Project shares one bucket, and Project
+task order is derived — completed last, then by date — so a manual order
+would be overruled by the sort. Ordering Project work needs its own
+Project-scoped field and is out of scope here.
 
 Tasks are not themselves interactive, and the drawer carries no "open the
 Project" control: the Project name in the row directly above already does

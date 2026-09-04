@@ -86,13 +86,6 @@ function legacyClientCalls(file: string, count: number, migration: string) {
 // Call-site-specific entries ensure that a second violation in the same file fails.
 // Remove each entry with its named migration phase.
 const BASELINE: ReadonlyArray<Violation & { migration: string }> = [
-  baseline(5, "src/lib/focus-queue.ts", 12, "Phase 1: close escape sites"),
-  baseline(5, "src/lib/projects.ts", 76, "Phase 1: close escape sites"),
-  baseline(5, "src/lib/projects.ts", 115, "Phase 1: close escape sites"),
-  baseline(5, "src/lib/csv-export.ts", 210, "Phase 1: close escape sites"),
-  baseline(5, "src/lib/focus-sessions.ts", 30, "Phase 1: close escape sites"),
-  baseline(5, "src/lib/evidence-attribution.ts", 28, "Phase 1: close escape sites"),
-  baseline(5, "src/lib/focus-sessions.ts", 95, "Phase 1: close escape sites"),
   baseline(6, "src/lib/activity-persistence.ts", 28, "Phase 3: evidence services"),
   baseline(6, "src/lib/focus-queue.ts", 26, "Phase 2: planning"),
   baseline(6, "src/lib/focus-queue.ts", 51, "Phase 2: planning"),

@@ -674,6 +674,17 @@ function ProjectRow({
   const [plan, setPlan] = useState<ProjectRowPlan | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
+  // The overview payload refreshes whenever Project data changes, so its own
+  // counts stand in for "the plan moved". Without this, completing a Focus
+  // Session started from this row updates the summary beside a drawer still
+  // showing the Task as unfinished, and collapsing does not repair it.
+  const planKey = [
+    project.taskCount,
+    project.completedTaskCount,
+    project.nextTaskId ?? "",
+    project.progressPercent ?? ""
+  ].join(":");
+  const loadedKey = useRef(planKey);
   const statusLabel = projectStatusLabel(project.status);
   const plannedMinutes = project.nextTaskEstimateMinutes ?? 30;
   const nextTaskTitle = project.nextTaskTitle ?? "Add a first task";
@@ -700,6 +711,7 @@ function ProjectRow({
       if (!response.ok || !result || !Array.isArray(result.tasks)) {
         throw new Error("unavailable");
       }
+      loadedKey.current = planKey;
       setPlan({
         tasks: result.tasks as ProjectTaskRecord[],
         phases: Array.isArray(result.phases)
@@ -718,6 +730,13 @@ function ProjectRow({
     setExpanded(next);
     if (next && !plan) void loadPlan();
   }
+
+  useEffect(() => {
+    if (loadedKey.current === planKey) return;
+    loadedKey.current = planKey;
+    setPlan(null);
+    if (expanded) void loadPlan();
+  }, [planKey, expanded]);
 
   return (
     <article className={expanded ? "project-row is-expanded" : "project-row"}>
@@ -866,13 +885,15 @@ function ProjectRowTasks({
     tasks: []
   }));
   const byKey = new Map(groups.map((group) => [group.key, group]));
-  // Phases first, then unphased work, matching the Project workspace.
+  // Unphased work first, then the phases. The Project workspace renders its
+  // "Project tasks" section above `.phase-list`, and opening a Project from
+  // this drawer should not reshuffle the groups.
   const rootGroup: DrawerGroup = {
     key: "root",
     label: plan.phases.length ? "No phase" : null,
     tasks: []
   };
-  groups.push(rootGroup);
+  groups.unshift(rootGroup);
 
   for (const task of sortTasks(plan.tasks)) {
     const group = task.phaseId ? byKey.get(`phase:${task.phaseId}`) : rootGroup;

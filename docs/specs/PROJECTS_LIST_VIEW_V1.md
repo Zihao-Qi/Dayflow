@@ -197,8 +197,11 @@ Project's tasks in place.
 
 ### Drawer contents
 
-Tasks are grouped by Phase when the Project defines any, otherwise listed
-flat. Each task shows its completion mark, title, its scheduled day when it has
+Unphased tasks come first, then each Phase in the Project's configured
+order, matching how the Project workspace renders "Project tasks" above its
+phase list. Groups are seeded from the Phase list rather than from the order
+tasks happen to sort in, so a Phase holding only completed work keeps its
+place. Each task shows its completion mark, title, its scheduled day when it has
 one, and its estimate.
 
 Only the scheduled day is labelled. Nearly every Project task is a Backlog
@@ -223,7 +226,11 @@ keep in step.
 
 Task lists are not part of the Projects overview payload, so the first
 expand fetches `GET /api/projects/:id` — the same detail the Project page
-uses — and keeps the result for later toggles of that row. The drawer
+uses — and keeps the result for later toggles of that row. The cache is keyed
+on the Project's own summary counts and drops when they move, because the
+Focus rail is app-wide: a session started from the row can be completed with
+"Mark done" without leaving Projects, and the drawer must not go on showing
+that Task as unfinished beside an updated summary. The drawer
 reports its own loading, empty, and failure states. The retry is a
 fetch-only path, deliberately separate from the disclosure toggle: routed
 through the toggle it would read the drawer as open and close it instead of

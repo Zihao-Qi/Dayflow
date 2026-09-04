@@ -1,7 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 import {
   resetTestDatabase,
-  seedProjectWithManyTasks
+  seedProjectWithManyTasks,
+  setFocusSessionElapsedMinutes
 } from "./database";
 
 test.beforeEach(() => {
@@ -404,4 +405,91 @@ test("keeps the configured Phase order in a List drawer", async ({ page }) => {
     "First phase",
     "Second phase"
   ]);
+});
+
+test("puts unphased tasks above the Phase groups, as the Project page does", async ({
+  page
+}) => {
+  const project = await createProject(page, "Mixed grouping Project");
+  const phase = await page.request.post(`/api/projects/${project.id}/phases`, {
+    data: { name: "A phase" }
+  });
+  expect(phase.ok()).toBe(true);
+  const phaseId = ((await phase.json()) as { id: string }).id;
+
+  for (const [title, taskPhase] of [
+    ["Inside the phase", phaseId],
+    ["Loose in the project", null]
+  ] as const) {
+    const created = await page.request.post("/api/tasks", {
+      data: {
+        title,
+        projectId: project.id,
+        phaseId: taskPhase,
+        date: null,
+        estimateMinutes: 30
+      }
+    });
+    expect(created.status()).toBe(201);
+  }
+
+  await openListProjects(page);
+  await projectToggle(page, "Mixed grouping Project").click();
+
+  const drawer = projectRowFor(page, "Mixed grouping Project").locator(
+    ".project-row-drawer"
+  );
+  await expect(drawer.locator(".project-row-phase")).toHaveText([
+    "No phase",
+    "A phase"
+  ]);
+});
+
+test("refreshes a cached drawer when Focus marks its Task done", async ({
+  page
+}) => {
+  // The Focus rail is app-wide, so a session started from this row can be
+  // completed without ever leaving Projects. Marking the Task done there
+  // updates the row summary; the drawer's cached fetch has to drop with it,
+  // or the same screen shows an unfinished Task beside 1/1 complete.
+  const project = await createProject(page, "Refreshing Project");
+  const created = await page.request.post("/api/tasks", {
+    data: {
+      title: "Finish me",
+      projectId: project.id,
+      date: null,
+      estimateMinutes: 5
+    }
+  });
+  expect(created.status()).toBe(201);
+
+  await openListProjects(page);
+  const row = projectRowFor(page, "Refreshing Project");
+  await projectToggle(page, "Refreshing Project").click();
+
+  const drawer = row.locator(".project-row-drawer");
+  await expect(drawer.locator("li")).toHaveCount(1);
+  await expect(drawer.locator("li.is-done")).toHaveCount(0);
+
+  // The row's Focus button only prefills the rail; the session starts there.
+  await row.getByRole("button", { name: /^Focus \d+m on Finish me$/ }).click();
+  const rail = page.getByRole("complementary", { name: "Focus rail" });
+  const startFocus = page.waitForResponse(
+    (response) =>
+      response.url().includes("/api/focus-session") &&
+      response.request().method() === "POST"
+  );
+  await rail.getByRole("button", { name: /^Start \d+m focus$/ }).click();
+  const { session } = (await (await startFocus).json()) as {
+    session: { id: string };
+  };
+  setFocusSessionElapsedMinutes(session.id, 3);
+
+  await rail.getByRole("button", { name: /^Finish( \d+m)?$/ }).click();
+  await rail.getByRole("button", { name: "Mark done" }).click();
+  await rail.getByRole("button", { name: /Save|Finish without details/ }).first().click();
+
+  // The summary moves, and the drawer must move with it.
+  await expect(row.locator(".project-row-tasks")).toContainText("1/1");
+  await expect(drawer.locator("li.is-done")).toHaveCount(1);
 });

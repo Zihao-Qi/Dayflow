@@ -1,10 +1,12 @@
-import { Prisma } from "@prisma/client";
-import { NextRequest, NextResponse } from "next/server";
+import { appErrorResponse } from "@/lib/http-errors";
 import { prisma } from "@/lib/prisma";
+import { taskErrors } from "@/lib/task-errors";
 import {
-  WorkflowMutationRequestError,
   parseWorkflowId
 } from "@/lib/workflow-mutations";
+import { AppError } from "@/shared/kernel/errors";
+import { Prisma } from "@prisma/client";
+import { NextRequest, NextResponse } from "next/server";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -14,7 +16,7 @@ export async function POST(_request: NextRequest, { params }: Params) {
     const id = parseWorkflowId(
       routeParams.id,
       "id",
-      "Task identifier is invalid."
+      taskErrors.taskIdentifierIsInvalid.message
     );
     const result = await prisma.$transaction(async (transaction) => {
       const taskExists = await transaction.task.findUnique({
@@ -32,7 +34,7 @@ export async function POST(_request: NextRequest, { params }: Params) {
       const claimed = await transaction.taskScheduleChange.deleteMany({
         where: { id: latest.id, taskId: id }
       });
-      if (claimed.count !== 1) throw new ScheduleUndoConflictError();
+      if (claimed.count !== 1) throw new AppError(taskErrors.theScheduleChangedBeforeItCouldBeUndone);
 
       const task = await transaction.task.update({
         where: { id },
@@ -42,52 +44,22 @@ export async function POST(_request: NextRequest, { params }: Params) {
     });
 
     if (result.kind === "task-missing") {
-      return NextResponse.json(
-        { error: "Task not found.", code: "NOT_FOUND", field: "id" },
-        { status: 404 }
-      );
+      return appErrorResponse(new AppError(taskErrors.taskNotFoundidNOTFOUND));
     }
     if (result.kind === "change-missing") {
-      return NextResponse.json(
-        {
-          error: "There is no schedule change to undo.",
-          code: "NOT_FOUND",
-          field: "scheduleChange"
-        },
-        { status: 404 }
-      );
+      return appErrorResponse(new AppError(taskErrors.thereIsNoScheduleChangeToUndo));
     }
     return NextResponse.json(result.task);
   } catch (error) {
-    if (error instanceof WorkflowMutationRequestError) {
-      return NextResponse.json(
-        { error: error.message, code: error.code, field: error.field },
-        { status: 400 }
-      );
-    }
+    if (error instanceof AppError) return appErrorResponse(error);
     if (
-      error instanceof ScheduleUndoConflictError ||
       (error instanceof Prisma.PrismaClientKnownRequestError &&
         (error.code === "P2003" || error.code === "P2025"))
     ) {
-      return NextResponse.json(
-        {
-          error: "The schedule changed before it could be undone.",
-          code: "CONFLICT"
-        },
-        { status: 409 }
-      );
+      return appErrorResponse(new AppError(taskErrors.theScheduleChangedBeforeItCouldBeUndone));
     }
 
     console.error("Task schedule undo failed.", error);
-    return NextResponse.json(
-      {
-        error: "The schedule change could not be undone.",
-        code: "INTERNAL_ERROR"
-      },
-      { status: 500 }
-    );
+    return appErrorResponse(new AppError(taskErrors.theScheduleChangeCouldNotBeUndone));
   }
 }
-
-class ScheduleUndoConflictError extends Error {}

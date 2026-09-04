@@ -1,7 +1,9 @@
-import type { Prisma, PrismaClient } from "@prisma/client";
 import { addDays, localDateKey, parseLocalDate, sameDayRange, startOfLocalDay } from "@/lib/dates";
+import { dayErrors } from "@/lib/day-errors";
 import { serializeTimeBlock } from "@/lib/time-block-persistence";
 import { isTimeBlockRecord } from "@/lib/time-blocks";
+import { AppError } from "@/shared/kernel/errors";
+import type { Prisma, PrismaClient } from "@prisma/client";
 
 /**
  * How far ahead Log may travel.
@@ -19,17 +21,8 @@ export type DayViewKind = "past" | "today" | "future";
 
 export type DayViewErrorCode = "VALIDATION_ERROR";
 
-export class DayViewRequestError extends Error {
-  constructor(
-    readonly code: DayViewErrorCode,
-    message: string,
-    readonly field: string,
-    readonly status: 400 = 400
-  ) {
-    super(message);
-    this.name = "DayViewRequestError";
-  }
-}
+/** @deprecated Compatibility constructor for existing callers; returns AppError. */
+export { AppError as DayViewRequestError };
 
 export function classifyDay(date: Date, now = new Date()): DayViewKind {
   const today = startOfLocalDay(now).getTime();
@@ -51,11 +44,7 @@ export function parseViewedDay(
 ) {
   const values = searchParams.getAll("date");
   if (values.length > 1) {
-    throw new DayViewRequestError(
-      "VALIDATION_ERROR",
-      "Provide only one day.",
-      "date"
-    );
+    throw new AppError(dayErrors.provideOnlyOneDay);
   }
   const today = startOfLocalDay(now);
   if (values.length === 0) {
@@ -64,26 +53,14 @@ export function parseViewedDay(
 
   const raw = values[0].trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
-    throw new DayViewRequestError(
-      "VALIDATION_ERROR",
-      "A day must be a calendar date such as 2026-08-23.",
-      "date"
-    );
+    throw new AppError(dayErrors.aDayMustBeACalendarDateSuchAs20260823);
   }
   const date = parseLocalDate(raw);
   if (!date || localDateKey(date) !== raw) {
-    throw new DayViewRequestError(
-      "VALIDATION_ERROR",
-      "That day is not a real calendar date.",
-      "date"
-    );
+    throw new AppError(dayErrors.thatDayIsNotARealCalendarDate);
   }
   if (date.getTime() > addDays(today, FORWARD_DAYS).getTime()) {
-    throw new DayViewRequestError(
-      "VALIDATION_ERROR",
-      `Dayflow plans up to ${DAY_VIEW_FORWARD_WEEKS} weeks ahead.`,
-      "date"
-    );
+    throw new AppError(dayErrors.dayflowPlansUpTo8WeeksAhead);
   }
 
   return { date, kind: classifyDay(date, now) };
@@ -105,11 +82,7 @@ export function assertViewedDayOnOrAfter(
 ) {
   const earliest = parseLocalDate(earliestDayKey);
   if (!earliest || date.getTime() < earliest.getTime()) {
-    throw new DayViewRequestError(
-      "VALIDATION_ERROR",
-      "That day is earlier than Dayflow's first recorded evidence.",
-      "date"
-    );
+    throw new AppError(dayErrors.thatDayIsEarlierThanDayflowsFirstRecordedEvidence);
   }
 }
 
@@ -147,9 +120,9 @@ export async function readViewedDay(
     kind === "future"
       ? Promise.resolve([])
       : database.activityEntry.findMany({
-          where: { startedAt: { gte: start, lt: end } },
-          orderBy: [{ startedAt: "desc" }, { createdAt: "desc" }]
-        })
+        where: { startedAt: { gte: start, lt: end } },
+        orderBy: [{ startedAt: "desc" }, { createdAt: "desc" }]
+      })
   ]);
 
   return {

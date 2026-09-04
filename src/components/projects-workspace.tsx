@@ -685,6 +685,7 @@ function ProjectRow({
     project.progressPercent ?? ""
   ].join(":");
   const loadedKey = useRef(planKey);
+  const requestToken = useRef(0);
   const statusLabel = projectStatusLabel(project.status);
   const plannedMinutes = project.nextTaskEstimateMinutes ?? 30;
   const nextTaskTitle = project.nextTaskTitle ?? "Add a first task";
@@ -700,7 +701,14 @@ function ProjectRow({
   // retry that went through `toggle` would read the drawer as open and close
   // it instead of fetching again.
   async function loadPlan() {
-    if (loading) return;
+    // Each attempt takes a token and only the newest one is allowed to write.
+    // A guard on `loading` would drop the reload instead: when the summary
+    // moves while a fetch is already in flight, that fetch is carrying
+    // pre-change data, and letting it settle unchallenged reinstates exactly
+    // the staleness the reload exists to clear.
+    const token = requestToken.current + 1;
+    requestToken.current = token;
+    const requestedKey = planKey;
     setLoading(true);
     setLoadError("");
     try {
@@ -711,7 +719,8 @@ function ProjectRow({
       if (!response.ok || !result || !Array.isArray(result.tasks)) {
         throw new Error("unavailable");
       }
-      loadedKey.current = planKey;
+      if (token !== requestToken.current) return;
+      loadedKey.current = requestedKey;
       setPlan({
         tasks: result.tasks as ProjectTaskRecord[],
         phases: Array.isArray(result.phases)
@@ -719,9 +728,10 @@ function ProjectRow({
           : []
       });
     } catch {
+      if (token !== requestToken.current) return;
       setLoadError("These tasks could not be loaded. Try again.");
     } finally {
-      setLoading(false);
+      if (token === requestToken.current) setLoading(false);
     }
   }
 

@@ -493,3 +493,80 @@ test("refreshes a cached drawer when Focus marks its Task done", async ({
   await expect(row.locator(".project-row-tasks")).toContainText("1/1");
   await expect(drawer.locator("li.is-done")).toHaveCount(1);
 });
+
+test("reloads after a stale in-flight task request settles", async ({ page }) => {
+  // The summary can move while the detail GET is still in flight. That
+  // response carries pre-change data, so it must not install itself and leave
+  // the drawer stale with nothing left to correct it.
+  //
+  // The first response is held on an explicit gate rather than a timer, so
+  // it is guaranteed to settle *after* the Task has been completed.
+  const project = await createProject(page, "Slow Project");
+  const created = await page.request.post("/api/tasks", {
+    data: {
+      title: "Finish me slowly",
+      projectId: project.id,
+      date: null,
+      estimateMinutes: 5
+    }
+  });
+  expect(created.status()).toBe(201);
+
+  // Captured before anything changes. Replaying this body later is what makes
+  // the held response genuinely stale — forwarding the request instead would
+  // simply fetch fresh data at release time and prove nothing.
+  const preChange = await page.request.get(`/api/projects/${project.id}`);
+  expect(preChange.ok()).toBe(true);
+  const preChangeBody = await preChange.text();
+
+  let releaseStaleResponse: () => void = () => {};
+  const staleResponseGate = new Promise<void>((resolve) => {
+    releaseStaleResponse = resolve;
+  });
+  let served = 0;
+  await page.route(`**/api/projects/${project.id}`, async (route) => {
+    served += 1;
+    if (served > 1) return route.continue();
+    await staleResponseGate;
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: preChangeBody
+    });
+  });
+
+  await openListProjects(page);
+  const row = projectRowFor(page, "Slow Project");
+  await projectToggle(page, "Slow Project").click();
+
+  // Complete the Task while that first request is still held open.
+  await row
+    .getByRole("button", { name: /^Focus \d+m on Finish me slowly$/ })
+    .click();
+  const rail = page.getByRole("complementary", { name: "Focus rail" });
+  const startFocus = page.waitForResponse(
+    (response) =>
+      response.url().includes("/api/focus-session") &&
+      response.request().method() === "POST"
+  );
+  await rail.getByRole("button", { name: /^Start \d+m focus$/ }).click();
+  const { session } = (await (await startFocus).json()) as {
+    session: { id: string };
+  };
+  setFocusSessionElapsedMinutes(session.id, 3);
+  await rail.getByRole("button", { name: /^Finish( \d+m)?$/ }).click();
+  await rail.getByRole("button", { name: "Mark done" }).click();
+  await rail
+    .getByRole("button", { name: /Save|Finish without details/ })
+    .first()
+    .click();
+
+  await expect(row.locator(".project-row-tasks")).toContainText("1/1");
+
+  // Only now let the pre-change response land.
+  releaseStaleResponse();
+
+  await expect(row.locator(".project-row-drawer li.is-done")).toHaveCount(1, {
+    timeout: 15_000
+  });
+});

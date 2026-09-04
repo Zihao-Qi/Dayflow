@@ -14,8 +14,7 @@ import {
 import { appErrorResponse } from "@/lib/http-errors";
 import { prisma } from "@/lib/prisma";
 import { readReviewPeriodEvidence } from "@/lib/review-history";
-import { serializeTimeBlock } from "@/lib/time-block-persistence";
-import { isTimeBlockRecord } from "@/lib/time-blocks";
+import { readTimeBlocks } from "@/server/time-blocks";
 import { isWorkspaceEmpty } from "@/lib/workspace-readiness";
 import { AppError } from "@/shared/kernel/errors";
 import { Prisma } from "@prisma/client";
@@ -94,19 +93,7 @@ async function loadBootstrap(now: Date) {
       }),
       tx.diaryEntry.findUnique({ where: { date: start } }),
       tx.material.findMany({ orderBy: { createdAt: "desc" }, take: 12 }),
-      tx.timeBlock.findMany({
-        where: { date: { gte: today, lt: weekEnd } },
-        orderBy: [
-          { date: "asc" },
-          { startTime: "asc" },
-          { endTime: "asc" },
-          { createdAt: "asc" },
-          { id: "asc" }
-        ],
-        include: {
-          task: { select: { id: true, title: true, estimateMinutes: true } }
-        }
-      }),
+      readTimeBlocks(tx, { start: today, end: weekEnd }, "range"),
       tx.activityEntry.findMany({
         where: { startedAt: { gte: start, lt: end } },
         orderBy: [{ startedAt: "desc" }, { createdAt: "desc" }]
@@ -171,9 +158,7 @@ async function loadBootstrap(now: Date) {
     notes: notes.map((note) => ({ ...note, tags: safeTags(note.tags) })),
     diary: diaryEntry,
     materials,
-    timeBlocks: timeBlocks
-      .map(serializeTimeBlock)
-      .filter(isTimeBlockRecord),
+    timeBlocks,
     activities,
     activityCategorySuggestions: buildActivityCategorySuggestions(
       activityCategoryRows.map(({ category }) => category)

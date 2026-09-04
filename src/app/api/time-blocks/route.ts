@@ -2,15 +2,13 @@ import { clock } from "@/lib/time";
 import { NextRequest, NextResponse } from "next/server";
 import {
   parseMutationId,
-  runIdempotentCreate
-} from "@/lib/idempotent-mutations";
-import { timeBlockMutationErrorResponse } from "@/lib/time-block-http";
-import { createTimeBlock } from "@/lib/time-block-persistence";
+  runOnce
+} from "@/server/prisma/run-once";
+import { createTimeBlock, timeBlockMutationErrorResponse } from "@/server/time-blocks";
 import {
-  assertTimeBlockIsNotPast,
   parseTimeBlockDraftStructure,
   readTimeBlockMutationBody
-} from "@/lib/time-blocks";
+} from "@/modules/planning/domain/time-block";
 
 export async function POST(request: NextRequest) {
   const now = clock.now();
@@ -20,14 +18,11 @@ export async function POST(request: NextRequest) {
       request.headers.get("X-Dayflow-Mutation-Id")
     );
     const input = parseTimeBlockDraftStructure(body);
-    const timeBlock = await runIdempotentCreate({
+    const timeBlock = await runOnce({
       mutationId,
       kind: "time-block.create",
       payload: body,
-      create: (transaction) => {
-        assertTimeBlockIsNotPast(input, now);
-        return createTimeBlock(input, transaction);
-      }
+      create: (tx) => createTimeBlock(tx, input, now)
     });
     return NextResponse.json(timeBlock, { status: 201 });
   } catch (error) {

@@ -4,9 +4,11 @@ import { useEffect, useRef, useState } from "react";
 import {
   Archive,
   ArrowLeft,
+  ArrowUpRight,
   CalendarDays,
   Check,
   ChevronDown,
+  ChevronRight,
   ChevronUp,
   Circle,
   Clock3,
@@ -54,16 +56,20 @@ type ProjectsWorkspaceProps = {
   }) => void;
 };
 
-type ProjectView = "cards" | "compact";
+type ProjectView = "cards" | "list";
 
 const PROJECTS_VIEW_STORAGE_KEY = "dayflow-projects-view";
 const PROJECT_VIEW_OPTIONS: Array<[ProjectView, string]> = [
   ["cards", "Cards"],
-  ["compact", "Compact"]
+  ["list", "List"]
 ];
 
+/**
+ * "compact" is the value this view was stored under before it was renamed.
+ * It is still accepted so an existing preference survives the rename.
+ */
 function parseProjectView(value: string | null): ProjectView {
-  return value === "compact" ? "compact" : "cards";
+  return value === "list" || value === "compact" ? "list" : "cards";
 }
 
 function readStoredProjectView(): ProjectView {
@@ -336,8 +342,8 @@ export function ProjectsWorkspace({
   }
 
   const visibleProjects = projects.filter((project) => project.status === filter);
-  const compactList = view === "compact" && visibleProjects.length > 0;
-  const ProjectOverviewItem = compactList ? ProjectRow : ProjectCard;
+  const showList = view === "list" && visibleProjects.length > 0;
+  const ProjectOverviewItem = showList ? ProjectRow : ProjectCard;
 
   return (
     <div className="projects-page">
@@ -404,7 +410,7 @@ export function ProjectsWorkspace({
 
       <section
         className={
-          compactList ? "project-list panel" : "project-card-grid"
+          showList ? "project-list panel" : "project-card-grid"
         }
         aria-label={`${projectStatusLabel(filter)} projects`}
       >
@@ -416,7 +422,7 @@ export function ProjectsWorkspace({
             onStartFocus={onStartFocus}
           />
         ))}
-        {compactList ? (
+        {showList ? (
           <button
             type="button"
             className="project-create-row"
@@ -647,6 +653,14 @@ function ProjectCreateForm({
   );
 }
 
+/**
+ * One project as a single row, with an optional drawer of its tasks.
+ *
+ * The disclosure is a dedicated button rather than a `<details>`/`<summary>`
+ * wrapper: the row already carries two controls (the name opens the Project,
+ * the Focus button starts a session) and anything inside a `<summary>` toggles
+ * it when clicked, so those would fight each other.
+ */
 function ProjectRow({
   project,
   onOpen,
@@ -656,27 +670,110 @@ function ProjectRow({
   onOpen: () => void;
   onStartFocus: ProjectsWorkspaceProps["onStartFocus"];
 }) {
+  const [expanded, setExpanded] = useState(false);
+  const [plan, setPlan] = useState<ProjectRowPlan | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  // The overview payload refreshes whenever Project data changes, so its own
+  // counts stand in for "the plan moved". Without this, completing a Focus
+  // Session started from this row updates the summary beside a drawer still
+  // showing the Task as unfinished, and collapsing does not repair it.
+  const planKey = [
+    project.taskCount,
+    project.completedTaskCount,
+    project.nextTaskId ?? "",
+    project.progressPercent ?? ""
+  ].join(":");
+  const loadedKey = useRef(planKey);
+  const requestToken = useRef(0);
   const statusLabel = projectStatusLabel(project.status);
   const plannedMinutes = project.nextTaskEstimateMinutes ?? 30;
   const nextTaskTitle = project.nextTaskTitle ?? "Add a first task";
   const taskProgressLabel = project.taskCount
     ? `${project.completedTaskCount}/${project.taskCount} tasks`
     : "No tasks yet";
+  const drawerId = `project-tasks-${project.id}`;
+
+  // Tasks are not in the overview payload, so the first expand fetches the
+  // same detail the Project page uses and keeps it for later toggles.
+  //
+  // Kept separate from `toggle` so a failed load can be retried in place. A
+  // retry that went through `toggle` would read the drawer as open and close
+  // it instead of fetching again.
+  async function loadPlan() {
+    // Each attempt takes a token and only the newest one is allowed to write.
+    // A guard on `loading` would drop the reload instead: when the summary
+    // moves while a fetch is already in flight, that fetch is carrying
+    // pre-change data, and letting it settle unchallenged reinstates exactly
+    // the staleness the reload exists to clear.
+    const token = requestToken.current + 1;
+    requestToken.current = token;
+    const requestedKey = planKey;
+    setLoading(true);
+    setLoadError("");
+    try {
+      const response = await fetch(`/api/projects/${project.id}`, {
+        cache: "no-store"
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result || !Array.isArray(result.tasks)) {
+        throw new Error("unavailable");
+      }
+      if (token !== requestToken.current) return;
+      loadedKey.current = requestedKey;
+      setPlan({
+        tasks: result.tasks as ProjectTaskRecord[],
+        phases: Array.isArray(result.phases)
+          ? (result.phases as ProjectPhaseRecord[])
+          : []
+      });
+    } catch {
+      if (token !== requestToken.current) return;
+      setLoadError("These tasks could not be loaded. Try again.");
+    } finally {
+      if (token === requestToken.current) setLoading(false);
+    }
+  }
+
+  function toggle() {
+    const next = !expanded;
+    setExpanded(next);
+    if (next && !plan) void loadPlan();
+  }
+
+  useEffect(() => {
+    if (loadedKey.current === planKey) return;
+    loadedKey.current = planKey;
+    setPlan(null);
+    if (expanded) void loadPlan();
+  }, [planKey, expanded]);
 
   return (
-    <article className="project-row">
-      <span
-        className={`project-row-dot status-${project.status.toLowerCase()}`}
-        aria-hidden="true"
-        title={statusLabel}
-      />
+    <article className={expanded ? "project-row is-expanded" : "project-row"}>
+      {/*
+        Chevron, status dot and name are one control. Opening the Project is
+        the rarer errand, so it gets the small explicit button at the end of
+        the row and this large target does the thing you came here to do.
+      */}
       <button
         type="button"
-        className="project-row-open"
+        className="project-row-toggle"
+        aria-expanded={expanded}
+        aria-controls={drawerId}
         title={project.name}
-        onClick={onOpen}
+        onClick={toggle}
       >
-        {project.name}
+        <ChevronRight
+          className="project-row-chevron"
+          size={14}
+          aria-hidden="true"
+        />
+        <span
+          className={`project-row-dot status-${project.status.toLowerCase()}`}
+          aria-hidden="true"
+        />
+        <span className="project-row-name">{project.name}</span>
+        <span className="sr-only">, {statusLabel}</span>
       </button>
       <div className="project-row-progress">
         <div
@@ -705,7 +802,157 @@ function ProjectRow({
           {plannedMinutes}m
         </button>
       )}
+      <button
+        type="button"
+        className="project-row-details"
+        aria-label={`Open ${project.name} overview`}
+        title={`Open ${project.name} overview`}
+        onClick={onOpen}
+      >
+        <ArrowUpRight size={15} aria-hidden="true" />
+      </button>
+      {expanded && (
+        <div className="project-row-drawer" id={drawerId}>
+          <ProjectRowTasks
+            plan={plan}
+            loading={loading}
+            error={loadError}
+            onOpen={onOpen}
+            onRetry={() => void loadPlan()}
+          />
+        </div>
+      )}
     </article>
+  );
+}
+
+type ProjectRowPlan = {
+  tasks: ProjectTaskRecord[];
+  phases: ProjectPhaseRecord[];
+};
+
+/**
+ * Read-only on purpose. Editing, scheduling and phase management all live on
+ * the Project page; repeating them here would mean two places to keep in step.
+ */
+function ProjectRowTasks({
+  plan,
+  loading,
+  error,
+  onOpen,
+  onRetry
+}: {
+  plan: ProjectRowPlan | null;
+  loading: boolean;
+  error: string;
+  onOpen: () => void;
+  onRetry: () => void;
+}) {
+  if (loading) {
+    return (
+      <p className="project-row-drawer-state" role="status">
+        Loading tasks…
+      </p>
+    );
+  }
+
+  if (error) {
+    return (
+      <p className="project-row-drawer-state" role="alert">
+        {error}{" "}
+        <button type="button" className="text-button" onClick={onRetry}>
+          Try again
+        </button>
+      </p>
+    );
+  }
+
+  if (!plan) return null;
+
+  if (!plan.tasks.length) {
+    return (
+      <p className="project-row-drawer-state">
+        No tasks yet.{" "}
+        <button type="button" className="text-button" onClick={onOpen}>
+          Add the first one
+        </button>
+      </p>
+    );
+  }
+
+  // Seeded from `plan.phases`, which the API returns in the Project's own
+  // sortOrder, so the drawer keeps the configured sequence. Deriving the order
+  // from the tasks instead would let a phase holding only completed work fall
+  // behind a later one, because completed tasks sort last.
+  type DrawerGroup = {
+    key: string;
+    label: string | null;
+    tasks: ProjectTaskRecord[];
+  };
+  const groups: DrawerGroup[] = plan.phases.map((phase) => ({
+    key: `phase:${phase.id}`,
+    label: phase.name,
+    tasks: []
+  }));
+  const byKey = new Map(groups.map((group) => [group.key, group]));
+  // Unphased work first, then the phases. The Project workspace renders its
+  // "Project tasks" section above `.phase-list`, and opening a Project from
+  // this drawer should not reshuffle the groups.
+  const rootGroup: DrawerGroup = {
+    key: "root",
+    label: plan.phases.length ? "No phase" : null,
+    tasks: []
+  };
+  groups.unshift(rootGroup);
+
+  for (const task of sortTasks(plan.tasks)) {
+    const group = task.phaseId ? byKey.get(`phase:${task.phaseId}`) : rootGroup;
+    (group ?? rootGroup).tasks.push(task);
+  }
+
+  const filledGroups = groups.filter((group) => group.tasks.length > 0);
+
+  return (
+    <>
+      {filledGroups.map((group) => (
+        <div key={group.key} className="project-row-task-group">
+          {group.label && (
+            <span className="project-row-phase">{group.label}</span>
+          )}
+          <ul className="project-row-task-list">
+            {group.tasks.map((task) => (
+              <li
+                key={task.id}
+                className={task.status === "DONE" ? "is-done" : undefined}
+              >
+                <span className="project-row-task-mark" aria-hidden="true">
+                  {task.status === "DONE" ? <Check size={11} /> : null}
+                </span>
+                <span className="project-row-task-title">
+                  {task.status === "DONE" && <span className="sr-only">Done: </span>}
+                  {task.title}
+                </span>
+                {/*
+                  Only the exception is labelled. Nearly every Project task is
+                  unscheduled, so "Backlog" on every row separated nothing; the
+                  fact worth surfacing is which few tasks are on a day, and
+                  when. Completion is already carried by the filled mark and
+                  the muted title.
+                */}
+                <span className="project-row-task-meta">
+                  {task.status !== "DONE" && task.date
+                    ? formatShortDate(task.date)
+                    : ""}
+                </span>
+                <span className="project-row-task-estimate">
+                  {task.estimateMinutes}m
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </>
   );
 }
 

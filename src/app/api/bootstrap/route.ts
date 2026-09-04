@@ -73,8 +73,8 @@ async function loadBootstrap() {
     workspaceEmpty,
     earliestDayKey
   ] =
-    await Promise.all([
-      prisma.task.findMany({
+    await prisma.$transaction(async (tx) => Promise.all([
+      tx.task.findMany({
         where: {
           OR: [
             { date: { gte: weekStart, lt: weekEnd } },
@@ -85,7 +85,7 @@ async function loadBootstrap() {
         },
         orderBy: [{ date: "asc" }, { sortOrder: "asc" }, { createdAt: "asc" }]
       }),
-      prisma.task.findMany({
+      tx.task.findMany({
         where: { status: { not: "DONE" } },
         select: {
           id: true,
@@ -97,13 +97,13 @@ async function loadBootstrap() {
           projectId: true
         }
       }),
-      prisma.note.findMany({
+      tx.note.findMany({
         where: { date: { gte: start, lt: end } },
         orderBy: { createdAt: "desc" }
       }),
-      prisma.diaryEntry.findUnique({ where: { date: start } }),
-      prisma.material.findMany({ orderBy: { createdAt: "desc" }, take: 12 }),
-      prisma.timeBlock.findMany({
+      tx.diaryEntry.findUnique({ where: { date: start } }),
+      tx.material.findMany({ orderBy: { createdAt: "desc" }, take: 12 }),
+      tx.timeBlock.findMany({
         where: { date: { gte: today, lt: weekEnd } },
         orderBy: [
           { date: "asc" },
@@ -116,16 +116,16 @@ async function loadBootstrap() {
           task: { select: { id: true, title: true, estimateMinutes: true } }
         }
       }),
-      prisma.activityEntry.findMany({
+      tx.activityEntry.findMany({
         where: { startedAt: { gte: start, lt: end } },
         orderBy: [{ startedAt: "desc" }, { createdAt: "desc" }]
       }),
-      prisma.task.findMany({
+      tx.task.findMany({
         where: { date: { gte: weekStart, lt: reviewEnd } },
         orderBy: { date: "asc" }
       }),
-      readReviewPeriodEvidence(prisma, reviewPeriod),
-      prisma.review.findUnique({
+      readReviewPeriodEvidence(tx, reviewPeriod),
+      tx.review.findUnique({
         where: {
           periodStart_periodEnd: {
             periodStart: weekStart,
@@ -133,13 +133,13 @@ async function loadBootstrap() {
           }
         }
       }),
-      prisma.activityEntry.findMany({
+      tx.activityEntry.findMany({
         select: { category: true },
         distinct: ["category"]
       }),
-      isWorkspaceEmpty(prisma),
-      earliestRecordedDay(prisma)
-    ]);
+      isWorkspaceEmpty(tx),
+      earliestRecordedDay(tx)
+    ]));
 
   const diaryEntry = diary
     ? { ...diary, persisted: true }

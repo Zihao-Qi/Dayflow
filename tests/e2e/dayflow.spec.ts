@@ -389,6 +389,32 @@ test("keeps restore confirmation open when scheduling fails", async ({
   await expect(restoreTrigger).toBeFocused();
 });
 
+test("restore confirmation traps Tab and discards the confirmation draft on Cancel", async ({ page }) => {
+  await openDashboard(page);
+  const dialog = await createBackupFromDialog(page);
+  const trigger = dialog.getByRole("button", { name: "Restore this backup…", exact: true });
+  await trigger.click();
+  const confirmation = page.getByRole("alertdialog", { name: "Restore this backup on next startup?", exact: true });
+  const input = confirmation.getByLabel("Type RESTORE to schedule replacement", { exact: true });
+  const cancel = confirmation.getByRole("button", { name: "Cancel", exact: true });
+  const stage = confirmation.getByRole("button", { name: "Restore on next startup", exact: true });
+  await input.fill("RESTORE");
+  await stage.focus();
+  await page.keyboard.press("Tab");
+  await expect(input).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(stage).toBeFocused();
+  await cancel.click();
+  await expect(confirmation).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+  await trigger.click();
+  await expect(input).toHaveValue("");
+  await expect(stage).toBeDisabled();
+  await expect(cancel).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(trigger).toBeFocused();
+});
+
 test("persists task editing, completion, and accessible ordering", async ({ page }) => {
   await openDashboard(page);
   await addTask(page, "First task");

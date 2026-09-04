@@ -246,3 +246,59 @@ function jsonRequest(
     body: JSON.stringify(body)
   });
 }
+
+
+test("Journal GET routes pin Notes validation and Materials cursor errors", async () => {
+  const notes = await getNotes(new NextRequest("http://localhost/api/notes?limit=0"));
+  assert.equal(notes.status, 400);
+  assert.deepEqual(await notes.json(), {
+    code: "VALIDATION_ERROR", error: "Page limit must be a positive whole number."
+  });
+  const materials = await getMaterials(new NextRequest("http://localhost/api/materials?cursor=not-a-cursor"));
+  assert.equal(materials.status, 400);
+  assert.deepEqual(await materials.json(), {
+    code: "INVALID_CURSOR", error: "The pagination cursor is invalid."
+  });
+});
+
+test("Materials POST pins receipt and attribution bodies through its handler", async () => {
+  const originalTransaction = prisma.$transaction;
+  const payload = { url: "https://example.com" };
+  try {
+    for (const [requestHash, responseJson, status, body] of [
+      ["different", "{}", 409, {
+        code: "MUTATION_ID_CONFLICT", error: "This mutation identifier was already used for a different request."
+      }],
+      [mutationRequestHash("material.create", payload), "{", 500, {
+        code: "INVALID_MUTATION_RECEIPT", error: "The saved mutation receipt could not be read."
+      }]
+    ] as const) {
+      (prisma as unknown as { $transaction: unknown }).$transaction = async (
+        operation: (transaction: unknown) => unknown
+      ) => operation({ mutationReceipt: { findUnique: async () => ({ kind: "material.create", requestHash, responseJson }) } });
+      const response = await createMaterial(jsonRequest("http://localhost/api/materials", payload, {
+        "X-Dayflow-Mutation-Id": "material-receipt"
+      }));
+      assert.equal(response.status, status);
+      assert.deepEqual(await response.json(), body);
+    }
+    for (const relation of ["task", "note"] as const) {
+      (prisma as unknown as { $transaction: unknown }).$transaction = async (
+        operation: (transaction: unknown) => unknown
+      ) => operation({
+        task: { findUnique: async () => ({ id: "task", projectId: "other" }) },
+        project: { findUnique: async () => ({ id: "project" }) },
+        note: { findUnique: async () => ({ id: "note", projectId: "other", task: null }) }
+      });
+      const response = await createMaterial(jsonRequest("http://localhost/api/materials", {
+        ...payload, projectId: "project", [relation === "task" ? "taskId" : "noteId"]: relation
+      }));
+      assert.equal(response.status, 409);
+      assert.deepEqual(await response.json(), {
+        code: "ATTRIBUTION_CONFLICT", error: `The selected ${relation} belongs to a different project.`
+      });
+    }
+  } finally {
+    (prisma as unknown as { $transaction: unknown }).$transaction = originalTransaction;
+  }
+});

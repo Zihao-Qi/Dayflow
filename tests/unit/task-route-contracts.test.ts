@@ -7,6 +7,7 @@ import {
   DELETE as deleteTask,
   PATCH as updateTask
 } from "../../src/app/api/tasks/[id]/route";
+import { mutationRequestHash } from "../../src/lib/idempotent-mutations";
 import { prisma } from "../../src/lib/prisma";
 
 test("Task create and patch return typed malformed-JSON responses", async () => {
@@ -296,3 +297,74 @@ function prismaError(code: string) {
     clientVersion: "test"
   });
 }
+
+
+test("Task create pins its own mismatch and corrupt receipt bodies", async () => {
+  const originalTransaction = prisma.$transaction;
+  const payload = { title: "Receipt task" };
+  try {
+    for (const [requestHash, responseJson, status, body] of [
+      ["different", "{}", 409, {
+        error: "This mutation identifier was already used for a different request.",
+        code: "MUTATION_ID_CONFLICT"
+      }],
+      [mutationRequestHash("task.create", payload), "{", 500, {
+        error: "The saved mutation receipt could not be read.",
+        code: "INVALID_MUTATION_RECEIPT"
+      }]
+    ] as const) {
+      (prisma as unknown as { $transaction: unknown }).$transaction = async (
+        operation: (transaction: unknown) => unknown
+      ) => operation({ mutationReceipt: { findUnique: async () => ({
+        kind: "task.create", requestHash, responseJson
+      }) } });
+      const response = await createTask(jsonRequest("http://localhost/api/tasks", "POST", payload, {
+        "X-Dayflow-Mutation-Id": "task-receipt"
+      }));
+      assert.equal(response.status, status);
+      assert.deepEqual(await response.json(), body);
+    }
+  } finally {
+    (prisma as unknown as { $transaction: unknown }).$transaction = originalTransaction;
+  }
+});
+
+test("Task POST and PATCH pin each placement error independently", async () => {
+  const originalTransaction = prisma.$transaction;
+  try {
+    for (const method of ["POST", "PATCH"] as const) {
+      for (const [placement, project, phase, status, body] of [
+        [{ phaseId: "phase" }, null, null, 400, {
+          error: "A task cannot have a phase without a project.", code: "VALIDATION_ERROR", field: "phaseId"
+        }],
+        [{ projectId: "project" }, null, null, 404, {
+          error: "The selected project could not be found.", code: "RELATIONSHIP_NOT_FOUND", field: "projectId"
+        }],
+        [{ projectId: "project", phaseId: "phase" }, { status: "ACTIVE" }, null, 404, {
+          error: "The selected phase could not be found.", code: "RELATIONSHIP_NOT_FOUND", field: "phaseId"
+        }],
+        [{ projectId: "project" }, { status: "COMPLETED" }, null, 409, {
+          error: "Reopen the completed project before adding unfinished work.", code: "RELATIONSHIP_CONFLICT", field: "projectId"
+        }],
+        [{ projectId: "project", phaseId: "phase" }, { status: "ACTIVE" }, { projectId: "other" }, 409, {
+          error: "The selected phase does not belong to this project.", code: "RELATIONSHIP_CONFLICT", field: "phaseId"
+        }]
+      ] as const) {
+        (prisma as unknown as { $transaction: unknown }).$transaction = async (
+          operation: (transaction: unknown) => unknown
+        ) => operation({
+          task: { findUnique: async () => ({ date: null, projectId: null, phaseId: null, status: "TODO" }) },
+          project: { findUnique: async () => project },
+          projectPhase: { findUnique: async () => phase }
+        });
+        const response = method === "POST"
+          ? await createTask(jsonRequest("http://localhost/api/tasks", method, { title: "Task", ...placement }))
+          : await updateTask(jsonRequest("http://localhost/api/tasks/task", method, placement), params("task"));
+        assert.equal(response.status, status, `${method}: ${body.error}`);
+        assert.deepEqual(await response.json(), body);
+      }
+    }
+  } finally {
+    (prisma as unknown as { $transaction: unknown }).$transaction = originalTransaction;
+  }
+});

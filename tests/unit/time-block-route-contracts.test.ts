@@ -13,6 +13,7 @@ import {
   TimeBlockError
 } from "../../src/lib/time-blocks";
 import { IdempotentMutationError } from "../../src/lib/idempotent-mutations";
+import { prisma } from "../../src/lib/prisma";
 import { timeBlockMutationErrorResponse } from "../../src/lib/time-block-http";
 
 const validBody = {
@@ -292,6 +293,12 @@ test("Time Block error mapping pins idempotency, domain, Prisma, and fallback en
     ]
   ];
 
+  cases.push([
+    new TimeBlockError("Time Block not found.", "NOT_FOUND", 404),
+    "save", 404, { error: "Time Block not found.", code: "NOT_FOUND" }
+  ]);
+  const originalTransaction = prisma.$transaction;
+  const originalDelete = prisma.timeBlock.delete;
   const originalConsoleError = console.error;
   console.error = () => undefined;
   try {
@@ -299,8 +306,25 @@ test("Time Block error mapping pins idempotency, domain, Prisma, and fallback en
       const response = timeBlockMutationErrorResponse(error, action);
       assert.equal(response.status, status);
       assert.deepEqual(await response.json(), body);
+      const fail = async () => { throw error; };
+      (prisma as unknown as { $transaction: unknown }).$transaction = fail;
+      (prisma.timeBlock as unknown as { delete: unknown }).delete = fail;
+      const actions = error instanceof IdempotentMutationError ? ["create"]
+        : error instanceof TimeBlockError || error instanceof Prisma.PrismaClientKnownRequestError
+          ? ["create", "save", "delete"] : [action];
+      for (const routeAction of actions) {
+        const routeResponse = routeAction === "create"
+          ? await createTimeBlock(jsonRequest("http://localhost/api/time-blocks", "POST", validBody))
+          : routeAction === "save"
+            ? await replaceTimeBlock(jsonRequest("http://localhost/api/time-blocks/block", "PUT", validBody), params("block"))
+            : await deleteTimeBlock(new NextRequest("http://localhost/api/time-blocks/block", { method: "DELETE" }), params("block"));
+        assert.equal(routeResponse.status, status);
+        assert.deepEqual(await routeResponse.json(), body);
+      }
     }
   } finally {
+    (prisma as unknown as { $transaction: unknown }).$transaction = originalTransaction;
+    (prisma.timeBlock as unknown as { delete: unknown }).delete = originalDelete;
     console.error = originalConsoleError;
   }
 });
@@ -356,3 +380,16 @@ function prismaError(code: string) {
     clientVersion: "test"
   });
 }
+
+test("Time Block create and replace pin invalid date bodies", async () => {
+  const payload = { ...validBody, date: "2026-02-30" };
+  for (const response of [
+    await createTimeBlock(jsonRequest("http://localhost/api/time-blocks", "POST", payload)),
+    await replaceTimeBlock(jsonRequest("http://localhost/api/time-blocks/block", "PUT", payload), params("block"))
+  ]) {
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), {
+      error: "Time Block date must be a valid local date in YYYY-MM-DD format.", code: "VALIDATION_ERROR", field: "date"
+    });
+  }
+});

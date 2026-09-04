@@ -344,6 +344,7 @@ test("Activity error mapping pins every typed and Prisma branch", async () => {
     { error: "Activity could not be updated.", code: "INTERNAL_ERROR" }
   ]);
 
+  const originalTransaction = prisma.$transaction;
   const originalConsoleError = console.error;
   console.error = () => undefined;
   try {
@@ -355,6 +356,19 @@ test("Activity error mapping pins every typed and Prisma branch", async () => {
       );
       assert.equal(response.status, status);
       assert.deepEqual(await response.json(), body);
+      (prisma as unknown as { $transaction: unknown }).$transaction = async () => { throw error; };
+      const methods = error instanceof IdempotentMutationError ? ["POST"] as const
+        : error instanceof ActivityPersistenceError || status === 500 ? ["PUT"] as const
+          : ["POST", "PUT"] as const;
+      for (const method of methods) {
+        const request = jsonRequest(`http://localhost/api/activities${method === "PUT" ? "/activity" : ""}`, method, {
+          startTime: "09:30", durationMinutes: 30, category: "Deep Work", note: "Contract", taskId: null, projectId: null
+        });
+        const routed = method === "POST" ? await createActivity(request)
+          : await updateActivity(request, { params: Promise.resolve({ id: "activity" }) });
+        assert.equal(routed.status, status);
+        assert.deepEqual(await routed.json(), body);
+      }
     }
     const createFallback = activityMutationErrorResponse(
       new Error("unexpected"),
@@ -365,7 +379,13 @@ test("Activity error mapping pins every typed and Prisma branch", async () => {
       error: "Activity could not be saved.",
       code: "INTERNAL_ERROR"
     });
+    const routedFallback = await createActivity(jsonRequest("http://localhost/api/activities", "POST", {
+      durationMinutes: 30, category: "Deep Work", note: "Contract"
+    }));
+    assert.equal(routedFallback.status, 500);
+    assert.deepEqual(await routedFallback.json(), { error: "Activity could not be saved.", code: "INTERNAL_ERROR" });
   } finally {
+    (prisma as unknown as { $transaction: unknown }).$transaction = originalTransaction;
     console.error = originalConsoleError;
   }
 });

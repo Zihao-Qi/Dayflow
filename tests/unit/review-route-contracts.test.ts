@@ -213,3 +213,12 @@ function jsonRequest(body: Record<string, unknown>) {
     body: JSON.stringify(body)
   });
 }
+
+
+test("Review History GET pins query validation without a field", async () => {
+  const response = await getReviewHistory(new NextRequest("http://localhost/api/review/history?limit=0"));
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), {
+    error: "Page limit must be a whole number between 1 and 100.", code: "VALIDATION_ERROR"
+  });
+});

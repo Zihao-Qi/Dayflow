@@ -13,6 +13,7 @@ import {
   DELETE as deletePhase,
   PATCH as updatePhase
 } from "../../src/app/api/phases/[id]/route";
+import { mutationRequestHash } from "../../src/lib/idempotent-mutations";
 import { prisma } from "../../src/lib/prisma";
 
 test("Project and Phase routes return typed malformed-JSON responses", async () => {
@@ -515,3 +516,44 @@ function prismaError(code: string) {
     clientVersion: "test"
   });
 }
+
+
+test("Project and Phase create pin their own mismatch and corrupt receipt bodies", async () => {
+  const originalTransaction = prisma.$transaction;
+  try {
+    for (const kind of ["project.create", "phase.create"] as const) {
+      const payload = { name: "Receipt record" };
+      const receiptPayload = kind === "phase.create" ? { projectId: "project", ...payload } : payload;
+      for (const [requestHash, responseJson, status, body] of [
+        ["different", "{}", 409, {
+          error: "This mutation identifier was already used for a different request.", code: "MUTATION_ID_CONFLICT"
+        }],
+        [mutationRequestHash(kind, receiptPayload), "{", 500, {
+          error: "The saved mutation receipt could not be read.", code: "INVALID_MUTATION_RECEIPT"
+        }]
+      ] as const) {
+        (prisma as unknown as { $transaction: unknown }).$transaction = async (
+          operation: (transaction: unknown) => unknown
+        ) => operation({ mutationReceipt: { findUnique: async () => ({ kind, requestHash, responseJson }) } });
+        const headers = { "X-Dayflow-Mutation-Id": "project-receipt" };
+        const response = kind === "project.create"
+          ? await createProject(jsonRequest("http://localhost/api/projects", "POST", payload, headers))
+          : await createPhase(jsonRequest("http://localhost/api/projects/project/phases", "POST", payload, headers), params("project"));
+        assert.equal(response.status, status);
+        assert.deepEqual(await response.json(), body);
+      }
+    }
+  } finally {
+    (prisma as unknown as { $transaction: unknown }).$transaction = originalTransaction;
+  }
+});
+
+test("Phase create pins invalid input before persistence", async () => {
+  const response = await createPhase(
+    jsonRequest("http://localhost/api/projects/project/phases", "POST", { name: "" }), params("project")
+  );
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), {
+    error: "Phase name is required.", code: "VALIDATION_ERROR", field: "name"
+  });
+});

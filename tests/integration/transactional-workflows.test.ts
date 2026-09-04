@@ -87,6 +87,7 @@ async function withDatabase(
 }
 
 test("seeded transactional workflow conflicts preserve their invariants", async (context) => {
+  context.mock.timers.enable({ apis: ["Date"], now: new Date("2026-09-04T12:00:00-05:00") });
   await withDatabase(context, async (deps) => {
     const {
       prisma,
@@ -168,6 +169,7 @@ test("seeded transactional workflow conflicts preserve their invariants", async 
       }
     );
 
+    let pendingCompletion: Record<string, unknown>;
     await context.test(
       "concurrent Focus completion creates exactly one Activity",
       async () => {
@@ -193,8 +195,45 @@ test("seeded transactional workflow conflicts preserve their invariants", async 
           responses.map((response) => response.status),
           [200, 200]
         );
+        const persisted = await prisma.focusSession.findUniqueOrThrow({ where: { id: session.id } });
+        const activity = await prisma.activityEntry.findUniqueOrThrow({ where: { focusSessionId: session.id } });
+        pendingCompletion = {
+          id: session.id,
+          activeKey: null,
+          kind: "FOCUS",
+          plannedMinutes: 25,
+          actualMinutes: 3,
+          label: "Concurrent completion",
+          startedAt: session.startedAt.toISOString(),
+          pausedAt: null,
+          accumulatedPauseSeconds: 0,
+          status: "COMPLETED",
+          completedAt: persisted.completedAt!.toISOString(),
+          needsEnrichment: true,
+          enrichedAt: null,
+          completionNote: null,
+          completionCategory: null,
+          taskId: null,
+          projectId: null,
+          createdAt: session.createdAt.toISOString(),
+          updatedAt: persisted.updatedAt.toISOString(),
+          task: null,
+          project: null,
+          activity: { id: activity.id }
+        };
         for (const response of responses) {
-          assert.equal((await response.json()).completed, true);
+          const body = await response.json();
+          assert.equal(body.completed, true);
+          assert.deepEqual(body, {
+            completed: true,
+            suggestedBreakMinutes: 5,
+            completedSession: pendingCompletion,
+            snapshot: {
+              active: null,
+              pendingCompletion,
+              today: { completedSessions: 1, focusedMinutes: 3 }
+            }
+          });
         }
         assert.equal(
           await prisma.activityEntry.count({
@@ -213,6 +252,7 @@ test("seeded transactional workflow conflicts preserve their invariants", async 
     await context.test(
       "Focus enrichment completes its Task, consumes the queue, and reuses the Activity",
       async () => {
+        context.mock.timers.tick(1_000);
         const task = await prisma.task.create({
           data: { title: "Enrich me", focusQueuePosition: 0 }
         });
@@ -255,6 +295,38 @@ test("seeded transactional workflow conflicts preserve their invariants", async 
         assert.equal(body.completed, true);
         assert.equal(body.enriched, true);
         assert.equal(body.activity.id, existingActivity.id);
+        const persistedActivity = await prisma.activityEntry.findUniqueOrThrow({ where: { id: existingActivity.id } });
+        assert.deepEqual(body, {
+          completed: true,
+          enriched: true,
+          activity: {
+            id: existingActivity.id,
+            startedAt: session.startedAt.toISOString(),
+            durationMinutes: 12,
+            category: "Engineering",
+            note: "Shipped the seam",
+            origin: "FOCUS",
+            taskId: task.id,
+            projectId: null,
+            attributedProjectId: null,
+            focusSessionId: session.id,
+            createdAt: existingActivity.createdAt.toISOString(),
+            updatedAt: persistedActivity.updatedAt.toISOString()
+          },
+          suggestedBreakMinutes: 5,
+          completedSession: null,
+          snapshot: {
+            active: null,
+            pendingCompletion,
+            today: { completedSessions: 2, focusedMinutes: 15 }
+          }
+        });
+        assert.deepEqual(
+          await prisma.activityEntry.findUniqueOrThrow({
+            where: { id: existingActivity.id }, select: { note: true, category: true }
+          }),
+          { note: "Shipped the seam", category: "Engineering" }
+        );
         assert.equal(await prisma.activityEntry.count({ where: { focusSessionId: session.id } }), 1);
         assert.deepEqual(
           await prisma.task.findUniqueOrThrow({
@@ -280,6 +352,8 @@ test("seeded transactional workflow conflicts preserve their invariants", async 
     await context.test(
       "zero-minute Focus and Break completion create no Activity",
       async () => {
+        context.mock.timers.tick(1_000);
+        let expectedPendingCompletion = pendingCompletion;
         for (const kind of ["FOCUS", "BREAK"] as const) {
           const session = await prisma.focusSession.create({
             data: {
@@ -297,7 +371,34 @@ test("seeded transactional workflow conflicts preserve their invariants", async 
             params(session.id)
           );
           assert.equal(response.status, 200);
-          assert.equal((await response.json()).completed, true);
+          const body = await response.json();
+          assert.equal(body.completed, true);
+          if (kind === "FOCUS") {
+            const persisted = await prisma.focusSession.findUniqueOrThrow({
+              where: { id: session.id }
+            });
+            expectedPendingCompletion = {
+              ...pendingCompletion,
+              id: session.id,
+              actualMinutes: 0,
+              label: "FOCUS",
+              startedAt: session.startedAt.toISOString(),
+              completedAt: persisted.completedAt!.toISOString(),
+              createdAt: session.createdAt.toISOString(),
+              updatedAt: persisted.updatedAt.toISOString(),
+              activity: null
+            };
+          }
+          assert.deepEqual(body, {
+            completed: true,
+            suggestedBreakMinutes: kind === "FOCUS" ? 5 : null,
+            completedSession: kind === "FOCUS" ? expectedPendingCompletion : null,
+            snapshot: {
+              active: null,
+              pendingCompletion: expectedPendingCompletion,
+              today: { completedSessions: 3, focusedMinutes: 15 }
+            }
+          });
           assert.equal(
             await prisma.activityEntry.count({ where: { focusSessionId: session.id } }),
             0
@@ -438,6 +539,11 @@ test("seeded transactional workflow conflicts preserve their invariants", async 
           code: "FOCUS_ACTIVITY_PROTECTED"
         });
 
+        assert.deepEqual(
+          await prisma.activityEntry.findUniqueOrThrow({ where: { id: activity.id } }),
+          activity,
+          "rejected replacement must leave every persisted field unchanged"
+        );
         const deletion = await deleteActivity(
           new NextRequest(`http://localhost/api/activities/${activity.id}`, {
             method: "DELETE"

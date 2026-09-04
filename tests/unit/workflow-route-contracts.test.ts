@@ -15,6 +15,7 @@ import {
 } from "../../src/app/api/focus-session/route";
 import { POST as undoTaskSchedule } from "../../src/app/api/tasks/[id]/schedule/undo/route";
 import { POST as reorderTasks } from "../../src/app/api/tasks/reorder/route";
+import { FocusSessionError } from "../../src/lib/focus-sessions";
 import { FocusQueueError } from "../../src/lib/focus-queue";
 import { mutationRequestHash } from "../../src/lib/idempotent-mutations";
 import { prisma } from "../../src/lib/prisma";
@@ -629,7 +630,7 @@ function invalidJsonRequest(
 
 function jsonRequest(
   url: string,
-  method: "POST" | "PATCH",
+  method: "POST" | "PATCH" | "DELETE",
   body: Record<string, unknown>
 ) {
   return new NextRequest(url, {
@@ -645,3 +646,75 @@ function prismaError(code: string) {
     clientVersion: "test"
   });
 }
+
+
+test("Focus POST pins invalid mutation identifiers through its handler", async () => {
+  const response = await startFocusSession(new NextRequest("http://localhost/api/focus-session", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Dayflow-Mutation-Id": " " },
+    body: JSON.stringify({ kind: "FOCUS", plannedMinutes: 25 })
+  }));
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), {
+    error: "X-Dayflow-Mutation-Id must contain 1 to 128 characters.", code: "INVALID_MUTATION_ID"
+  });
+});
+
+
+test("Focus handlers preserve defensive fieldless validation envelopes", async () => {
+  const originalTransaction = prisma.$transaction;
+  const originalFindUnique = prisma.focusSession.findUnique;
+  try {
+    (prisma as unknown as { $transaction: unknown }).$transaction = async () => {
+      throw new FocusSessionError("Timer duration must be between 1 and 240 minutes.");
+    };
+    const start = await startFocusSession(jsonRequest("http://localhost/api/focus-session", "POST", {
+      kind: "FOCUS", plannedMinutes: 25
+    }));
+    assert.equal(start.status, 400);
+    assert.deepEqual(await start.json(), {
+      error: "Timer duration must be between 1 and 240 minutes.", code: "VALIDATION_ERROR"
+    });
+    (prisma.focusSession as unknown as { findUnique: unknown }).findUnique = async () => {
+      throw new FocusSessionError("Unknown timer action.");
+    };
+    const transition = await transitionFocusSession(jsonRequest("http://localhost/api/focus-session/session", "PATCH", {
+      action: "pause"
+    }), { params: Promise.resolve({ id: "session" }) });
+    assert.equal(transition.status, 400);
+    assert.deepEqual(await transition.json(), { error: "Unknown timer action.", code: "VALIDATION_ERROR" });
+  } finally {
+    (prisma as unknown as { $transaction: unknown }).$transaction = originalTransaction;
+    (prisma.focusSession as unknown as { findUnique: unknown }).findUnique = originalFindUnique;
+  }
+});
+
+test("Focus queue PATCH and DELETE pin their validation and fallback bodies", async () => {
+  const patch = await reorderFocusQueue(jsonRequest("http://localhost/api/focus-queue", "PATCH", { ids: ["task", "task"] }));
+  assert.equal(patch.status, 400);
+  assert.deepEqual(await patch.json(), {
+    error: "Task identifiers must not contain duplicates.", code: "VALIDATION_ERROR", field: "ids"
+  });
+  const remove = await removeFocusQueueTask(jsonRequest("http://localhost/api/focus-queue", "DELETE", { taskId: "" }));
+  assert.equal(remove.status, 400);
+  assert.deepEqual(await remove.json(), {
+    error: "Task identifier is invalid.", code: "VALIDATION_ERROR", field: "taskId"
+  });
+  const originalTransaction = prisma.$transaction;
+  const originalConsoleError = console.error;
+  console.error = () => undefined;
+  try {
+    (prisma as unknown as { $transaction: unknown }).$transaction = async () => { throw new Error("unexpected"); };
+    for (const [handler, method, payload] of [
+      [reorderFocusQueue, "PATCH", { ids: ["task"], expectedIds: ["task"] }],
+      [removeFocusQueueTask, "DELETE", { taskId: "task" }]
+    ] as const) {
+      const response = await handler(jsonRequest("http://localhost/api/focus-queue", method, payload));
+      assert.equal(response.status, 500);
+      assert.deepEqual(await response.json(), { error: "Focus queue could not be saved.", code: "INTERNAL_ERROR" });
+    }
+  } finally {
+    (prisma as unknown as { $transaction: unknown }).$transaction = originalTransaction;
+    console.error = originalConsoleError;
+  }
+});

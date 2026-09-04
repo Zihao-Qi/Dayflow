@@ -112,19 +112,24 @@ test("backup selection and Refresh preserve a present selection and replace a re
   );
 
   index.backups[1].applicationVersion = "refreshed-version";
+  // Mount effects can load more than once; each Refresh click adds one GET.
+  const getsBeforeRefresh = requests.gets;
   const refresh = responseFor(page, "/api/backups", "GET");
   await dialog.getByRole("button", { name: "Refresh", exact: true }).click();
   expect((await refresh).status()).toBe(200);
   await expect(details.getByText("refreshed-version", { exact: true })).toBeVisible();
   await expect(older).toHaveAttribute("aria-pressed", "true");
-  expect(requests.gets).toBe(2);
+  expect(requests.gets).toBe(getsBeforeRefresh + 1);
 
   index.backups = index.backups.filter((item) => item.id !== "older-copy");
+  const getsBeforeRemovalRefresh = requests.gets;
+  const removalRefresh = responseFor(page, "/api/backups", "GET");
   await dialog.getByRole("button", { name: "Refresh", exact: true }).click();
+  expect((await removalRefresh).status()).toBe(200);
   await expect(older).toHaveCount(0);
   await expect(details.getByRole("heading", { name: "newer-copy.dayflow-backup" })).toBeVisible();
   await expect(list.getByRole("button", { name: /^newer-copy\.dayflow-backup/ })).toHaveAttribute("aria-pressed", "true");
-  expect(requests.gets).toBe(3);
+  expect(requests.gets).toBe(getsBeforeRemovalRefresh + 1);
 });
 
 test("an invalid backup can be inspected but cannot restore or download", async ({ page }) => {
@@ -677,15 +682,17 @@ test("automatic policy failure rolls back the toggle and suppresses Escape while
     await toggle.check();
     await expect(toggle).toBeChecked();
     await expect(policy.getByText("Saving automatic backup settings…", { exact: true })).toBeVisible();
-    await expect(policy.getByLabel("Every", { exact: true })).toBeEnabled();
+    // The wrapping label includes its select's option text; use the stable id.
+    await expect(policy.locator("#automatic-backup-interval")).toBeEnabled();
+    await expect(dialog.getByRole("button", { name: "Close data and backups", exact: true })).toBeDisabled();
     await page.keyboard.press("Escape");
     await expect(dialog).toBeVisible();
     release.resolve();
     await expect(dialog.getByRole("alert")).toContainText("Automatic backups could not be updated.");
     await expect(toggle).not.toBeChecked();
     await expect(policy.getByText("Off", { exact: true })).toBeVisible();
-    await expect(policy.getByLabel("Every", { exact: true })).toBeDisabled();
-    await expect(policy.getByLabel("Keep", { exact: true })).toBeDisabled();
+    await expect(policy.locator("#automatic-backup-interval")).toBeDisabled();
+    await expect(policy.locator("#automatic-backup-retain")).toBeDisabled();
     await expect(policy.getByText("Not scheduled", { exact: true })).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(dialog).toHaveCount(0);

@@ -55,5 +55,24 @@ test(
       error:
         "Dayflow's local database needs an update. Stop Dayflow, run `npm run db:migrate`, then start Dayflow again."
     });
+
+    const originalFindMany = prisma.task.findMany;
+    const originalConsoleError = console.error;
+    console.error = () => undefined;
+    try {
+      (prisma.task as unknown as { findMany: unknown }).findMany = async () => {
+        throw new Error("unexpected bootstrap failure");
+      };
+      const internal = await loadBootstrap();
+      assert.equal(internal.status, 500);
+      assert.deepEqual(await internal.json(), {
+        code: "INTERNAL_ERROR",
+        error: "Dayflow could not open its local data. Try again."
+      });
+    } finally {
+      (prisma.task as unknown as { findMany: unknown }).findMany =
+        originalFindMany;
+      console.error = originalConsoleError;
+    }
   }
 );

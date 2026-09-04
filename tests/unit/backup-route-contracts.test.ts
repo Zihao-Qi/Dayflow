@@ -13,6 +13,8 @@ import {
   DELETE as cancelRestore,
   POST as stageRestore
 } from "../../src/app/api/backups/restore/route";
+import { BackupManagementError } from "../../src/lib/backup-management";
+import { backupErrorResponse } from "../../src/lib/backup-http";
 
 const repositoryRoot = process.cwd();
 
@@ -88,6 +90,259 @@ test("backup mutations reject cross-origin requests", async () => {
   );
   assert.equal(response.status, 403);
   assert.equal((await response.json()).code, "FORBIDDEN");
+});
+
+test("backup guards pin exact forbidden and unsupported-media envelopes", async () => {
+  const missingGuard = await createBackup(
+    new NextRequest("http://127.0.0.1/api/backups", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}"
+    })
+  );
+  assert.equal(missingGuard.status, 403);
+  assert.deepEqual(await missingGuard.json(), {
+    error: "This local data action requires an explicit Dayflow request.",
+    code: "FORBIDDEN"
+  });
+
+  const unsupportedMedia = await createBackup(
+    new NextRequest("http://127.0.0.1/api/backups", {
+      method: "POST",
+      headers: {
+        Host: "127.0.0.1",
+        Origin: "http://127.0.0.1",
+        "X-Dayflow-Local-Action": "1",
+        "Content-Type": "text/plain"
+      },
+      body: "{}"
+    })
+  );
+  assert.equal(unsupportedMedia.status, 415);
+  assert.deepEqual(await unsupportedMedia.json(), {
+    error: "Use application/json for local data actions.",
+    code: "UNSUPPORTED_MEDIA_TYPE"
+  });
+
+  const crossOrigin = await createBackup(
+    new NextRequest("http://127.0.0.1/api/backups", {
+      method: "POST",
+      headers: { ...localActionHeaders, Origin: "https://example.com" },
+      body: "{}"
+    })
+  );
+  assert.equal(crossOrigin.status, 403);
+  assert.deepEqual(await crossOrigin.json(), {
+    error: "Cross-origin local data actions are not allowed.",
+    code: "FORBIDDEN"
+  });
+
+  const crossSite = await createBackup(
+    new NextRequest("http://127.0.0.1/api/backups", {
+      method: "POST",
+      headers: { ...localActionHeaders, "Sec-Fetch-Site": "cross-site" },
+      body: "{}"
+    })
+  );
+  assert.equal(crossSite.status, 403);
+  assert.deepEqual(await crossSite.json(), {
+    error: "Cross-site local data requests are not allowed.",
+    code: "FORBIDDEN"
+  });
+});
+
+test("backup error mapping pins management statuses, optional fields, and fallback", async () => {
+  const cases: Array<[BackupManagementError, number, Record<string, unknown>]> = [
+    [
+      new BackupManagementError(
+        "The backup identifier is invalid.",
+        "VALIDATION_ERROR",
+        400,
+        "backupId"
+      ),
+      400,
+      {
+        error: "The backup identifier is invalid.",
+        code: "VALIDATION_ERROR",
+        field: "backupId"
+      }
+    ],
+    [
+      new BackupManagementError(
+        "The selected backup could not be found.",
+        "NOT_FOUND",
+        404,
+        "backupId"
+      ),
+      404,
+      {
+        error: "The selected backup could not be found.",
+        code: "NOT_FOUND",
+        field: "backupId"
+      }
+    ],
+    [
+      new BackupManagementError(
+        "Another restore is already pending.",
+        "CONFLICT",
+        409
+      ),
+      409,
+      { error: "Another restore is already pending.", code: "CONFLICT" }
+    ],
+    [
+      new BackupManagementError(
+        "The selected backup is corrupt or incompatible and cannot be restored.",
+        "CORRUPT_BACKUP",
+        422,
+        "backupId"
+      ),
+      422,
+      {
+        error: "The selected backup is corrupt or incompatible and cannot be restored.",
+        code: "CORRUPT_BACKUP",
+        field: "backupId"
+      }
+    ],
+    [
+      new BackupManagementError(
+        "Restore scheduling is disabled in this Dayflow process.",
+        "RESTORE_DISABLED",
+        503
+      ),
+      503,
+      {
+        error: "Restore scheduling is disabled in this Dayflow process.",
+        code: "RESTORE_DISABLED"
+      }
+    ]
+  ];
+
+  for (const [error, status, body] of cases) {
+    const response = backupErrorResponse(error, "Backup operation");
+    assert.equal(response.status, status);
+    assert.deepEqual(await response.json(), body);
+    assert.equal(response.headers.get("Cache-Control"), "no-store");
+  }
+
+  const originalConsoleError = console.error;
+  console.error = () => undefined;
+  try {
+    const fallback = backupErrorResponse(new Error("unexpected"), "Backup list");
+    assert.equal(fallback.status, 500);
+    assert.deepEqual(await fallback.json(), {
+      error: "Backup list could not be completed.",
+      code: "INTERNAL_ERROR"
+    });
+    for (const [operation, error] of [
+      ["Backup creation", "Backup creation could not be completed."],
+      [
+        "Automatic backup settings",
+        "Automatic backup settings could not be completed."
+      ],
+      ["Backup download", "Backup download could not be completed."],
+      ["Restore scheduling", "Restore scheduling could not be completed."],
+      ["Restore cancellation", "Restore cancellation could not be completed."]
+    ] as const) {
+      const operationFallback = backupErrorResponse(
+        new Error("unexpected"),
+        operation
+      );
+      assert.equal(operationFallback.status, 500);
+      assert.deepEqual(await operationFallback.json(), {
+        error,
+        code: "INTERNAL_ERROR"
+      });
+    }
+  } finally {
+    console.error = originalConsoleError;
+  }
+});
+
+test("backup route-specific validation envelopes are exact", async () => {
+  const malformed = await createBackup(
+    new NextRequest("http://127.0.0.1/api/backups", {
+      method: "POST",
+      headers: localActionHeaders,
+      body: "{"
+    })
+  );
+  assert.equal(malformed.status, 400);
+  assert.deepEqual(await malformed.json(), {
+    error: "The request body must be valid JSON.",
+    code: "INVALID_JSON"
+  });
+
+  const nonObject = await createBackup(
+    new NextRequest("http://127.0.0.1/api/backups", {
+      method: "POST",
+      headers: localActionHeaders,
+      body: "[]"
+    })
+  );
+  assert.equal(nonObject.status, 400);
+  assert.deepEqual(await nonObject.json(), {
+    error: "The request body must be a JSON object.",
+    code: "VALIDATION_ERROR"
+  });
+
+  const destination = await createBackup(
+    new NextRequest("http://127.0.0.1/api/backups", {
+      method: "POST",
+      headers: localActionHeaders,
+      body: JSON.stringify({ outputPath: "/tmp/not-allowed" })
+    })
+  );
+  assert.equal(destination.status, 400);
+  assert.deepEqual(await destination.json(), {
+    error: "Backup creation does not accept a destination path.",
+    code: "VALIDATION_ERROR"
+  });
+
+  const unexpectedRestore = await stageRestore(
+    jsonRequest("http://127.0.0.1/api/backups/restore", "POST", {
+      unexpected: true
+    })
+  );
+  assert.equal(unexpectedRestore.status, 400);
+  assert.deepEqual(await unexpectedRestore.json(), {
+    error: "Unexpected restore field: unexpected.",
+    code: "VALIDATION_ERROR",
+    field: "unexpected"
+  });
+
+  const missingBackup = await stageRestore(
+    jsonRequest("http://127.0.0.1/api/backups/restore", "POST", {})
+  );
+  assert.equal(missingBackup.status, 400);
+  assert.deepEqual(await missingBackup.json(), {
+    error: "Choose a managed backup.",
+    code: "VALIDATION_ERROR",
+    field: "backupId"
+  });
+
+  const missingChecksum = await stageRestore(
+    jsonRequest("http://127.0.0.1/api/backups/restore", "POST", {
+      backupId: "backup"
+    })
+  );
+  assert.equal(missingChecksum.status, 400);
+  assert.deepEqual(await missingChecksum.json(), {
+    error: "The selected backup checksum is required.",
+    code: "VALIDATION_ERROR",
+    field: "expectedPayloadSha256"
+  });
+
+  const cancelFields = await cancelRestore(
+    jsonRequest("http://127.0.0.1/api/backups/restore", "DELETE", {
+      backupId: "not-accepted"
+    })
+  );
+  assert.equal(cancelFields.status, 400);
+  assert.deepEqual(await cancelFields.json(), {
+    error: "Canceling a restore does not accept any fields.",
+    code: "VALIDATION_ERROR"
+  });
 });
 
 test(

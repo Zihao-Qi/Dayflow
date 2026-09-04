@@ -171,7 +171,23 @@ test("Focus Session start idempotency", async (context) => {
         statuses.filter((status) => status === 409).length,
         responseCount - 1
       );
+      const bodies = await Promise.all(
+        responses.map((response) => response.json())
+      );
+      for (const [index, status] of statuses.entries()) {
+        if (status !== 409) continue;
+        assert.deepEqual(bodies[index], {
+          error: "Finish or cancel the active timer first.",
+          code: "CONFLICT"
+        });
+      }
       assert.equal(await prisma.focusSession.count(), 1);
+      assert.equal(
+        await prisma.focusSession.count({
+          where: { status: { in: ["RUNNING", "PAUSED"] } }
+        }),
+        1
+      );
       assert.equal(await prisma.mutationReceipt.count(), 1);
     }
   );

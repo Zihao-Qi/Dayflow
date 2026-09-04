@@ -1,3 +1,12 @@
+import {
+  requireObject as kernelRequireObject,
+  readJsonBody,
+  parseBoundedInteger as kernelParseBoundedInteger,
+  parseEnum as kernelParseEnum,
+  parseRecordId,
+  parseBoundedString
+} from "@/shared/kernel/parsing";
+
 export const WORKFLOW_ID_MAX_LENGTH = 191;
 export const WORKFLOW_ID_ARRAY_MAX_ITEMS = 1_000;
 export const FOCUS_LABEL_MAX_LENGTH = 500;
@@ -35,16 +44,13 @@ export class WorkflowMutationRequestError extends Error {
 export async function readWorkflowMutationBody(request: {
   json(): Promise<unknown>;
 }): Promise<JsonObject> {
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    throw new WorkflowMutationRequestError(
-      "Request body must be valid JSON.",
-      "body",
-      "INVALID_JSON"
-    );
-  }
+  const body = await readJsonBody(
+    request,
+    "body",
+    "Request body must be valid JSON.",
+    (message, field) =>
+      new WorkflowMutationRequestError(message, field, "INVALID_JSON")
+  );
   return requireObject(body);
 }
 
@@ -177,28 +183,16 @@ export function parseWorkflowId(
   field: string,
   message = "Identifier is invalid."
 ) {
-  if (typeof value !== "string") {
-    throw new WorkflowMutationRequestError(message, field);
-  }
-  const id = value.trim();
-  if (
-    !id ||
-    id.length > WORKFLOW_ID_MAX_LENGTH ||
-    /[\u0000-\u001f\u007f]/.test(id)
-  ) {
-    throw new WorkflowMutationRequestError(message, field);
-  }
-  return id;
+  return parseRecordId(value, field, message, validationError, {
+    maximumLength: WORKFLOW_ID_MAX_LENGTH,
+    rejectControlCharacters: true
+  });
 }
 
 function requireObject(value: unknown): JsonObject {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new WorkflowMutationRequestError(
-      "Request body must be a JSON object.",
-      "body"
-    );
-  }
-  return value as JsonObject;
+  return kernelRequireObject(
+    value, "body", "Request body must be a JSON object.", validationError
+  );
 }
 
 function parseOptionalWorkflowId(
@@ -206,8 +200,11 @@ function parseOptionalWorkflowId(
   field: string,
   message: string
 ) {
-  if (value === undefined || value === null || value === "") return null;
-  return parseWorkflowId(value, field, message);
+  return parseRecordId(value, field, message, validationError, {
+    maximumLength: WORKFLOW_ID_MAX_LENGTH,
+    rejectControlCharacters: true,
+    nullValues: [undefined, null, ""]
+  });
 }
 
 function parseIdArray(value: unknown, field: "ids" | "expectedIds") {
@@ -242,17 +239,11 @@ function parseOptionalText(
   maximumLength: number
 ) {
   if (value === undefined || value === null) return undefined;
-  if (typeof value !== "string") {
-    throw new WorkflowMutationRequestError(`${label} must be text.`, field);
-  }
-  const text = value.trim();
-  if (text.length > maximumLength) {
-    throw new WorkflowMutationRequestError(
-      `${label} must be ${maximumLength.toLocaleString("en-US")} characters or fewer.`,
-      field
-    );
-  }
-  return text;
+  return parseBoundedString(value, field, `${label} must be text.`, validationError, {
+    maximumLength,
+    lengthMessage: `${label} must be ${maximumLength.toLocaleString("en-US")} characters or fewer.`,
+    trim: true
+  });
 }
 
 function parseOptionalBoolean(value: unknown, field: string) {
@@ -273,15 +264,9 @@ function parseBoundedInteger(
   maximum: number,
   message: string
 ) {
-  if (
-    typeof value !== "number" ||
-    !Number.isInteger(value) ||
-    value < minimum ||
-    value > maximum
-  ) {
-    throw new WorkflowMutationRequestError(message, field);
-  }
-  return value;
+  return kernelParseBoundedInteger(
+    value, field, minimum, maximum, message, validationError
+  );
 }
 
 function parseEnum<const Values extends readonly string[]>(
@@ -290,8 +275,9 @@ function parseEnum<const Values extends readonly string[]>(
   field: string,
   message: string
 ): Values[number] {
-  if (typeof value !== "string" || !values.includes(value)) {
-    throw new WorkflowMutationRequestError(message, field);
-  }
-  return value as Values[number];
+  return kernelParseEnum(value, values, field, message, validationError);
+}
+
+function validationError(message: string, field: string) {
+  return new WorkflowMutationRequestError(message, field);
 }

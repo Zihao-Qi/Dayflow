@@ -361,3 +361,47 @@ test("retries a failed task load in place instead of collapsing", async ({
   await expect(toggle).toHaveAttribute("aria-expanded", "true");
   await expect(drawer.getByText("Arrives on the retry")).toBeVisible();
 });
+
+test("keeps the configured Phase order in a List drawer", async ({ page }) => {
+  // Groups are seeded from the Project's phase order, not from the order
+  // tasks happen to sort in. A phase holding only completed work would
+  // otherwise fall behind a later one, because completed tasks sort last.
+  const project = await createProject(page, "Phased Project");
+  const phaseIds: string[] = [];
+  for (const name of ["First phase", "Second phase"]) {
+    const created = await page.request.post(
+      `/api/projects/${project.id}/phases`,
+      { data: { name } }
+    );
+    expect(created.ok()).toBe(true);
+    phaseIds.push(((await created.json()) as { id: string }).id);
+  }
+
+  for (const [title, status, phaseId] of [
+    ["Finished first-phase work", "DONE", phaseIds[0]],
+    ["Open second-phase work", "TODO", phaseIds[1]]
+  ] as const) {
+    const created = await page.request.post("/api/tasks", {
+      data: {
+        title,
+        status,
+        projectId: project.id,
+        phaseId,
+        date: null,
+        estimateMinutes: 30
+      }
+    });
+    expect(created.status()).toBe(201);
+  }
+
+  await openListProjects(page);
+  await projectToggle(page, "Phased Project").click();
+
+  const drawer = projectRowFor(page, "Phased Project").locator(
+    ".project-row-drawer"
+  );
+  await expect(drawer.locator(".project-row-phase")).toHaveText([
+    "First phase",
+    "Second phase"
+  ]);
+});

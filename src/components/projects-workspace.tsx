@@ -851,29 +851,39 @@ function ProjectRowTasks({
     );
   }
 
-  const phaseName = new Map(plan.phases.map((phase) => [phase.id, phase.name]));
-  const groups: Array<{ key: string; label: string | null; tasks: ProjectTaskRecord[] }> = [];
-  const groupFor = (key: string, label: string | null) => {
-    const existing = groups.find((group) => group.key === key);
-    if (existing) return existing;
-    const created = { key, label, tasks: [] as ProjectTaskRecord[] };
-    groups.push(created);
-    return created;
+  // Seeded from `plan.phases`, which the API returns in the Project's own
+  // sortOrder, so the drawer keeps the configured sequence. Deriving the order
+  // from the tasks instead would let a phase holding only completed work fall
+  // behind a later one, because completed tasks sort last.
+  type DrawerGroup = {
+    key: string;
+    label: string | null;
+    tasks: ProjectTaskRecord[];
   };
+  const groups: DrawerGroup[] = plan.phases.map((phase) => ({
+    key: `phase:${phase.id}`,
+    label: phase.name,
+    tasks: []
+  }));
+  const byKey = new Map(groups.map((group) => [group.key, group]));
+  // Phases first, then unphased work, matching the Project workspace.
+  const rootGroup: DrawerGroup = {
+    key: "root",
+    label: plan.phases.length ? "No phase" : null,
+    tasks: []
+  };
+  groups.push(rootGroup);
+
   for (const task of sortTasks(plan.tasks)) {
-    if (task.phaseId) {
-      groupFor(
-        `phase:${task.phaseId}`,
-        phaseName.get(task.phaseId) ?? "Other phase"
-      ).tasks.push(task);
-    } else {
-      groupFor("root", plan.phases.length ? "No phase" : null).tasks.push(task);
-    }
+    const group = task.phaseId ? byKey.get(`phase:${task.phaseId}`) : rootGroup;
+    (group ?? rootGroup).tasks.push(task);
   }
+
+  const filledGroups = groups.filter((group) => group.tasks.length > 0);
 
   return (
     <>
-      {groups.map((group) => (
+      {filledGroups.map((group) => (
         <div key={group.key} className="project-row-task-group">
           {group.label && (
             <span className="project-row-phase">{group.label}</span>

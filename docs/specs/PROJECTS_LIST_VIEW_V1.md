@@ -121,9 +121,12 @@ screens too.
 
 ## Persistence
 
-- The selection is stored in `localStorage` under `dayflow-projects-view`
-  with values `"cards"` and `"compact"`, following the existing
-  `dayflow-first-run-seen` precedent.
+- The selection is stored in `localStorage` under `dayflow-projects-view`,
+  following the existing `dayflow-first-run-seen` precedent. The written
+  values are `"cards"` and `"list"`.
+- `"compact"` is read as `"list"` but never written. It is the value this
+  view was stored under before the rename, kept so an existing preference
+  survives it.
 - Missing, unreadable, or unrecognized values fall back to `"cards"`.
 - A lazy state initializer reads the value before the first Projects render,
   avoiding a Cards-to-List flash. The value is written on every switch.

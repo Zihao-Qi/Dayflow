@@ -6,6 +6,7 @@ import {
   isCsvExportFileName,
   parseCsvExportResponseMetadata
 } from "../../src/lib/csv-export-contract";
+import { prisma } from "../../src/lib/prisma";
 
 test("CSV export route rejects unsupported kinds without attachment headers", async () => {
   const response = await downloadCsv(
@@ -56,4 +57,28 @@ test("CSV filenames require a real local calendar date", () => {
     isCsvExportFileName("activities", "dayflow-activities-2026-99-99.csv"),
     false
   );
+});
+
+test("CSV export route pins its internal error envelope", async () => {
+  const originalFindMany = prisma.task.findMany;
+  const originalConsoleError = console.error;
+  console.error = () => undefined;
+  try {
+    (prisma.task as unknown as { findMany: unknown }).findMany = async () => {
+      throw new Error("unexpected");
+    };
+    const response = await downloadCsv(
+      new Request("http://localhost/api/exports/tasks"),
+      { params: Promise.resolve({ kind: "tasks" }) }
+    );
+    assert.equal(response.status, 500);
+    assert.deepEqual(await response.json(), {
+      error: "CSV export could not be created.",
+      code: "INTERNAL_ERROR"
+    });
+  } finally {
+    (prisma.task as unknown as { findMany: unknown }).findMany =
+      originalFindMany;
+    console.error = originalConsoleError;
+  }
 });

@@ -57,3 +57,17 @@ test("automatic backup settings return typed field errors", async () => {
     );
   }
 });
+
+test("automatic backup policy errors preserve their exact envelope", async () => {
+  const response = await saveAutomaticPolicy(
+    policyRequest(
+      JSON.stringify({ enabled: true, intervalHours: 0, retainCount: 7 })
+    )
+  );
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), {
+    error: "The backup interval in hours must be a whole number between 1 and 168.",
+    code: "VALIDATION_ERROR",
+    field: "intervalHours"
+  });
+});

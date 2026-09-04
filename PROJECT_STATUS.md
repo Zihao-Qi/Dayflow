@@ -98,7 +98,9 @@ The code-structure decision and its migration contract are:
 - `docs/adr/0002-modular-monolith-with-explicit-transactions.md` — accepted
   September 4, 2026
 - `docs/specs/ARCHITECTURE_MIGRATION_V1.md` — phase 0 started September 4,
-  2026 with `tests/architecture.test.ts` as the first gate in `npm run check`
+  2026 with `tests/architecture.test.ts` as the first gate in `npm run check`;
+  phase 1 item 1 implemented September 4, 2026, taking the architecture
+  baseline from 36 to 29
 
 The shipped interface now uses six clear destinations: Today, Log, Projects,
 Backlog, Journal, and Review. Frequent actions remain immediately available,

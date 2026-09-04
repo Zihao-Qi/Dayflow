@@ -94,9 +94,9 @@ work that crosses modules.
 ## Consequences
 
 - Transactions are visible in every mutation signature. Forgetting to
-  forward one is a type error. The phase 1 escape sites (six Rule 5 defaults
-  plus `listProjectSummaries`) are the first migration PR; the csv-export
-  default closes when it becomes a read model.
+  forward one is a type error. The seven parameter defaults are the first
+  migration PR; the sixteen calls through the global client leave with their
+  files as each service moves.
 - Use cases become testable on a temporary SQLite without a `NextRequest`.
 - The focus invariant is enforced by one function plus an allowlist, not by
   convention.

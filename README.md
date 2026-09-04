@@ -78,6 +78,8 @@ Product and corrective specifications:
 - [First-Run Onboarding v1](./docs/specs/FIRST_RUN_ONBOARDING_V1.md)
 - [PWA Installability v1](./docs/specs/PWA_INSTALLABILITY_V1.md)
 - [Six-destination workspace decision](./docs/adr/0001-six-destination-workspace.md)
+- [Modular monolith with explicit transactions](./docs/adr/0002-modular-monolith-with-explicit-transactions.md)
+- [Architecture Migration v1](./docs/specs/ARCHITECTURE_MIGRATION_V1.md)
 
 ## Core Workflow
 
@@ -157,8 +159,9 @@ Run the same complete reliability gate used by CI:
 npm run check
 ```
 
-The command generates the Prisma client, checks types, and runs the unit,
-backup/restore, migration, production-build, and Chromium browser gates. It
+The command generates the Prisma client, checks the architecture boundaries
+and transaction rules, checks types, and runs the unit, backup/restore,
+migration, production-build, and Chromium browser gates. It
 requires the `sqlite3` command-line tool and a one-time local browser install
 with `npm run test:e2e:install`. Every destructive database scenario uses a
 disposable database outside the normal local data path.

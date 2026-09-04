@@ -31,7 +31,7 @@ import {
   Trash2
 } from "lucide-react";
 import { CommandPalette } from "@/components/command-palette";
-import { DataManagementDialog } from "@/components/data-management-dialog";
+import { DataManagementDialog } from "@/modules/data-ops/ui/data-management-dialog";
 import { DayPage } from "@/components/day-workspace";
 import { safeTimeBlockDurationMinutes } from "@/components/day-workspace-helpers";
 import {
@@ -51,7 +51,7 @@ import {
 import { useActivityCapture } from "@/components/use-activity-capture";
 import { ProjectsWorkspace } from "@/components/projects-workspace";
 import { ReviewPage } from "@/components/review-workspace";
-import { FocusDraft, FocusRail } from "@/components/focus-timer";
+import { FocusDraft, FocusRail } from "@/modules/focus/ui/focus-rail";
 import { useFocusSession } from "@/components/focus-session-provider";
 import { SaveStateChip, useSaveState } from "@/components/save-state";
 import {

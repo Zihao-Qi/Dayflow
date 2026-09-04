@@ -1,4 +1,4 @@
-import type { FocusDraft } from "@/components/focus-timer";
+import type { FocusDraft } from "@/lib/focus-draft";
 import { formatShortDate } from "@/components/dashboard-formatters";
 import type { ProjectSummary } from "@/lib/project-domain";
 

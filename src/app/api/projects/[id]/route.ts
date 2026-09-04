@@ -1,3 +1,4 @@
+import { clock, calendar } from "@/lib/time";
 import { appErrorResponse } from "@/lib/http-errors";
 import { prisma } from "@/lib/prisma";
 import { projectErrors } from "@/lib/project-errors";
@@ -17,8 +18,9 @@ import { NextRequest, NextResponse } from "next/server";
 type Params = { params: Promise<{ id: string }> };
 
 export async function GET(_request: NextRequest, { params }: Params) {
+  const now = clock.now();
   const { id } = await params;
-  const project = await getProjectDetail(id, prisma);
+  const project = await getProjectDetail(id, prisma, calendar.reviewPeriodEnding(calendar.dayOf(now)));
   if (!project) {
     return appErrorResponse(new AppError(projectErrors.projectDetailNotFound));
   }
@@ -26,6 +28,7 @@ export async function GET(_request: NextRequest, { params }: Params) {
 }
 
 export async function PATCH(request: NextRequest, { params }: Params) {
+  const now = clock.now();
   const { id: rawId } = await params;
   try {
     const id = parseProjectPathId(rawId, "id", "Project");
@@ -48,7 +51,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       }
 
       await transaction.project.update({ where: { id }, data: input.data });
-      const detail = await getProjectDetail(id, transaction);
+      const detail = await getProjectDetail(id, transaction, calendar.reviewPeriodEnding(calendar.dayOf(now)));
       return detail
         ? { kind: "saved" as const, detail }
         : { kind: "not-found" as const };

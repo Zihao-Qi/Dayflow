@@ -127,7 +127,7 @@ export function readStoredAutomaticBackupPolicy(
 export function resolveAutomaticBackupSchedule(
   policy: AutomaticBackupPolicy,
   lastSuccessAt: Date | null,
-  now: Date = new Date()
+  now: Date
 ): AutomaticBackupSchedule {
   if (!policy.enabled) {
     return { due: false, nextDueAt: null };

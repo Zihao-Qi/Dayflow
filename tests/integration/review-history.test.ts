@@ -97,7 +97,7 @@ test("every saved Review is reachable regardless of how long ago it was saved", 
 
     const page = await history.readReviewHistoryPage(
       prisma,
-      new URLSearchParams("limit=100")
+      new URLSearchParams("limit=100"), new Date()
     );
     assert.equal(page.totalCount, saveDates.length);
     assert.deepEqual(
@@ -107,7 +107,7 @@ test("every saved Review is reachable regardless of how long ago it was saved", 
 
     // Each one also opens on its own stored boundaries.
     for (const review of page.items) {
-      const detail = await history.readPastReviewPeriod(prisma, review.id);
+      const detail = await history.readPastReviewPeriod(prisma, review.id, new Date());
       assert.equal(detail.review.id, review.id);
       assert.equal(detail.isCurrentPeriod, false);
       assert.equal(
@@ -141,7 +141,7 @@ test("Review history excludes the current period and orders newest first", async
 
     const page = await history.readReviewHistoryPage(
       prisma,
-      new URLSearchParams("limit=100")
+      new URLSearchParams("limit=100"), new Date()
     );
     assert.equal(page.totalCount, 3);
     assert.equal(
@@ -173,7 +173,7 @@ test("Review history pagination reaches every saved Review exactly once", async 
     for (let request = 0; request < 20; request += 1) {
       const query = new URLSearchParams("limit=2");
       if (cursor) query.set("cursor", cursor);
-      const page = await history.readReviewHistoryPage(prisma, query);
+      const page = await history.readReviewHistoryPage(prisma, query, new Date());
       assert.equal(page.totalCount, saveDates.length);
       seen.push(...page.items.map((review) => review.id));
       cursor = page.nextCursor;
@@ -269,7 +269,7 @@ test("an unsaved Review Window derives evidence without matching an overlapping 
     });
     const detail = await history.readReviewWindow(
       prisma,
-      new URLSearchParams({ ending: localDateKey(endingDay) })
+      new URLSearchParams({ ending: localDateKey(endingDay) }), new Date()
     );
 
     assert.equal(detail.periodStart.getTime(), expectedStart.getTime());
@@ -307,7 +307,7 @@ test("a Review Window includes only a Review with its exact boundaries", async (
     }));
     const detail = await history.readReviewWindow(
       prisma,
-      new URLSearchParams({ ending: localDateKey(endingDay) })
+      new URLSearchParams({ ending: localDateKey(endingDay) }), new Date()
     );
 
     assert.equal(detail.review?.id, saved.id);
@@ -353,11 +353,11 @@ test("reading a Past Review Period changes no stored record", async (context) =>
       });
 
     const before = await snapshot();
-    const detail = await history.readPastReviewPeriod(prisma, saved.id);
+    const detail = await history.readPastReviewPeriod(prisma, saved.id, new Date());
     assert.equal(detail.review.narrative, "what moved forward");
     assert.equal(detail.reviewSummary.recordedMinutes, 40);
     assert.equal(detail.reviewSummary.averageMood, 4);
-    await history.readReviewHistoryPage(prisma, new URLSearchParams());
+    await history.readReviewHistoryPage(prisma, new URLSearchParams(), new Date());
     assert.equal(await snapshot(), before, "a read mutated stored evidence");
   });
 });
@@ -365,14 +365,14 @@ test("reading a Past Review Period changes no stored record", async (context) =>
 test("an unknown or malformed Review identifier is rejected before querying", async (context) => {
   await withDatabase(context, async ({ prisma, history }) => {
     await assert.rejects(
-      () => history.readPastReviewPeriod(prisma, "../secrets"),
+      () => history.readPastReviewPeriod(prisma, "../secrets", new Date()),
       (error: unknown) =>
         error instanceof history.ReviewHistoryRequestError &&
         error.code === "VALIDATION_ERROR" &&
         error.status === 400
     );
     await assert.rejects(
-      () => history.readPastReviewPeriod(prisma, "ckmissing00000000000"),
+      () => history.readPastReviewPeriod(prisma, "ckmissing00000000000", new Date()),
       (error: unknown) =>
         error instanceof history.ReviewHistoryRequestError &&
         error.code === "REVIEW_NOT_FOUND" &&
@@ -400,7 +400,7 @@ test("correcting Evidence in an earlier window changes its summary, not its narr
       }
     });
 
-    const before = await history.readPastReviewPeriod(prisma, saved.id);
+    const before = await history.readPastReviewPeriod(prisma, saved.id, new Date());
     assert.equal(before.reviewSummary.recordedMinutes, 30);
 
     // Nothing is snapshotted, so a later correction is reflected.
@@ -409,7 +409,7 @@ test("correcting Evidence in an earlier window changes its summary, not its narr
       data: { durationMinutes: 55 }
     });
 
-    const after = await history.readPastReviewPeriod(prisma, saved.id);
+    const after = await history.readPastReviewPeriod(prisma, saved.id, new Date());
     assert.equal(after.reviewSummary.recordedMinutes, 55);
     assert.equal(after.review.narrative, "as it was written then");
     assert.equal(after.review.nextPeriodIntention, "left alone");

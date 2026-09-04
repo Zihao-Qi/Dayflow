@@ -1,3 +1,4 @@
+import { clock } from "@/lib/time";
 import {
   parseMutationId,
   runIdempotentCreate
@@ -25,12 +26,13 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const now = clock.now();
   try {
     const mutationId = parseMutationId(
       request.headers.get("X-Dayflow-Mutation-Id")
     );
     const body = await parseJson(request);
-    const input = parseNoteCreateInput(body);
+    const input = parseNoteCreateInput(body, now);
     const note = await runIdempotentCreate({
       mutationId,
       kind: "note.create",

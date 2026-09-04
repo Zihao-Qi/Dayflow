@@ -98,7 +98,7 @@ export function parseTaskPathId(value: unknown) {
 
 export function parseTaskCreateMutation(
   value: unknown,
-  now = new Date()
+  now: Date
 ): TaskCreateMutation {
   const body = requireObject(value);
   const status = has(body, "status")
@@ -162,7 +162,7 @@ export function parseTaskCreateMutation(
 export function parseTaskPatchMutation(
   value: unknown,
   current: CurrentTaskPlacement,
-  now = new Date()
+  now: Date
 ): TaskPatchMutation {
   const body = requireObject(value);
   const data: TaskPatchData = {};
@@ -280,7 +280,7 @@ export function parseTaskPatchMutation(
 
 export function validateTaskPatchMutation(
   value: unknown,
-  now = new Date()
+  now: Date
 ) {
   parseTaskPatchMutation(
     value,

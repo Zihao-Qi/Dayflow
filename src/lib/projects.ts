@@ -1,4 +1,3 @@
-import { reviewPeriodRange } from "@/lib/dates";
 import { prisma } from "@/lib/prisma";
 import { calculateProjectMetrics } from "@/lib/project-domain";
 import { projectErrors } from "@/lib/project-errors";
@@ -49,7 +48,7 @@ const projectRead = {
 
 export async function listProjectSummaries(
   client: Pick<Prisma.TransactionClient, "project">,
-  reviewPeriod = reviewPeriodRange()
+  reviewPeriod: { start: Date; end: Date }
 ) {
   const projects = await client.project.findMany({
     orderBy: [{ status: "asc" }, { updatedAt: "desc" }],
@@ -75,9 +74,9 @@ export async function listProjectSummaries(
 
 export async function getProjectDetail(
   id: string,
-  client: Pick<Prisma.TransactionClient, "project">
+  client: Pick<Prisma.TransactionClient, "project">,
+  reviewPeriod: { start: Date; end: Date }
 ) {
-  const reviewPeriod = reviewPeriodRange();
   const project = await client.project.findUnique({
     where: { id },
     include: projectRead

@@ -1,3 +1,4 @@
+import { clock } from "@/lib/time";
 import { NextRequest, NextResponse } from "next/server";
 import {
   parseMutationId,
@@ -12,6 +13,7 @@ import {
 } from "@/lib/time-blocks";
 
 export async function POST(request: NextRequest) {
+  const now = clock.now();
   try {
     const body = await readTimeBlockMutationBody(request);
     const mutationId = parseMutationId(
@@ -23,7 +25,7 @@ export async function POST(request: NextRequest) {
       kind: "time-block.create",
       payload: body,
       create: (transaction) => {
-        assertTimeBlockIsNotPast(input);
+        assertTimeBlockIsNotPast(input, now);
         return createTimeBlock(input, transaction);
       }
     });

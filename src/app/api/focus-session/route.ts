@@ -1,3 +1,4 @@
+import { clock } from "@/lib/time";
 import { focusErrors } from "@/lib/focus-errors";
 import {
   getFocusSnapshot,
@@ -25,8 +26,9 @@ const globalForFocusSessionStart = globalThis as typeof globalThis & {
 };
 
 export async function GET() {
+  const now = clock.now();
   try {
-    return NextResponse.json(await getFocusSnapshot(prisma));
+    return NextResponse.json(await getFocusSnapshot(prisma, now));
   } catch (error) {
     console.error("Focus snapshot load failed.", error);
     return appErrorResponse(new AppError(focusErrors.focusTimerCouldNotBeLoaded));
@@ -34,6 +36,7 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
+  const now = clock.now();
   try {
     const body = await readWorkflowMutationBody(request);
     const mutationId = parseMutationId(
@@ -49,7 +52,7 @@ export async function POST(request: NextRequest) {
           const session = await startFocusSession(input, transaction);
           return {
             session,
-            snapshot: await getFocusSnapshot(transaction)
+            snapshot: await getFocusSnapshot(transaction, now)
           };
         }
       })

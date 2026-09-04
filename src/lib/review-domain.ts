@@ -126,7 +126,7 @@ export function parseReviewMutation(value: unknown): ReviewMutation {
 
 export function assertCurrentReviewPeriod(
   period: ReviewPeriod,
-  now = new Date()
+  now: Date
 ) {
   const current = reviewPeriodRange(now);
   if (

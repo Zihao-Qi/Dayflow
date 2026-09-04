@@ -10,10 +10,11 @@ import {
   parseProjectCreateMutation,
   readProjectMutationBody
 } from "@/lib/project-mutations";
+import { prisma } from "@/lib/prisma";
 import { getProjectDetail, listProjectSummaries } from "@/lib/projects";
 
 export async function GET() {
-  return NextResponse.json(await listProjectSummaries());
+  return NextResponse.json(await listProjectSummaries(prisma));
 }
 
 export async function POST(request: NextRequest) {

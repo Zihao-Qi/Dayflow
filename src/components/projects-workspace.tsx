@@ -701,6 +701,7 @@ function ProjectRow({
   ].join(":");
   const loadedKey = useRef(planKey);
   const requestToken = useRef(0);
+  const taskCreateMutation = useRef<PendingMutation | null>(null);
   const statusLabel = projectStatusLabel(project.status);
   const plannedMinutes = project.nextTaskEstimateMinutes ?? 30;
   const nextTaskTitle = project.nextTaskTitle ?? "Add a first task";
@@ -822,22 +823,39 @@ function ProjectRow({
     );
   }
 
-  function addTask(title: string, phaseId: string | null) {
-    return mutate(
+  /**
+   * Carries a mutation id that survives a retry, so a create whose response
+   * was lost is recognised by the server as a replay rather than committed a
+   * second time. The id is held until the create is confirmed, which is
+   * exactly the window in which the drawer keeps the title and invites one.
+   */
+  async function addTask(title: string, phaseId: string | null) {
+    const payload = {
+      title,
+      projectId: project.id,
+      phaseId,
+      date: null,
+      estimateMinutes: 30
+    };
+    const mutationId = mutationIdFor(taskCreateMutation, payload);
+    const saved = await mutate(
       "/api/tasks",
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title,
-          projectId: project.id,
-          phaseId,
-          date: null,
-          estimateMinutes: 30
-        })
+        headers: {
+          "Content-Type": "application/json",
+          "X-Dayflow-Mutation-Id": mutationId
+        },
+        body: JSON.stringify(payload)
       },
-      isProjectTaskResponse
+      (value) =>
+        isProjectTaskResponse(value) &&
+        value.title === payload.title.trim() &&
+        value.projectId === payload.projectId &&
+        value.phaseId === payload.phaseId
     );
+    if (saved) taskCreateMutation.current = null;
+    return saved;
   }
 
   useEffect(() => {

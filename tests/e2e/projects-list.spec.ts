@@ -625,3 +625,50 @@ test("deletes a task from the List drawer", async ({ page }) => {
   await expect(drawer.getByText("No tasks yet.")).toBeVisible();
   await expect(row.locator(".project-row-tasks")).toContainText("No tasks yet");
 });
+
+test("replays a lost drawer create instead of adding the task twice", async ({
+  page
+}) => {
+  // The server commits, then the response is lost. The drawer keeps the title
+  // and the user retries — which must be recognised as a replay, not a second
+  // create.
+  const project = await createProject(page, "Idempotent Project");
+
+  let dropped = false;
+  await page.route("**/api/tasks", async (route) => {
+    if (route.request().method() !== "POST" || dropped) return route.continue();
+    dropped = true;
+    // Forward it verbatim — headers included, so the mutation id is present
+    // or absent exactly as the app sent it — then throw the response away.
+    const forwarded = await page.request.post("/api/tasks", {
+      data: route.request().postDataJSON(),
+      headers: route.request().headers()
+    });
+    expect(forwarded.status()).toBe(201);
+    return route.abort("connectionfailed");
+  });
+
+  await openListProjects(page);
+  const row = projectRowFor(page, "Idempotent Project");
+  await projectToggle(page, "Idempotent Project").click();
+
+  const drawer = row.locator(".project-row-drawer");
+  const input = drawer.getByRole("textbox", { name: "New Project task" });
+  await input.fill("Only once please");
+  await drawer.getByRole("button", { name: /^Add$/ }).click();
+
+  // The failure is reported and the draft survives for the retry.
+  await expect(drawer.getByRole("alert")).toBeVisible();
+  await expect(input).toHaveValue("Only once please");
+
+  await drawer.getByRole("button", { name: /^Add$/ }).click();
+  await expect(
+    drawer.getByRole("textbox", { name: "Task title: Only once please" })
+  ).toBeVisible();
+
+  const detail = await page.request.get(`/api/projects/${project.id}`);
+  const body = (await detail.json()) as { tasks: Array<{ title: string }> };
+  expect(body.tasks.filter((t) => t.title === "Only once please")).toHaveLength(
+    1
+  );
+});

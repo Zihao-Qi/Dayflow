@@ -322,3 +322,42 @@ test("labels only the scheduled tasks in a List drawer", async ({ page }) => {
     drawer.locator("li.is-done").getByText("Done:")
   ).toBeAttached();
 });
+
+test("retries a failed task load in place instead of collapsing", async ({
+  page
+}) => {
+  const project = await createProject(page, "Flaky Project");
+  const created = await page.request.post("/api/tasks", {
+    data: {
+      title: "Arrives on the retry",
+      projectId: project.id,
+      date: null,
+      estimateMinutes: 30
+    }
+  });
+  expect(created.status()).toBe(201);
+
+  // Fail only the first detail request, then let the retry through.
+  let failed = false;
+  await page.route(`**/api/projects/${project.id}`, (route) => {
+    if (failed) return route.continue();
+    failed = true;
+    return route.fulfill({ status: 500, body: "{}" });
+  });
+
+  await openListProjects(page);
+  const toggle = projectToggle(page, "Flaky Project");
+  await toggle.click();
+
+  const drawer = projectRowFor(page, "Flaky Project").locator(
+    ".project-row-drawer"
+  );
+  await expect(drawer.getByText("These tasks could not be loaded.")).toBeVisible();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+
+  await drawer.getByRole("button", { name: "Try again" }).click();
+
+  // The drawer must still be open, now showing the tasks.
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(drawer.getByText("Arrives on the retry")).toBeVisible();
+});

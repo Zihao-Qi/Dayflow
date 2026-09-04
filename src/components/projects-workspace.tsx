@@ -684,10 +684,12 @@ function ProjectRow({
 
   // Tasks are not in the overview payload, so the first expand fetches the
   // same detail the Project page uses and keeps it for later toggles.
-  async function toggle() {
-    const next = !expanded;
-    setExpanded(next);
-    if (!next || plan || loading) return;
+  //
+  // Kept separate from `toggle` so a failed load can be retried in place. A
+  // retry that went through `toggle` would read the drawer as open and close
+  // it instead of fetching again.
+  async function loadPlan() {
+    if (loading) return;
     setLoading(true);
     setLoadError("");
     try {
@@ -711,6 +713,12 @@ function ProjectRow({
     }
   }
 
+  function toggle() {
+    const next = !expanded;
+    setExpanded(next);
+    if (next && !plan) void loadPlan();
+  }
+
   return (
     <article className={expanded ? "project-row is-expanded" : "project-row"}>
       {/*
@@ -724,7 +732,7 @@ function ProjectRow({
         aria-expanded={expanded}
         aria-controls={drawerId}
         title={project.name}
-        onClick={() => void toggle()}
+        onClick={toggle}
       >
         <ChevronRight
           className="project-row-chevron"
@@ -781,7 +789,7 @@ function ProjectRow({
             loading={loading}
             error={loadError}
             onOpen={onOpen}
-            onRetry={() => void toggle()}
+            onRetry={() => void loadPlan()}
           />
         </div>
       )}

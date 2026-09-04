@@ -221,8 +221,10 @@ keep in step.
 Task lists are not part of the Projects overview payload, so the first
 expand fetches `GET /api/projects/:id` — the same detail the Project page
 uses — and keeps the result for later toggles of that row. The drawer
-reports its own loading, empty, and failure states, and a failed load offers
-a retry without collapsing the row.
+reports its own loading, empty, and failure states. The retry is a
+fetch-only path, deliberately separate from the disclosure toggle: routed
+through the toggle it would read the drawer as open and close it instead of
+fetching again.
 
 ### Naming
 

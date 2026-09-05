@@ -1,3 +1,13 @@
+import {
+  requireObject as kernelRequireObject,
+  readJsonBody,
+  parseBoundedInteger as kernelParseBoundedInteger,
+  has,
+  parseEnum,
+  parseRecordId,
+  parseBoundedString,
+  parseNullableLocalDate
+} from "@/shared/kernel/parsing";
 import { parseLocalDate } from "@/lib/dates";
 
 export const PROJECT_NAME_MAX_LENGTH = 500;
@@ -73,16 +83,13 @@ export class ProjectMutationRequestError extends Error {
 export async function readProjectMutationBody(request: {
   json(): Promise<unknown>;
 }): Promise<JsonObject> {
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    throw new ProjectMutationRequestError(
-      "Request body must be valid JSON.",
-      "body",
-      "INVALID_JSON"
-    );
-  }
+  const body = await readJsonBody(
+    request,
+    "body",
+    "Request body must be valid JSON.",
+    (message, field) =>
+      new ProjectMutationRequestError(message, field, "INVALID_JSON")
+  );
   return requireObject(body);
 }
 
@@ -91,24 +98,10 @@ export function parseProjectPathId(
   field: "id" | "projectId" = "id",
   label = field === "projectId" ? "Project" : "Resource"
 ) {
-  if (typeof value !== "string") {
-    throw new ProjectMutationRequestError(
-      `${label} identifier is invalid.`,
-      field
-    );
-  }
-  const id = value.trim();
-  if (
-    !id ||
-    id.length > PROJECT_ID_MAX_LENGTH ||
-    /[\u0000-\u001f\u007f]/.test(id)
-  ) {
-    throw new ProjectMutationRequestError(
-      `${label} identifier is invalid.`,
-      field
-    );
-  }
-  return id;
+  return parseRecordId(value, field, `${label} identifier is invalid.`, validationError, {
+    maximumLength: PROJECT_ID_MAX_LENGTH,
+    rejectControlCharacters: true
+  });
 }
 
 export function parseProjectCreateMutation(
@@ -243,13 +236,9 @@ export function parsePhasePatchMutation(value: unknown): PhasePatchMutation {
 }
 
 function requireObject(value: unknown): JsonObject {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new ProjectMutationRequestError(
-      "Request body must be a JSON object.",
-      "body"
-    );
-  }
-  return value as JsonObject;
+  return kernelRequireObject(
+    value, "body", "Request body must be a JSON object.", validationError
+  );
 }
 
 function parseRequiredText(
@@ -258,20 +247,12 @@ function parseRequiredText(
   label: string,
   maximumLength: number
 ) {
-  if (typeof value !== "string") {
-    throw new ProjectMutationRequestError(`${label} is required.`, field);
-  }
-  const text = value.trim();
-  if (!text) {
-    throw new ProjectMutationRequestError(`${label} is required.`, field);
-  }
-  if (text.length > maximumLength) {
-    throw new ProjectMutationRequestError(
-      `${label} must be ${maximumLength} characters or fewer.`,
-      field
-    );
-  }
-  return text;
+  return parseBoundedString(value, field, `${label} is required.`, validationError, {
+    maximumLength,
+    lengthMessage: `${label} must be ${maximumLength} characters or fewer.`,
+    emptyMessage: `${label} is required.`,
+    trim: true
+  });
 }
 
 function parseOptionalText(
@@ -281,35 +262,25 @@ function parseOptionalText(
   maximumLength: number
 ) {
   if (value === null || value === undefined) return "";
-  if (typeof value !== "string") {
-    throw new ProjectMutationRequestError(`${label} must be text.`, field);
-  }
-  const text = value.trim();
-  if (text.length > maximumLength) {
-    throw new ProjectMutationRequestError(
-      `${label} must be ${maximumLength} characters or fewer.`,
-      field
-    );
-  }
-  return text;
+  return parseBoundedString(value, field, `${label} must be text.`, validationError, {
+    maximumLength,
+    lengthMessage: `${label} must be ${maximumLength} characters or fewer.`,
+    trim: true
+  });
 }
 
 function parseOptionalDate(value: unknown) {
-  if (value === null || value === undefined || value === "") return null;
-  if (typeof value !== "string") {
-    throw new ProjectMutationRequestError(
-      "Target date is invalid.",
-      "targetDate"
-    );
-  }
-  const date = parseLocalDate(value.trim());
-  if (!date) {
-    throw new ProjectMutationRequestError(
-      "Target date is invalid.",
-      "targetDate"
-    );
-  }
-  return date;
+  return parseNullableLocalDate(
+    value,
+    "targetDate",
+    "Target date is invalid.",
+    validationError,
+    {
+      nullValues: [null, undefined, ""],
+      trim: true,
+      parseDate: parseLocalDate
+    }
+  );
 }
 
 function parseTargetDuration(value: unknown, unit: unknown) {
@@ -324,22 +295,13 @@ function parseTargetDuration(value: unknown, unit: unknown) {
     PROJECT_TARGET_DURATION_MAX,
     `Target duration must be a whole number from 1 to ${PROJECT_TARGET_DURATION_MAX}.`
   );
-  if (typeof unit !== "string") {
-    throw new ProjectMutationRequestError(
-      "Target duration unit must be DAYS or WEEKS.",
-      "targetDurationUnit"
-    );
-  }
-  const normalizedUnit = unit.trim().toUpperCase();
-  if (!projectDurationUnits.includes(normalizedUnit as ProjectDurationUnitValue)) {
-    throw new ProjectMutationRequestError(
-      "Target duration unit must be DAYS or WEEKS.",
-      "targetDurationUnit"
-    );
-  }
   return {
     value: parsedValue,
-    unit: normalizedUnit as ProjectDurationUnitValue
+    unit: parseEnum(
+      unit, projectDurationUnits, "targetDurationUnit",
+      "Target duration unit must be DAYS or WEEKS.", validationError,
+      { normalize: (text) => text.trim().toUpperCase() }
+    )
   };
 }
 
@@ -360,34 +322,24 @@ function parseBoundedInteger(
   maximum: number,
   message: string
 ) {
-  if (
-    typeof value !== "number" ||
-    !Number.isInteger(value) ||
-    value < minimum ||
-    value > maximum
-  ) {
-    throw new ProjectMutationRequestError(message, field);
-  }
-  return value;
+  return kernelParseBoundedInteger(
+    value, field, minimum, maximum, message, validationError
+  );
 }
 
 function parseProjectStatus(value: unknown): ProjectStatusValue {
-  if (typeof value !== "string") {
-    throw new ProjectMutationRequestError(
-      "Project status is invalid.",
-      "status"
-    );
-  }
-  const status = value.trim().toUpperCase();
-  if (!projectStatuses.includes(status as ProjectStatusValue)) {
-    throw new ProjectMutationRequestError(
-      "Project status is invalid.",
-      "status"
-    );
-  }
-  return status as ProjectStatusValue;
+  return parseEnum(
+    value,
+    projectStatuses,
+    "status",
+    "Project status is invalid.",
+    validationError,
+    {
+      normalize: (text) => text.trim().toUpperCase()
+    }
+  );
 }
 
-function has(object: JsonObject, key: string) {
-  return Object.prototype.hasOwnProperty.call(object, key);
+function validationError(message: string, field: string) {
+  return new ProjectMutationRequestError(message, field);
 }

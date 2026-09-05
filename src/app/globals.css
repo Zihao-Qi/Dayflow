@@ -10441,6 +10441,45 @@ html[data-layout-mode="phone"] .data-restore-actions button {
   text-transform: uppercase;
 }
 
+.project-row-edit-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: var(--text-xs);
+}
+
+.project-row-add-task {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.project-row-add-task input {
+  flex: 1 1 200px;
+  min-width: 0;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: var(--text-xs);
+}
+
+.project-row-add-task select {
+  min-height: 34px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: var(--text-xs);
+}
+
+.project-row-add-task .secondary-button {
+  min-height: 34px;
+}
+
 .project-row-task-list {
   display: grid;
   gap: 2px;

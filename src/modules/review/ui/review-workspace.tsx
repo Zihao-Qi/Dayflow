@@ -3,9 +3,9 @@
 import { useState } from "react";
 import { BookOpen, Check, Save } from "lucide-react";
 import { SaveStateChip, useSaveState } from "@/components/save-state";
-import { useReviewHistory } from "@/components/use-review-history";
+import { useReviewHistory } from "@/modules/review/ui/use-review-history";
 import { PageHeader } from "@/components/workspace-ui";
-import { ReviewMetric } from "@/components/review-metric";
+import { ReviewMetric } from "@/modules/review/ui/review-metric";
 import {
   formatDiaryAverage,
   formatMinutes,

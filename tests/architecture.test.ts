@@ -202,6 +202,8 @@ function scanArchitecture(
           importsModuleServices ||
           isPrismaPackage(reference.specifier) ||
           isSingletonReference(record, reference, singletonModules) ||
+          target === "src/shell" ||
+          target?.startsWith("src/shell/") ||
           target === "src/server" ||
           target?.startsWith("src/server/")
         ) {
@@ -984,6 +986,26 @@ test("Rule 3: ui does not reach services, Prisma, or server", () => {
       "src/modules/planning/ui/fail-prisma.ts:1",
       "src/modules/planning/ui/fail-server.ts:1",
       "src/modules/planning/ui/fail-services.ts:1"
+    ])
+  );
+});
+
+test("Rule 3: module UI consumes callbacks without importing shell state or composition", () => {
+  withFixture(
+    {
+      "src/shell/use-shell-state.ts": "export type ShellState = { ready: boolean };\n",
+      "src/shell/index.ts": "export {};\n",
+      "src/modules/review/ui/pass.ts": "export function save(replace: (value: string) => void) { replace('saved'); }\n",
+      "src/modules/review/ui/fail-type.ts": 'import type { ShellState } from "@/shell/use-shell-state";\n',
+      "src/modules/review/ui/fail-relative.ts": 'export * from "../../../shell/use-shell-state";\n',
+      "src/modules/review/ui/fail-root.ts": 'import "@/shell";\n',
+      "src/modules/review/ui/fail-dynamic.ts": 'void import("@/shell/use-shell-state");\n'
+    },
+    (root) => assert.deepEqual(locations(root, 3), [
+      "src/modules/review/ui/fail-dynamic.ts:1",
+      "src/modules/review/ui/fail-relative.ts:1",
+      "src/modules/review/ui/fail-root.ts:1",
+      "src/modules/review/ui/fail-type.ts:1"
     ])
   );
 });

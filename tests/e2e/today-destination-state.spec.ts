@@ -1,3 +1,4 @@
+import { tourDestinationsAndReturn } from "./destination-tour";
 import { expect, test, type Page } from "@playwright/test";
 import { addLocalDays, localDateKey } from "./activity-date-helpers";
 import { resetTestDatabase } from "./database";
@@ -99,10 +100,9 @@ test("leaving an unfinished task in place survives navigation but resets on relo
   const carry = page.locator(".carry-over-strip");
   await carry.getByRole("button", { name: /^Leave on / }).click();
   await expect(carry).toHaveCount(0);
-  await page.getByRole("button", { name: /^Backlog/ }).click();
-  await expect(page.locator(".backlog-page")).toBeVisible();
-  await page.getByRole("button", { name: /^Today/ }).click();
-  await expect(page.locator(".today-page")).toBeVisible();
+  await page.locator("#new-task").fill("Unsaved shell task draft");
+  await tourDestinationsAndReturn(page, "today");
+  await expect(page.locator("#new-task")).toHaveValue("Unsaved shell task draft");
   await expect(carry).toHaveCount(0);
   expect(localDateKey((await bootstrap(page)).tasks.find(({ id }) => id === task.id)!.date!)).toBe(yesterday);
   expect(mutations).toEqual([]);

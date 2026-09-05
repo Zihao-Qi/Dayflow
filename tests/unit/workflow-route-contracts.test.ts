@@ -352,6 +352,8 @@ test("Focus snapshot GET pins its internal envelope", async () => {
 });
 
 test("Focus transition pins not-found, conflict, Prisma, and fallback envelopes", async () => {
+  const originalTransaction = prisma.$transaction;
+  (prisma as unknown as { $transaction: unknown }).$transaction = async (run: (tx: typeof prisma) => Promise<unknown>) => run(prisma);
   const originalFindUnique = prisma.focusSession.findUnique;
   const originalConsoleError = console.error;
   console.error = () => undefined;
@@ -419,6 +421,7 @@ test("Focus transition pins not-found, conflict, Prisma, and fallback envelopes"
       code: "INTERNAL_ERROR"
     });
   } finally {
+    (prisma as unknown as { $transaction: unknown }).$transaction = originalTransaction;
     (prisma.focusSession as unknown as { findUnique: unknown }).findUnique =
       originalFindUnique;
     console.error = originalConsoleError;
@@ -681,6 +684,7 @@ test("Focus handlers preserve defensive fieldless validation envelopes", async (
     assert.deepEqual(await start.json(), {
       error: "Timer duration must be between 1 and 240 minutes.", code: "VALIDATION_ERROR"
     });
+    (prisma as unknown as { $transaction: unknown }).$transaction = async (run: (tx: typeof prisma) => Promise<unknown>) => run(prisma);
     (prisma.focusSession as unknown as { findUnique: unknown }).findUnique = async () => {
       throw new FocusSessionError("Unknown timer action.");
     };

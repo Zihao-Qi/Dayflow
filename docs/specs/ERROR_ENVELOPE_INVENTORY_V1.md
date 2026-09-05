@@ -21,6 +21,13 @@ invalid requests or disposable-storage route cases to establish reachability.
 Defensive injected backup serializers appear only in Appendix A; they are not
 part of the reachable HTTP inventory.
 
+Activity POST mutation-id, receipt, and attribution rows use real request inputs
+and transaction delegates that return missing relationships, conflicting attribution,
+or mismatched/corrupt receipts. Each cited guard test asserts the exact envelope,
+expected lookups, and no writes. The separate “Activity error mapping pins every
+typed and Prisma branch” test pins serializer behavior; its remaining injected
+POST/PUT failures characterize transaction-seam mapping, not guard reachability.
+
 ## Bootstrap, reads, and exports
 
 | Route and method | Trigger | Status | Exact JSON body | Keys | Contract test | Pin |
@@ -217,13 +224,13 @@ uses an exception injected into `headers.get`. See Appendix A for those pins.
 | `PATCH /api/focus-session/:id` | State transition conflict | 409 | `{"error":"Only a running timer can be paused.","code":"CONFLICT"}` | `code`; no `field` | `tests/unit/workflow-route-contracts.test.ts` — “Focus transition pins not-found, conflict, Prisma, and fallback envelopes” | New |
 | `PATCH /api/focus-session/:id` | Prisma `P2003` or `P2025` | 409 | `{"error":"The Focus session changed before it could be saved.","code":"CONFLICT"}` | `code`; no `field` | `tests/unit/workflow-route-contracts.test.ts` — “Focus transition pins not-found, conflict, Prisma, and fallback envelopes” | New |
 | `PATCH /api/focus-session/:id` | Unexpected failure | 500 | `{"error":"Focus timer could not be saved.","code":"INTERNAL_ERROR"}` | `code`; no `field` | `tests/unit/workflow-route-contracts.test.ts` — “Focus transition pins not-found, conflict, Prisma, and fallback envelopes” | New |
-| `POST /api/activities` | Invalid mutation id | 400 | `{"error":"X-Dayflow-Mutation-Id must contain 1 to 128 characters.","code":"INVALID_MUTATION_ID"}` | `code`; no `field` | `tests/unit/evidence-route-contracts.test.ts` — “Activity error mapping pins every typed and Prisma branch” | New |
-| `POST /api/activities` | Receipt mismatch | 409 | `{"error":"This mutation identifier was already used for a different request.","code":"MUTATION_ID_CONFLICT"}` | `code`; no `field` | `tests/unit/evidence-route-contracts.test.ts` — “Activity error mapping pins every typed and Prisma branch” | New |
-| `POST /api/activities` | Invalid stored receipt | 500 | `{"error":"The saved mutation receipt could not be read.","code":"INVALID_MUTATION_RECEIPT"}` | `code`; no `field` | `tests/unit/evidence-route-contracts.test.ts` — “Activity error mapping pins every typed and Prisma branch” | New |
+| `POST /api/activities` | Invalid mutation id | 400 | `{"error":"X-Dayflow-Mutation-Id must contain 1 to 128 characters.","code":"INVALID_MUTATION_ID"}` | `code`; no `field` | `tests/unit/evidence-route-contracts.test.ts` — “Activity POST reaches invalid mutation id through its own guards” | New |
+| `POST /api/activities` | Receipt mismatch | 409 | `{"error":"This mutation identifier was already used for a different request.","code":"MUTATION_ID_CONFLICT"}` | `code`; no `field` | `tests/unit/evidence-route-contracts.test.ts` — “Activity POST reaches receipt mismatch through its own guards” | New |
+| `POST /api/activities` | Invalid stored receipt | 500 | `{"error":"The saved mutation receipt could not be read.","code":"INVALID_MUTATION_RECEIPT"}` | `code`; no `field` | `tests/unit/evidence-route-contracts.test.ts` — “Activity POST reaches invalid stored receipt through its own guards” | New |
 | `POST /api/activities` | Malformed JSON | 400 | `{"error":"Request body must be valid JSON.","code":"INVALID_JSON","field":"body"}` | `code`, `field` | `tests/unit/evidence-route-contracts.test.ts` — “evidence routes return typed malformed-JSON responses” | Existing |
-| `POST /api/activities` | Linked Task missing | 404 | `{"error":"The linked task could not be found.","code":"RELATIONSHIP_NOT_FOUND","field":"taskId"}` | `code`, `field` | `tests/unit/evidence-route-contracts.test.ts` — “Activity error mapping pins every typed and Prisma branch” | New |
-| `POST /api/activities` | Linked Project missing | 404 | `{"error":"The linked project could not be found.","code":"RELATIONSHIP_NOT_FOUND","field":"projectId"}` | `code`, `field` | `tests/unit/evidence-route-contracts.test.ts` — “Activity error mapping pins every typed and Prisma branch” | New |
-| `POST /api/activities` | Attribution conflict | 409 | `{"error":"The selected task belongs to a different project.","code":"ATTRIBUTION_CONFLICT","field":"projectId"}` | `code`, `field` | `tests/unit/evidence-route-contracts.test.ts` — “Activity error mapping pins every typed and Prisma branch” | New |
+| `POST /api/activities` | Linked Task missing | 404 | `{"error":"The linked task could not be found.","code":"RELATIONSHIP_NOT_FOUND","field":"taskId"}` | `code`, `field` | `tests/unit/evidence-route-contracts.test.ts` — “Activity POST reaches linked Task missing through its own guards” | New |
+| `POST /api/activities` | Linked Project missing | 404 | `{"error":"The linked project could not be found.","code":"RELATIONSHIP_NOT_FOUND","field":"projectId"}` | `code`, `field` | `tests/unit/evidence-route-contracts.test.ts` — “Activity POST reaches linked Project missing through its own guards” | New |
+| `POST /api/activities` | Attribution conflict | 409 | `{"error":"The selected task belongs to a different project.","code":"ATTRIBUTION_CONFLICT","field":"projectId"}` | `code`, `field` | `tests/unit/evidence-route-contracts.test.ts` — “Activity POST reaches attribution conflict through its own guards” | New |
 | `POST /api/activities` | Prisma `P2003` or `P2025` | 409 | `{"error":"The linked Activity relationship is no longer available.","code":"RELATIONSHIP_CONFLICT"}` | `code`; no `field` | `tests/unit/evidence-route-contracts.test.ts` — “Activity error mapping pins every typed and Prisma branch” | New |
 | `POST /api/activities` | Unexpected failure | 500 | `{"error":"Activity could not be saved.","code":"INTERNAL_ERROR"}` | `code`; no `field` | `tests/unit/evidence-route-contracts.test.ts` — “Activity error mapping pins every typed and Prisma branch” | New |
 | `PUT /api/activities/:id` | Invalid input/id | 400 | `{"error":"Activity identifier is invalid.","code":"VALIDATION_ERROR","field":"id"}` | `code`, `field` | `tests/unit/evidence-route-contracts.test.ts` — “Activity replacement route validates the path and full body before writing” | Existing |

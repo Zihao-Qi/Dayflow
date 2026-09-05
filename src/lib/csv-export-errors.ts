@@ -1,6 +1,6 @@
 import type { ErrorSpec } from "@/shared/kernel/errors";
 
-/** Exact envelopes owned by the csv-export boundary. Property order is wire order. */
+/** Exact envelopes owned by the csv-export boundary. The serializer emits exactly the declared properties. */
 export const csvExportErrors = {
   exportNotFound: {
     status: 404,

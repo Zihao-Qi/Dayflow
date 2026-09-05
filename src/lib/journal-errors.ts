@@ -1,6 +1,6 @@
 import { AppError, type ErrorSpec } from "@/shared/kernel/errors";
 
-/** Exact envelopes owned by the journal boundary. Property order is wire order. */
+/** Exact envelopes owned by the journal boundary. The serializer emits exactly the declared properties. */
 export const journalErrors = {
   provideOnlyOnePageLimit: {
     status: 400,

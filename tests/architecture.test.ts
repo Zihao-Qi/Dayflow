@@ -64,9 +64,11 @@ const MODULE_EDGES: Readonly<Record<string, ReadonlySet<string>>> = {
 // Current production ActivityEntry writes. Rule 7 scans src/**, so prisma/seed.ts
 // and scripts/** are intentionally excluded instead of allowlisted.
 const ACTIVITY_WRITE_ALLOWLIST = new Set([
-  "src/app/api/activities/[id]/route.ts:62:activityEntry.deleteMany",
-  "src/app/api/activities/route.ts:36:activityEntry.create",
-  "src/lib/activity-persistence.ts:79:activityEntry.updateMany",
+  "src/modules/evidence/services/activities.ts:120:activityEntry.deleteMany",
+  "src/modules/evidence/services/activities.ts:25:activityEntry.create",
+  "src/modules/evidence/services/activities.ts:74:activityEntry.updateMany",
+  "src/modules/evidence/services/focus-activity.ts:17:activityEntry.upsert",
+  "src/modules/evidence/services/focus-activity.ts:40:activityEntry.upsert",
   "src/lib/focus-sessions.ts:268:activityEntry.upsert",
   "src/lib/focus-sessions.ts:373:activityEntry.upsert",
   "src/server/workflows/delete-project.ts:15:activityEntry.updateMany"
@@ -75,7 +77,6 @@ const ACTIVITY_WRITE_ALLOWLIST = new Set([
 // Legacy src/lib call counts are ratcheted per file so line movement is harmless,
 // while any increase (or stale decrease) fails the real-tree assertion.
 const LEGACY_GLOBAL_CLIENT_CALL_BASELINE = [
-  legacyClientCalls("src/lib/activity-persistence.ts", 1, "Phase 3: evidence services"),
   legacyClientCalls("src/lib/focus-sessions.ts", 7, "Phase 3: focus services"),
 ] as const;
 
@@ -86,7 +87,6 @@ function legacyClientCalls(file: string, count: number, migration: string) {
 // Call-site-specific entries ensure that a second violation in the same file fails.
 // Remove each entry with its named migration phase.
 const BASELINE: ReadonlyArray<Violation & { migration: string }> = [
-  baseline(6, "src/lib/activity-persistence.ts", 31, "Phase 3: evidence services"),
   baseline(6, "src/lib/focus-sessions.ts", 181, "Phase 3: focus services"),
   baseline(6, "src/lib/focus-sessions.ts", 265, "Phase 3: focus services"),
   baseline(6, "src/lib/focus-sessions.ts", 348, "Phase 3: focus services"),

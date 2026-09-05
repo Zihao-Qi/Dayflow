@@ -1,6 +1,6 @@
 import type { ErrorSpec } from "@/shared/kernel/errors";
 
-/** Exact envelopes owned by the backup boundary. Property order is wire order. */
+/** Exact envelopes owned by the backup boundary. The serializer emits exactly the declared properties. */
 export const backupErrors = {
   thisLocalDataActionRequiresAnExplicitDayflowRequest: {
     status: 403,

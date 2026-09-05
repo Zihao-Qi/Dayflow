@@ -1,6 +1,6 @@
 import type { ErrorSpec } from "@/shared/kernel/errors";
 
-/** Exact envelopes owned by the focus boundary. Property order is wire order. */
+/** Exact envelopes owned by the focus boundary. The serializer emits exactly the declared properties. */
 export const focusErrors = {
   timerDurationMustBeBetween1And240Minutes: {
     status: 400,

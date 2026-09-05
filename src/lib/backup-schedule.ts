@@ -8,6 +8,10 @@
  * Contract: docs/specs/ROLLING_BACKUPS_V1.md
  */
 
+import {
+  requireObject,
+  parseBoundedInteger as kernelParseBoundedInteger
+} from "@/shared/kernel/parsing";
 import type {
   AutomaticBackupPolicy,
   AutomaticBackupSchedule,
@@ -56,18 +60,11 @@ function parseBoundedInteger(
   max: number,
   label: string
 ) {
-  if (
-    typeof value !== "number" ||
-    !Number.isInteger(value) ||
-    value < min ||
-    value > max
-  ) {
-    throw new AutomaticBackupPolicyError(
-      `${label} must be a whole number between ${min} and ${max}.`,
-      field
-    );
-  }
-  return value;
+  return kernelParseBoundedInteger(
+    value, field, min, max,
+    `${label} must be a whole number between ${min} and ${max}.`,
+    (message, errorField) => new AutomaticBackupPolicyError(message, errorField)
+  );
 }
 
 /**
@@ -78,13 +75,11 @@ function parseBoundedInteger(
 export function parseAutomaticBackupPolicy(
   value: unknown
 ): AutomaticBackupPolicy {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new AutomaticBackupPolicyError(
-      "Automatic backup settings must be an object.",
-      "policy"
-    );
-  }
-  const body = value as Record<string, unknown>;
+  const body = requireObject(
+    value, "policy", "Automatic backup settings must be an object.",
+    (message, field) =>
+      new AutomaticBackupPolicyError(message, field)
+  );
   const unknown = Object.keys(body).filter((key) => !POLICY_FIELDS.has(key));
   if (unknown.length) {
     throw new AutomaticBackupPolicyError(

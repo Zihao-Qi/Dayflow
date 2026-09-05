@@ -98,6 +98,9 @@ export function useShellModel() {
     ? (viewedDay.payload?.tasks ?? []) as Task[]
     : [];
   const openTodayTasks = todayTasks.filter((task) => task.status !== "DONE");
+  const todayTaskCount = (data?.tasks ?? []).filter((task) =>
+    task.status !== "DONE" && task.date && localDateKey(new Date(task.date)) === data?.todayKey
+  ).length;
   const activityKnownTasks = useMemo(
     () => [...(data?.tasks ?? []), ...(data?.paletteTasks ?? [])],
     [data?.paletteTasks, data?.tasks]
@@ -284,6 +287,7 @@ export function useShellModel() {
     compactLayout,
     phoneLayout,
     wideFocusRail,
+    todayTaskCount,
     openTodayTasks,
     activity,
     backlogTasks,

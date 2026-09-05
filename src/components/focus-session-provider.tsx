@@ -63,6 +63,8 @@ export function FocusSessionProvider({ children }: { children: React.ReactNode }
   const [notificationState, setNotificationState] = useState<
     NotificationPermission | "unsupported"
   >("unsupported");
+  // Notify the shell after every confirmed Focus write, including writes that
+  // only change the timer or consume a queue item rather than create evidence.
   const [activityRevision, setActivityRevision] = useState(0);
   const autoFinishingId = useRef<string | null>(null);
   const startAttempt = useRef<FocusStartAttempt | null>(null);
@@ -138,13 +140,12 @@ export function FocusSessionProvider({ children }: { children: React.ReactNode }
         const result = await transitionFocusRequest(current.id, action);
 
         setSnapshot(result.snapshot);
+        setActivityRevision((revision) => revision + 1);
         if (action === "complete") {
           notifyCompletion(current);
           setSuggestedBreak(result.suggestedBreakMinutes);
-          setActivityRevision((revision) => revision + 1);
         } else if (action === "cancel") {
           setSuggestedBreak(null);
-          setActivityRevision((revision) => revision + 1);
         }
         return true;
       } catch (caught) {
@@ -237,6 +238,8 @@ export function FocusSessionProvider({ children }: { children: React.ReactNode }
           );
           startAttempt.current = attempt;
           const nextResult = await startFocusRequest(attempt, "The next queue item could not be started.");
+          // Enrichment's refresh may already have finished before this write.
+          setActivityRevision((revision) => revision + 1);
           nextSnapshot = nextResult.snapshot;
           startAttempt.current = null;
           rememberRetryNext(null);

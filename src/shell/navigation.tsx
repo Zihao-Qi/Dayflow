@@ -34,7 +34,7 @@ export function Navigation({
   screen,
   openCommandPalette,
   navigate,
-  openTodayTasks,
+  todayTaskCount,
   backlogTasks,
   mobileMoreOpen,
   setMobileMoreOpen,
@@ -51,7 +51,7 @@ export function Navigation({
   | "screen"
   | "openCommandPalette"
   | "navigate"
-  | "openTodayTasks"
+  | "todayTaskCount"
   | "backlogTasks"
   | "mobileMoreOpen"
   | "setMobileMoreOpen"
@@ -84,7 +84,7 @@ export function Navigation({
               item.id === "day" ? screen.startsWith("day-") : screen === itemScreen;
             const count =
               item.id === "today"
-                ? openTodayTasks.length
+                ? todayTaskCount
                 : item.id === "projects"
                   ? data.projects.filter((project) => project.status === "ACTIVE").length
                   : item.id === "backlog"

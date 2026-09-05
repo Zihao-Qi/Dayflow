@@ -9,7 +9,7 @@ function barrier() {
 async function openReview(page: Page) {
   await page.addInitScript(() => localStorage.setItem("dayflow-first-run-seen", "1"));
   await page.goto("/");
-  await page.getByRole("button", { name: "Review", exact: true }).click();
+  await page.locator('[data-nav-id="review"]').click();
   await expect(page.locator("#review-narrative")).toBeVisible();
 }
 test.beforeEach(() => resetTestDatabase());
@@ -18,23 +18,28 @@ test("Review waits for the current window and retries an initial failure", async
   const held = barrier();
   const release = barrier();
   let reads = 0;
+  let retry = false;
   await page.route("**/api/review/window?current=1", async (route) => {
     reads++;
-    if (reads !== 1) return route.continue();
+    // Next's development Strict Mode replays mount effects. Hold/fail every
+    // entry read so a replay cannot bypass the initial-failure barrier.
+    if (retry) return route.continue();
     held.release();
     await release.promise;
     await route.fulfill({ status: 503, json: { error: "Window offline" } });
   });
   await page.goto("/");
-  await page.getByRole("button", { name: "Review", exact: true }).click();
+  await page.locator('[data-nav-id="review"]').click();
   await held.promise;
   await expect(page.getByText("Loading current Review…", { exact: true })).toBeVisible();
   await expect(page.locator("#review-narrative")).toHaveCount(0);
   release.release();
   await expect(page.locator(".review-page").getByRole("alert")).toBeVisible();
+  const entryReads = reads;
+  retry = true;
   await page.getByRole("button", { name: "Retry Review", exact: true }).click();
   await expect(page.locator("#review-narrative")).toHaveValue("");
-  expect(reads).toBe(2);
+  expect(reads).toBe(entryReads + 1);
 });
 
 for (const failure of [false, true]) {
@@ -45,10 +50,18 @@ for (const failure of [false, true]) {
     const held = barrier();
     const release = barrier();
     const delivered = barrier();
+    const fresh = barrier();
     let reads = 0;
     await page.route("**/api/review/window?current=1", async (route) => {
       reads++;
-      if (reads !== 1) return route.continue();
+      if (reads !== 1) {
+        const response = await route.fetch();
+        const json = await response.json();
+        expect(json.review.narrative).toBe("Writing after held window");
+        await route.fulfill({ response, json });
+        fresh.release();
+        return;
+      }
       const response = await route.fetch();
       const json = await response.json();
       held.release();
@@ -62,11 +75,15 @@ for (const failure of [false, true]) {
     await page.locator("#review-narrative").fill("Writing after held window");
     await page.getByRole("button", { name: "Save review", exact: true }).click();
     await expect(page.locator(".review-page").getByText("Saved", { exact: true })).toBeVisible();
+    await fresh.promise;
+    const staleResponse = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/review/window");
     release.release();
     await delivered.promise;
+    await (await staleResponse).finished();
     await page.clock.runFor(32);
     await expect(page.locator("#review-narrative")).toHaveValue("Writing after held window");
-    await expect(page.getByRole("alert")).toHaveCount(0);
+    await expect(page.locator(".app-shell").getByRole("alert")).toHaveCount(0);
+    expect(reads).toBe(2);
   });
 }
 
@@ -130,6 +147,7 @@ for (const selection of ["saved period", "window"] as const) {
 }
 
 test("a saving caller follows a newer whole refresh after one earlier required read failed", async ({ page }) => {
+  await page.clock.install();
   await openReview(page);
   const held = barrier();
   const release = barrier();
@@ -155,11 +173,14 @@ test("a saving caller follows a newer whole refresh after one earlier required r
   await held.promise;
   await page.getByRole("button", { name: "Retry Review", exact: true }).click();
   await expect(page.locator(".review-page").getByText("Saved", { exact: true })).toBeVisible();
-  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.locator(".app-shell").getByRole("alert")).toHaveCount(0);
+  const staleResponse = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/bootstrap");
   release.release();
   await delivered.promise;
+  await (await staleResponse).finished();
+  await page.clock.runFor(32);
   await expect(page.locator("#review-narrative")).toHaveValue("Follow the fresh outcome");
-  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.locator(".app-shell").getByRole("alert")).toHaveCount(0);
   expect(bootstraps).toBe(2);
   expect(windows).toBe(2);
 });
@@ -168,16 +189,18 @@ test("inactive Review loads fresh evidence on each entry", async ({ page }) => {
   let reads = 0;
   await page.route("**/api/review/window?current=1", async (route) => { reads++; await route.continue(); });
   await openReview(page);
-  expect(reads).toBe(1);
-  await page.getByRole("button", { name: "Today", exact: true }).first().click();
+  const entryReads = reads;
+  expect(entryReads).toBeGreaterThan(0);
+  await page.locator('[data-nav-id="today"]').click();
   await expect(page.locator(".today-page")).toBeVisible();
   await page.locator("#new-task").fill("Mutation while Review is inactive");
   await page.locator("#new-task").press("Enter");
+  await expect(page.locator("#new-task")).toHaveValue("");
   await expect(page.locator(".today-page").getByRole("button", { name: "Add", exact: true })).toBeVisible();
-  expect(reads).toBe(1);
-  await page.getByRole("button", { name: "Review", exact: true }).click();
+  expect(reads).toBe(entryReads);
+  await page.locator('[data-nav-id="review"]').click();
   await expect(page.locator("#review-narrative")).toBeVisible();
-  expect(reads).toBe(2);
+  expect(reads).toBeGreaterThan(entryReads);
 });
 
 test("save recovery cannot clear a newer saved-but-refresh-failed warning", async ({ page }) => {

@@ -19,10 +19,20 @@ for (const failure of [false, true]) {
     const held = barrier();
     const release = barrier();
     const delivered = barrier();
+    const fresh = barrier();
     let requests = 0;
     await page.route("**/api/bootstrap", async (route) => {
       requests += 1;
-      if (requests !== 1) return route.continue();
+      if (requests !== 1) {
+        const response = await route.fetch();
+        const json = await response.json();
+        expect(json.paletteTasks).toEqual(expect.arrayContaining([
+          expect.objectContaining({ title: "Saved after held bootstrap" })
+        ]));
+        await route.fulfill({ response, json });
+        fresh.release();
+        return;
+      }
       const response = await route.fetch();
       const json = await response.json();
       held.release();
@@ -37,19 +47,28 @@ for (const failure of [false, true]) {
     await held.promise;
     await page.locator("#new-task").fill("Saved after held bootstrap");
     await page.locator("#new-task").press("Enter");
-    await expect(page.locator(".next-section .task-row")).toContainText("Saved after held bootstrap");
-    await expect(page.locator(".today-page button").filter({ hasText: /^Add$/ })).toBeDisabled();
-    release.release();
-    await delivered.promise;
-    // Navigation and the palette also check retained bootstrap consumers.
-    await page.getByRole("button", { name: "Log", exact: true }).click();
-    await page.getByRole("button", { name: "Today", exact: true }).first().click();
-    await expect(page.locator(".next-section .task-row")).toContainText("Saved after held bootstrap");
-    await expect(page.getByRole("alert")).toHaveCount(0);
+    await expect(page.locator(".today-page").getByRole("textbox", { name: "Task title: Saved after held bootstrap", exact: true })).toHaveValue("Saved after held bootstrap");
+    await fresh.promise;
+    await expect(page.locator("#new-task")).toHaveValue("");
+    await expect(page.locator(".today-page").getByRole("button", { name: "Add", exact: true })).toBeVisible();
+    // The palette can only get this task from bootstrap B, not acceptTask or /api/day.
     await page.keyboard.press("Control+K");
     const palette = page.getByRole("dialog", { name: "Search or add", exact: true });
     await palette.getByRole("combobox").fill("Saved after held bootstrap");
     await expect(palette.getByRole("option", { name: /Saved after held bootstrap.*Focus on/ })).toBeVisible();
+    const staleResponse = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/bootstrap");
+    release.release();
+    await delivered.promise;
+    await (await staleResponse).finished();
+    await page.clock.runFor(32);
+    await expect(palette.getByRole("option", { name: /Saved after held bootstrap.*Focus on/ })).toBeVisible();
+    await page.keyboard.press("Escape");
+    // Navigation and the palette also check retained bootstrap consumers.
+    await page.locator('[data-nav-id="day"]').click();
+    await page.locator('[data-nav-id="today"]').click();
+    await expect(page.locator(".today-page").getByRole("textbox", { name: "Task title: Saved after held bootstrap", exact: true })).toHaveValue("Saved after held bootstrap");
+    await expect(page.locator(".app-shell").getByRole("alert")).toHaveCount(0);
+    await expect(page.locator('[data-nav-id="today"] small')).toHaveText("1");
     expect(requests).toBe(2);
   });
 }

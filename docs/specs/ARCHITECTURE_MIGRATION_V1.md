@@ -282,15 +282,22 @@ and period-conflict recovery belong to review even though bootstrap supplies
 the current review. Shell code may deliver their messages without deciding
 their feature-specific failure or recovery policy.
 
-On `arch/client-shell`, the bounded extraction moves `useReviewActions` and
-its recovery ref into `modules/review/ui`, with review request functions in
-that module's `api.ts`; `useQueueActions`, queue selection and optimistic
-rollback into `modules/focus/ui`; and the already self-contained
+On `arch/client-shell`, rule 3 rejects a module UI dependency back into
+`src/shell`, which is what keeps this boundary from eroding again. The
+extraction it implies is deferred, because moving those files collides with
+reviewed work still in the merge queue. It is listed below rather than
+described as done.
+
+### Deferred from `arch/client-shell`
+
+These move in the follow-up pull request below, not on that branch:
+`useReviewActions` and its recovery ref into `modules/review/ui`, with review
+request functions in that module's `api.ts`; `useQueueActions`, queue
+selection and optimistic rollback into `modules/focus/ui`; and
 `ProjectsWorkspace`, `TimeBlockDialog` and `useActivityCapture` out of legacy
-`components` into projects, planning and evidence UI respectively. Activity
-replacement sorting and original/inherited-project dialog props also move into
-the capture hook. Their shell mounts remain. Rule 3 rejects a module UI
-dependency back into `src/shell`.
+`components` into projects, planning and evidence UI. Activity replacement
+sorting and the original and inherited project dialog props move with the
+capture hook. Their shell mounts remain.
 
 ### Required follow-up: persistent destination controllers
 

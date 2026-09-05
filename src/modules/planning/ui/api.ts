@@ -13,8 +13,8 @@ export function createTask(payload: {
     method: "POST",
     body: payload,
     mutationId: mutationId,
-    decode: (result): result is Task => !(!isTaskResponse(result) ||
-      result.title !== payload.title),
+    decode: (result): result is Task => isTaskResponse(result) &&
+      result.title === payload.title,
     fallback: "Your task was not saved. Your draft is still here.",
   });
 }
@@ -28,8 +28,8 @@ export function createFirstTask(payload: {
     method: "POST",
     body: payload,
     mutationId: mutationId,
-    decode: (result): result is Task => !(!isTaskResponse(result) ||
-      result.title !== payload.title),
+    decode: (result): result is Task => isTaskResponse(result) &&
+      result.title === payload.title,
     fallback: "Your first task was not saved. Your draft is still here.",
   });
 }
@@ -40,7 +40,8 @@ export function updateTask(id: string, patch: Partial<Task> & {
   return request(`/api/tasks/${id}`, {
     method: "PATCH",
     body: patch,
-    decode: (result): result is Task => !(!isTaskResponse(result) || result.id !== id),
+    decode: (result): result is Task => isTaskResponse(result) &&
+      result.id === id,
     fallback: "Couldn’t save that change. Your text is still here — retry.",
   });
 }
@@ -50,7 +51,7 @@ export function deleteTask(id: string) {
     method: "DELETE",
     decode: (result): result is {
       ok: true;
-    } => !(!isOkResponse(result)),
+    } => isOkResponse(result),
     fallback: "Task could not be deleted.",
   });
 }
@@ -63,9 +64,9 @@ export function reorderTasks(reordered: Task[]) {
     decode: (result): result is {
       ok: true;
       tasks: Task[];
-    } => !(!isTaskReorderResponse(result) ||
-      result.tasks.length !== reordered.length ||
-      result.tasks.some((task, index) => task.id !== reordered[index]?.id)),
+    } => isTaskReorderResponse(result) &&
+      result.tasks.length === reordered.length &&
+      !result.tasks.some((task, index) => task.id !== reordered[index]?.id),
     fallback: "Order could not be saved.",
   });
 }
@@ -84,13 +85,13 @@ export function saveTimeBlock(id: string | null, payload: {
     method: creating ? "POST" : "PUT",
     body: payload,
     mutationId: mutationId,
-    decode: (result): result is TimeBlockRecord => !(!isTimeBlockRecord(result) ||
-      (!creating && result.id !== id) ||
-      result.title !== payload.title.trim() ||
-      result.startTime !== payload.startTime ||
-      result.endTime !== payload.endTime ||
-      result.taskId !== payload.taskId ||
-      result.date !== payload.date),
+    decode: (result): result is TimeBlockRecord => isTimeBlockRecord(result) &&
+      !(!creating && result.id !== id) &&
+      result.title === payload.title.trim() &&
+      result.startTime === payload.startTime &&
+      result.endTime === payload.endTime &&
+      result.taskId === payload.taskId &&
+      result.date === payload.date,
     fallback: "Time block could not be saved. Your draft is still here.",
   });
 }
@@ -101,7 +102,9 @@ export function deleteTimeBlock(id: string) {
     decode: (result): result is {
       ok: true;
       id: string;
-    } => !(!isOkResponse(result) || !("id" in result) || result.id !== id),
+    } => isOkResponse(result) &&
+      "id" in result &&
+      result.id === id,
     fallback: "Time block could not be deleted. Try again.",
   });
 }

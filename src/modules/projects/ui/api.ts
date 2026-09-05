@@ -14,7 +14,7 @@ export function updateProject(id: string, patch: ProjectPatch) {
   return request(`/api/projects/${id}`, {
     method: "PATCH",
     body: patch,
-    decode: (result): result is ProjectDetail => !(!isProjectDetailResponse(result)),
+    decode: (result): result is ProjectDetail => isProjectDetailResponse(result),
     fallback: "Project could not be updated. Your edits are still here.",
   });
 }
@@ -24,7 +24,7 @@ export function deleteProject(id: string) {
     method: "DELETE",
     decode: (result): result is {
       ok: true;
-    } => !(!isOkResponse(result)),
+    } => isOkResponse(result),
     fallback: "Project could not be deleted.",
   });
 }
@@ -41,9 +41,9 @@ export function createProject(payload: {
     method: "POST",
     body: payload,
     mutationId: mutationId,
-    decode: (body): body is ProjectDetail => !(!isProjectDetailResponse(body) ||
-      body.name !== payload.name.trim() ||
-      body.desiredOutcome !== payload.desiredOutcome.trim()),
+    decode: (body): body is ProjectDetail => isProjectDetailResponse(body) &&
+      body.name === payload.name.trim() &&
+      body.desiredOutcome === payload.desiredOutcome.trim(),
     fallback: "Project could not be created. Your draft is still here.",
   });
 }
@@ -54,7 +54,7 @@ export function loadProjectPlan(id: string) {
     decode: (result): result is {
       tasks: ProjectTaskRecord[];
       phases?: unknown;
-    } => !(!isProjectPlanResponse(result)),
+    } => isProjectPlanResponse(result),
     fallback: "unavailable",
   });
 }
@@ -63,9 +63,9 @@ export function renamePhase(id: string, name: string) {
   return request(`/api/phases/${id}`, {
     method: "PATCH",
     body: { name },
-    decode: (result): result is ProjectPhaseRecord => !(!isProjectPhaseResponse(result) ||
-      result.id !== id ||
-      result.name !== name),
+    decode: (result): result is ProjectPhaseRecord => isProjectPhaseResponse(result) &&
+      result.id === id &&
+      result.name === name,
     fallback: "Couldn’t save the phase name. Your text is still here — retry.",
   });
 }

@@ -24,32 +24,32 @@ export function saveReview(payload: Omit<Review, "id" | "persisted">) {
     decode: (result): result is Review & {
       id: string;
       persisted: true;
-    } => !(!isPersistedReviewResponse(result) ||
-      result.periodStart !== payload.periodStart ||
-      result.periodEnd !== payload.periodEnd ||
-      result.narrative !== payload.narrative ||
-      result.nextPeriodIntention !== payload.nextPeriodIntention),
+    } => isPersistedReviewResponse(result) &&
+      result.periodStart === payload.periodStart &&
+      result.periodEnd === payload.periodEnd &&
+      result.narrative === payload.narrative &&
+      result.nextPeriodIntention === payload.nextPeriodIntention,
     fallback: "Review could not be saved.",
   });
 }
 
 export function loadReviewHistory(query: URLSearchParams) {
   return request(`/api/review/history?${query}`, {
-    decode: (payload): payload is ReviewHistoryPage => !(!isReviewHistoryPage(payload)),
+    decode: (payload): payload is ReviewHistoryPage => isReviewHistoryPage(payload),
     fallback: LIST_FAILURE,
   });
 }
 
 export function loadReviewDetail(id: string) {
   return request(`/api/review/${encodeURIComponent(id)}`, {
-    decode: (payload): payload is PastReviewDetail => !(!isPastReviewDetail(payload)),
+    decode: (payload): payload is PastReviewDetail => isPastReviewDetail(payload),
     fallback: DETAIL_FAILURE,
   });
 }
 
 export function loadReviewWindow(query: URLSearchParams) {
   return request(`/api/review/window?${query}`, {
-    decode: (payload): payload is ReviewWindowDetail => !(!isReviewWindowDetail(payload)),
+    decode: (payload): payload is ReviewWindowDetail => isReviewWindowDetail(payload),
     fallback: WINDOW_FAILURE,
   });
 }
@@ -57,7 +57,7 @@ export function loadReviewWindow(query: URLSearchParams) {
 export function loadViewedDay(dayKey: string) {
   return request(`/api/day?date=${encodeURIComponent(dayKey)}`, {
     cache: "no-store",
-    decode: (body): body is ViewedDayPayload => !(!isViewedDayPayload(body)),
+    decode: (body): body is ViewedDayPayload => isViewedDayPayload(body),
     fallback: LOAD_FAILURE,
   });
 }

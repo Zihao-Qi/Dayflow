@@ -1,28 +1,12 @@
+import { isFocusQueueResponse, type Task } from "@/shared/client/decoders";
+export { isTaskResponse, isFocusQueueResponse } from "@/shared/client/decoders";
+export type { Task, TaskStatus } from "@/shared/client/decoders";
 import { formatShortDate } from "@/components/dashboard-formatters";
 import type { FocusDraft } from "@/lib/focus-draft";
 import type { ProjectSummary } from "@/lib/project-domain";
 
-export type TaskStatus = "TODO" | "IN_PROGRESS" | "DONE";
-type Priority = "LOW" | "MEDIUM" | "HIGH";
 export type BacklogArrange = "figure" | "quadrant" | "project" | "due";
 export type FocusTarget = Omit<FocusDraft, "revision">;
-export type Task = {
-  id: string;
-  title: string;
-  date: string | null;
-  status: TaskStatus;
-  priority: Priority;
-  urgentScore: number;
-  importanceScore: number;
-  deadline: string | null;
-  estimateMinutes: number;
-  actualMinutes: number;
-  sortOrder: number;
-  focusQueuePosition: number | null;
-  completedAt: string | null;
-  projectId: string | null;
-  phaseId: string | null;
-};
 
 type MatrixQuadrantId = "do-now" | "schedule" | "quick-wins" | "later";
 type MatrixGroup = {
@@ -272,37 +256,6 @@ export function formatBacklogDue(value: string | null, today: string) {
   );
   if (days <= 0) return "Today";
   return formatShortDate(value);
-}
-
-export function isTaskResponse(value: unknown): value is Task {
-  if (!value || typeof value !== "object") return false;
-  const task = value as Partial<Task>;
-  return (
-    typeof task.id === "string" &&
-    typeof task.title === "string" &&
-    (task.date === null || typeof task.date === "string") &&
-    ["TODO", "IN_PROGRESS", "DONE"].includes(String(task.status)) &&
-    ["LOW", "MEDIUM", "HIGH"].includes(String(task.priority)) &&
-    Number.isInteger(task.urgentScore) &&
-    Number.isInteger(task.importanceScore) &&
-    (task.deadline === null || typeof task.deadline === "string") &&
-    Number.isInteger(task.estimateMinutes) &&
-    Number.isInteger(task.actualMinutes) &&
-    Number.isInteger(task.sortOrder) &&
-    (task.focusQueuePosition === null ||
-      Number.isInteger(task.focusQueuePosition)) &&
-    (task.completedAt === null || typeof task.completedAt === "string") &&
-    (task.projectId === null || typeof task.projectId === "string") &&
-    (task.phaseId === null || typeof task.phaseId === "string")
-  );
-}
-
-export function isFocusQueueResponse(
-  value: unknown
-): value is { tasks: Task[] } {
-  if (!value || typeof value !== "object") return false;
-  const result = value as { tasks?: unknown };
-  return Array.isArray(result.tasks) && result.tasks.every(isTaskResponse);
 }
 
 export function isTaskReorderResponse(

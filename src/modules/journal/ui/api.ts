@@ -23,13 +23,13 @@ export function createNote(payload: {
     method: "POST",
     body: payload,
     mutationId: mutationId,
-    decode: (result): result is JournalNoteRecord => !(!isNoteResponse(result) ||
-      result.content !== payload.content ||
-      !stringArraysEqual(result.tags, payload.tags) ||
-      result.taskId !== payload.taskId ||
-      result.projectId !== expectedProjectId ||
-      !todayKey ||
-      localDateKey(new Date(result.date)) !== todayKey),
+    decode: (result): result is JournalNoteRecord => isNoteResponse(result) &&
+      result.content === payload.content &&
+      stringArraysEqual(result.tags, payload.tags) &&
+      result.taskId === payload.taskId &&
+      result.projectId === expectedProjectId &&
+      Boolean(todayKey) &&
+      localDateKey(new Date(result.date)) === todayKey,
     fallback: "The note could not be saved. Your draft is still here.",
   });
 }
@@ -46,16 +46,15 @@ export function createMaterial(payload: {
     method: "POST",
     body: payload,
     mutationId: mutationId,
-    decode: (result): result is JournalMaterialRecord => !(!isMaterialResponse(result) ||
-      result.url !== payload.url ||
-      result.title !==
-        (payload.title ||
-          inferMaterialTitle(inferMaterialType(payload.url))) ||
-      result.type !== inferMaterialType(payload.url) ||
-      result.notes !== payload.notes ||
-      result.taskId !== payload.taskId ||
-      result.noteId !== payload.noteId ||
-      result.projectId !== expectedProjectId),
+    decode: (result): result is JournalMaterialRecord => isMaterialResponse(result) &&
+      result.url === payload.url &&
+      result.title === (payload.title ||
+          inferMaterialTitle(inferMaterialType(payload.url))) &&
+      result.type === inferMaterialType(payload.url) &&
+      result.notes === payload.notes &&
+      result.taskId === payload.taskId &&
+      result.noteId === payload.noteId &&
+      result.projectId === expectedProjectId,
     fallback: "The reference could not be saved. Your draft is still here.",
   });
 }
@@ -67,12 +66,12 @@ export function saveDiary(diary: Diary) {
     decode: (result): result is Diary & {
       id: string;
       persisted: true;
-    } => !(!isPersistedDiaryResponse(result) ||
-      result.date !== diary.date ||
-      result.content !== diary.content ||
-      result.reflection !== diary.reflection ||
-      result.mood !== diary.mood ||
-      result.energy !== diary.energy),
+    } => isPersistedDiaryResponse(result) &&
+      result.date === diary.date &&
+      result.content === diary.content &&
+      result.reflection === diary.reflection &&
+      result.mood === diary.mood &&
+      result.energy === diary.energy,
     fallback: "Couldn’t save the journal. Your writing is still here — retry.",
   });
 }

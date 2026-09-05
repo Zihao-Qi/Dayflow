@@ -1,8 +1,6 @@
 "use client";
 
 import type { ActivityEntry } from "@/components/activity-records";
-import { addDays, localDateKey } from "@/lib/dates";
-import { parseReviewPeriod, ReviewMutationRequestError } from "@/lib/review-domain";
 import type { JournalMaterialRecord, JournalNoteRecord } from "@/lib/journal-records";
 import type {
   ProjectDetail,
@@ -267,18 +265,49 @@ const isIsoDate = (value: unknown): value is string =>
   value.length > 0 &&
   !Number.isNaN(new Date(value).getTime());
 
-const isLocalDate = (value: unknown): value is string => {
+const isCalendarDate = (value: unknown): value is string => {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
     return false;
   }
-  const [year, month, day] = value.split("-").map(Number);
-  const parsed = new Date(year, month - 1, day);
-  return (
-    parsed.getFullYear() === year &&
-    parsed.getMonth() === month - 1 &&
-    parsed.getDate() === day
-  );
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 };
+
+const isReviewBoundary = (value: unknown): value is string => {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) {
+    return false;
+  }
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString() === value;
+};
+
+function hasReviewWindowGeometry(detail: Record<string, unknown>): boolean {
+  if (!isCalendarDate(detail.ending) ||
+      !isReviewBoundary(detail.periodStart) || !isReviewBoundary(detail.periodEnd)) {
+    return false;
+  }
+  const start = Date.parse(detail.periodStart);
+  const end = Date.parse(detail.periodEnd);
+  if (end <= start) return false;
+
+  const minute = 60_000;
+  const day = 24 * 60 * minute;
+  // Treat ending as a server calendar label, using UTC only for date arithmetic.
+  // The exclusive end is the following midnight; the start is seven days earlier.
+  const endDay = Date.parse(`${detail.ending}T00:00:00.000Z`) + day;
+  const startDay = endDay - 7 * day;
+  const startOffset = (startDay - start) / minute;
+  const endOffset = (endDay - end) / minute;
+  const isPossibleOffset = (offset: number) =>
+    Number.isInteger(offset) && offset >= -12 * 60 && offset <= 14 * 60;
+
+  // The payload omits the server zone. Check consistency with minute-resolution
+  // UTC offsets and a fixed offset or a 30/60/120-minute seasonal change, not
+  // whether a transition occurs in the browser's zone. After offset correction,
+  // the span is exactly seven whole calendar days, including DST weeks.
+  return isPossibleOffset(startOffset) && isPossibleOffset(endOffset) &&
+    [0, 30, 60, 120].includes(Math.abs(endOffset - startOffset));
+}
 
 const isCount = (value: unknown): value is number =>
   Number.isInteger(value) && Number(value) >= 0;
@@ -373,11 +402,7 @@ export function isReviewWindowDetail(
   if (!value || typeof value !== "object") return false;
   const detail = value as Record<string, unknown>;
   if (
-    !isLocalDate(detail.ending) ||
-    !isIsoDate(detail.periodStart) ||
-    !isIsoDate(detail.periodEnd) ||
-    new Date(detail.periodStart).getTime() >=
-      new Date(detail.periodEnd).getTime() ||
+    !hasReviewWindowGeometry(detail) ||
     !isPastReviewSummary(detail.reviewSummary) ||
     !Array.isArray(detail.projects) ||
     !detail.projects.every(isPastReviewProject)
@@ -399,13 +424,6 @@ export function isCurrentReviewWindow(value: unknown): value is CurrentReviewWin
   const detail = value as CurrentReviewWindow;
   // Reuse the evidence/bounds contract without widening historical review:null.
   if (!isReviewWindowDetail({ ...detail, review: null })) return false;
-  try {
-    const { periodEnd } = parseReviewPeriod(detail);
-    if (detail.ending !== localDateKey(addDays(periodEnd, -1))) return false;
-  } catch (error) {
-    if (error instanceof ReviewMutationRequestError) return false;
-    throw error;
-  }
   const review = detail.review;
   if (!review || review.periodStart !== detail.periodStart || review.periodEnd !== detail.periodEnd) return false;
   return isPersistedReviewResponse(review) || (

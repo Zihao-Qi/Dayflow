@@ -88,7 +88,7 @@ export async function readReviewMutationBody(request: {
   return requireObject(body);
 }
 
-/** Shared boundary contract for editable Review reads and mutations. */
+/** Validate mutation boundaries in the executing server's local calendar. */
 export function parseReviewPeriod(value: unknown): ReviewPeriod {
   const body = requireObject(value);
   const periodStart = parseReviewBoundary(body.periodStart, "periodStart");

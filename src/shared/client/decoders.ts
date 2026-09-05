@@ -1,6 +1,8 @@
 "use client";
 
 import type { ActivityEntry } from "@/components/activity-records";
+import { addDays, localDateKey } from "@/lib/dates";
+import { parseReviewPeriod, ReviewMutationRequestError } from "@/lib/review-domain";
 import type { JournalMaterialRecord, JournalNoteRecord } from "@/lib/journal-records";
 import type {
   ProjectDetail,
@@ -112,7 +114,7 @@ export function isActivityResponse(value: unknown): value is ActivityEntry {
     Number.isInteger(activity.durationMinutes) &&
     typeof activity.category === "string" &&
     typeof activity.note === "string" &&
-    ["MANUAL", "FOCUS"].includes(String(activity.origin)) &&
+    (activity.origin === "MANUAL" || activity.origin === "FOCUS") &&
     (activity.taskId === null || typeof activity.taskId === "string") &&
     (activity.projectId === null || typeof activity.projectId === "string") &&
     (activity.attributedProjectId === null ||
@@ -397,6 +399,13 @@ export function isCurrentReviewWindow(value: unknown): value is CurrentReviewWin
   const detail = value as CurrentReviewWindow;
   // Reuse the evidence/bounds contract without widening historical review:null.
   if (!isReviewWindowDetail({ ...detail, review: null })) return false;
+  try {
+    const { periodEnd } = parseReviewPeriod(detail);
+    if (detail.ending !== localDateKey(addDays(periodEnd, -1))) return false;
+  } catch (error) {
+    if (error instanceof ReviewMutationRequestError) return false;
+    throw error;
+  }
   const review = detail.review;
   if (!review || review.periodStart !== detail.periodStart || review.periodEnd !== detail.periodEnd) return false;
   return isPersistedReviewResponse(review) || (
@@ -409,11 +418,7 @@ export type ViewedDayKind = "past" | "today" | "future";
 
 export type ViewedDayTask = Task;
 
-export type ViewedDayActivity = {
-  id: string;
-  startedAt: string;
-  durationMinutes: number;
-};
+export type ViewedDayActivity = ActivityEntry;
 
 export type ViewedDayPayload = {
   dateKey: string;
@@ -437,15 +442,8 @@ function isTask(value: unknown): value is ViewedDayTask {
 }
 
 function isActivity(value: unknown): value is ViewedDayActivity {
-  if (!value || typeof value !== "object") return false;
-  const activity = value as Record<string, unknown>;
-  return (
-    typeof activity.id === "string" &&
-    activity.id.length > 0 &&
-    isIsoTimestamp(activity.startedAt) &&
-    Number.isInteger(activity.durationMinutes) &&
-    Number(activity.durationMinutes) >= 0
-  );
+  return isActivityResponse(value) && value.id.length > 0 &&
+    isIsoTimestamp(value.startedAt) && value.durationMinutes >= 0;
 }
 
 export function isViewedDayPayload(value: unknown): value is ViewedDayPayload {

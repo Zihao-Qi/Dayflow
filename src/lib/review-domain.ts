@@ -88,7 +88,8 @@ export async function readReviewMutationBody(request: {
   return requireObject(body);
 }
 
-export function parseReviewMutation(value: unknown): ReviewMutation {
+/** Shared boundary contract for editable Review reads and mutations. */
+export function parseReviewPeriod(value: unknown): ReviewPeriod {
   const body = requireObject(value);
   const periodStart = parseReviewBoundary(body.periodStart, "periodStart");
   const periodEnd = parseReviewBoundary(body.periodEnd, "periodEnd");
@@ -116,7 +117,12 @@ export function parseReviewMutation(value: unknown): ReviewMutation {
       "periodEnd"
     );
   }
+  return { periodStart, periodEnd };
+}
 
+export function parseReviewMutation(value: unknown): ReviewMutation {
+  const body = requireObject(value);
+  const { periodStart, periodEnd } = parseReviewPeriod(body);
   const narrative = parseReviewText(
     body.narrative,
     "narrative",

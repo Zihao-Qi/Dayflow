@@ -1,6 +1,5 @@
 "use client";
 
-import { ActivityEntry } from "@/components/activity-records";
 import { useFocusSession } from "@/components/focus-session-provider";
 import { useActivityCapture } from "@/components/use-activity-capture";
 import { useLayoutMode } from "@/components/use-layout-mode";
@@ -168,7 +167,7 @@ export function useShellModel() {
       unfinishedTasks: data.unfinishedTasks,
       projects: data.projects,
       projectById,
-      activities: (viewedDay.payload.activities ?? []) as ActivityEntry[]
+      activities: viewedDay.payload.activities
     },
     {
       layoutMode,
@@ -181,7 +180,7 @@ export function useShellModel() {
   );
   const dayIsToday = viewedDay.dayKey === (data?.todayKey ?? "");
   const dayTasks = (viewedDay.payload?.tasks ?? []).filter((task) => task.status !== "DONE");
-  const dayActivities = (viewedDay.payload?.activities ?? []) as ActivityEntry[];
+  const dayActivities = viewedDay.payload?.activities ?? [];
   const dayTimeBlocks = (viewedDay.payload?.timeBlocks ?? []) as TimeBlock[];
   const dayBlockedMinutes = dayTimeBlocks
     .filter((block) => block.date === viewedDay.dayKey)

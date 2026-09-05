@@ -417,3 +417,37 @@ test("a truncated successful day task shows read failure and can be retried", as
   await page.getByRole("button", { name: "Retry day", exact: true }).click();
   await expect(page.locator(".today-page").getByRole("article", { name: "Task: Complete day contract", exact: true })).toBeVisible();
 });
+
+test("a truncated day activity shows read failure; retry restores Today content and Log editing", async ({ page }) => {
+  // Today's captured list is visible inside the page in the compact layout.
+  await page.setViewportSize({ width: 1100, height: 900 });
+  const note = "Complete activity contract";
+  const created = await page.request.post("/api/activities", {
+    data: { startTime: "09:00", durationMinutes: 20, category: "Research", note }
+  });
+  expect(created.status()).toBe(201);
+  await page.route("**/api/day?*", async (route) => {
+    const response = await route.fetch();
+    const json = await response.json();
+    expect(json.activities).toHaveLength(1);
+    json.activities = json.activities.map(({ id, startedAt, durationMinutes }: {
+      id: string; startedAt: string; durationMinutes: number;
+    }) => ({ id, startedAt, durationMinutes }));
+    await route.fulfill({ response, json });
+  });
+  await page.addInitScript(() => localStorage.setItem("dayflow-first-run-seen", "1"));
+  await page.goto("/");
+  await expect(page.locator(".app-shell").getByRole("alert")).toContainText("That day could not be loaded");
+  await expect(page.locator(".today-page")).toHaveCount(0);
+  await page.unroute("**/api/day?*");
+  await page.getByRole("button", { name: "Retry day", exact: true }).click();
+  await expect(page.locator(".today-page").getByText(note, { exact: true })).toBeVisible();
+  await expect(page.locator(".today-page").getByText("20m · Research", { exact: true })).toBeVisible();
+  await page.locator('[data-nav-id="day"]').click();
+  await page.getByRole("radio", { name: "Stream", exact: true }).click();
+  await page.getByRole("button", { name: `Edit activity: ${note}`, exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Edit activity", exact: true });
+  await expect(dialog.getByLabel("Activity note", { exact: true })).toHaveValue(note);
+  await expect(dialog.getByLabel("Category", { exact: true })).toHaveValue("Research");
+  await expect(dialog.getByLabel("Minutes", { exact: true })).toHaveValue("20");
+});

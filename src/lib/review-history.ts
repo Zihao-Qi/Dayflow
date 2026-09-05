@@ -1,3 +1,4 @@
+import { readReviewNotes, readReviewMaterials } from "@/server/journal";
 import { readReviewActivities, readReviewDiaries } from "@/server/evidence";
 import {
   addDays,
@@ -59,14 +60,8 @@ export async function readReviewPeriodEvidence(
         where: { completedAt: window },
         select: { id: true }
       }),
-      database.note.findMany({
-        where: { date: window },
-        select: { id: true }
-      }),
-      database.material.findMany({
-        where: { createdAt: window },
-        select: { id: true }
-      }),
+      readReviewNotes(database, period),
+      readReviewMaterials(database, period),
       listProjectSummaries(database, period)
     ]);
 

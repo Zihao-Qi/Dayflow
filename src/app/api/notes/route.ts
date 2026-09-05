@@ -1,16 +1,14 @@
 import { clock } from "@/lib/time";
 import {
   parseMutationId,
-  runIdempotentCreate
-} from "@/lib/idempotent-mutations";
+  runOnce
+} from "@/server/prisma/run-once";
 import {
   parseNoteCreateInput,
   parseStoredTags
-} from "@/lib/journal-domain";
-import { journalErrors } from "@/lib/journal-errors";
-import { readJournalHistory } from "@/lib/journal-history";
-import { journalErrorResponse } from "@/lib/journal-http";
-import { resolveJournalAttribution } from "@/lib/journal-relations";
+} from "@/modules/journal/domain/journal";
+import { journalErrors } from "@/modules/journal/domain/journal";
+import { createNote, readJournalHistory, journalErrorResponse } from "@/server/journal";
 import { prisma } from "@/lib/prisma";
 import { AppError } from "@/shared/kernel/errors";
 import { NextRequest, NextResponse } from "next/server";
@@ -33,22 +31,11 @@ export async function POST(request: NextRequest) {
     );
     const body = await parseJson(request);
     const input = parseNoteCreateInput(body, now);
-    const note = await runIdempotentCreate({
+    const note = await runOnce({
       mutationId,
       kind: "note.create",
       payload: body,
-      create: async (transaction) => {
-        const attribution = await resolveJournalAttribution(transaction, input);
-        return transaction.note.create({
-          data: {
-            content: input.content,
-            tags: JSON.stringify(input.tags),
-            taskId: attribution.taskId,
-            projectId: attribution.projectId,
-            date: input.date
-          }
-        });
-      }
+      create: (transaction) => createNote(transaction, input)
     });
 
     return NextResponse.json(

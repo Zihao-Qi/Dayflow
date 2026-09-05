@@ -68,7 +68,7 @@ const ACTIVITY_WRITE_ALLOWLIST = new Set([
   "src/modules/evidence/services/focus-activity.ts:40:activityEntry.upsert",
   "src/lib/focus-sessions.ts:268:activityEntry.upsert",
   "src/lib/focus-sessions.ts:373:activityEntry.upsert",
-  "src/server/workflows/delete-project.ts:15:activityEntry.updateMany"
+  "src/server/workflows/delete-project.ts:16:activityEntry.updateMany"
 ]);
 
 // Legacy src/lib call counts are ratcheted per file so line movement is harmless,
@@ -87,7 +87,6 @@ const BASELINE: ReadonlyArray<Violation & { migration: string }> = [
   baseline(6, "src/lib/focus-sessions.ts", 181, "Phase 3: focus services"),
   baseline(6, "src/lib/focus-sessions.ts", 265, "Phase 3: focus services"),
   baseline(6, "src/lib/focus-sessions.ts", 348, "Phase 3: focus services"),
-  baseline(6, "src/lib/journal-history.ts", 140, "Phase 3: journal services"),
   baseline(6, "src/lib/workspace-readiness.ts", 4, "Phase 3: read models"),
   baseline(8, "src/lib/backup-management.ts", 42, "Phase 4: backup engine")
 ];

@@ -1,3 +1,4 @@
+import { readDayNotes, readRecentMaterials } from "@/server/journal";
 import { readDayActivities, readDiary, readActivityCategories } from "@/server/evidence";
 import { clock, calendar } from "@/lib/time";
 import { buildActivityCategorySuggestions } from "@/lib/activity-categories";
@@ -88,12 +89,9 @@ async function loadBootstrap(now: Date) {
           projectId: true
         }
       }),
-      tx.note.findMany({
-        where: { date: { gte: start, lt: end } },
-        orderBy: { createdAt: "desc" }
-      }),
+      readDayNotes(tx, { start, end }),
       readDiary(tx, start),
-      tx.material.findMany({ orderBy: { createdAt: "desc" }, take: 12 }),
+      readRecentMaterials(tx),
       readTimeBlocks(tx, { start: today, end: weekEnd }, "range"),
       readDayActivities(tx, { start, end }),
       tx.task.findMany({

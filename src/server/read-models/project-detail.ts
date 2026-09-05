@@ -1,3 +1,5 @@
+import { readProjectNotes } from "@/modules/journal/services/notes";
+import { readProjectMaterials } from "@/modules/journal/services/materials";
 import { readProjectActivities } from "@/modules/evidence/services/activities";
 import type { Prisma } from "@prisma/client";
 import { summarizeProject } from "@/modules/projects/domain/project";
@@ -12,17 +14,16 @@ type DetailDatabase = {
   material: Pick<Prisma.TransactionClient["material"], "findMany">;
 };
 
-/** Caller owns the transaction; evidence and journal reads stay here until their slices exist. */
+/** Caller owns the read transaction shared by all module reads. */
 export async function getProjectDetail(database: DetailDatabase, id: string, reviewPeriod: { start: Date; end: Date }) {
   const project = await readProject(database, id);
   if (!project) return null;
   const tasks = await readProjectTasks(database, [id]);
   const taskIds = tasks.map(task => task.id);
-  const where = { OR: [{ projectId: id }, { taskId: { in: taskIds } }] };
   const [activities, notes, materials] = await Promise.all([
     readProjectActivities(database, id),
-    database.note.findMany({ where, orderBy: { createdAt: "desc" } }),
-    database.material.findMany({ where, orderBy: { createdAt: "desc" } })
+    readProjectNotes(database, id, taskIds),
+    readProjectMaterials(database, id, taskIds)
   ]);
   // Legacy order: direct journal rows first, then rows for each task in task order.
   // Map replacement deduplicates a row linked both directly and through a task.

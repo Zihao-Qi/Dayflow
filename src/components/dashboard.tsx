@@ -1,5 +1,7 @@
 "use client";
 
+import { isTaskRecord as isTaskResponse, type TaskRecord } from "@/modules/planning/domain/task";
+
 import {
   type CSSProperties,
   useEffect,
@@ -119,7 +121,6 @@ import {
 import type { QueuePlacement } from "@/lib/focus-queue";
 
 type TaskStatus = "TODO" | "IN_PROGRESS" | "DONE";
-type Priority = "LOW" | "MEDIUM" | "HIGH";
 type Screen =
   | "today"
   | "day-stream"
@@ -139,23 +140,7 @@ type TimeBlockEditor = {
   linkedTask: TimeBlockTaskSummary | null;
   draft: TimeBlockEditorDraft;
 };
-type Task = {
-  id: string;
-  title: string;
-  date: string | null;
-  status: TaskStatus;
-  priority: Priority;
-  urgentScore: number;
-  importanceScore: number;
-  deadline: string | null;
-  estimateMinutes: number;
-  actualMinutes: number;
-  sortOrder: number;
-  focusQueuePosition: number | null;
-  completedAt: string | null;
-  projectId: string | null;
-  phaseId: string | null;
-};
+type Task = TaskRecord;
 
 type PaletteTaskRecord = Pick<
   Task,
@@ -356,30 +341,6 @@ function mergeJournalRecords<T extends { id: string; createdAt: string }>(
       right.id.localeCompare(left.id)
   );
 }
-
-function isTaskResponse(value: unknown): value is Task {
-  if (!value || typeof value !== "object") return false;
-  const task = value as Partial<Task>;
-  return (
-    typeof task.id === "string" &&
-    typeof task.title === "string" &&
-    (task.date === null || typeof task.date === "string") &&
-    ["TODO", "IN_PROGRESS", "DONE"].includes(String(task.status)) &&
-    ["LOW", "MEDIUM", "HIGH"].includes(String(task.priority)) &&
-    Number.isInteger(task.urgentScore) &&
-    Number.isInteger(task.importanceScore) &&
-    (task.deadline === null || typeof task.deadline === "string") &&
-    Number.isInteger(task.estimateMinutes) &&
-    Number.isInteger(task.actualMinutes) &&
-    Number.isInteger(task.sortOrder) &&
-    (task.focusQueuePosition === null ||
-      Number.isInteger(task.focusQueuePosition)) &&
-    (task.completedAt === null || typeof task.completedAt === "string") &&
-    (task.projectId === null || typeof task.projectId === "string") &&
-    (task.phaseId === null || typeof task.phaseId === "string")
-  );
-}
-
 
 function timeBlockErrorFieldFrom(
   value: unknown

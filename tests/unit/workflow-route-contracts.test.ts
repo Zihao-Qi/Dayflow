@@ -514,7 +514,9 @@ test("Task reorder and schedule undo pin not-found, Prisma, and fallback envelop
   const originalConsoleError = console.error;
   console.error = () => undefined;
   try {
-    (prisma as unknown as { $transaction: unknown }).$transaction = async () => null;
+    (prisma as unknown as { $transaction: unknown }).$transaction = async (
+      operation: (transaction: unknown) => unknown
+    ) => operation({ task: { findMany: async () => [] } });
     const missingReorder = await reorderTasks(
       jsonRequest("http://localhost/api/tasks/reorder", "POST", {
         ids: ["task-1"]
@@ -568,8 +570,12 @@ test("Task reorder and schedule undo pin not-found, Prisma, and fallback envelop
         }
       ]
     ] as const) {
-      (prisma as unknown as { $transaction: unknown }).$transaction = async () =>
-        result;
+      (prisma as unknown as { $transaction: unknown }).$transaction = async (
+        operation: (transaction: unknown) => unknown
+      ) => operation({
+        task: { findUnique: async () => result.kind === "task-missing" ? null : { id: "task-1" } },
+        taskScheduleChange: { findFirst: async () => null }
+      });
       const response = await undoTaskSchedule(
         new NextRequest("http://localhost/api/tasks/task-1/schedule/undo", {
           method: "POST"

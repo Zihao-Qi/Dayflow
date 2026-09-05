@@ -10,7 +10,7 @@ import { NextResponse } from "next/server";
 export async function GET() {
   const now = clock.now();
   try {
-    const payload = await prisma.$transaction(tx => readBootstrap(tx, now));
+    const payload = await prisma.$transaction(tx => readBootstrap(tx, now), { timeout: 60000 });
     return NextResponse.json(payload);
   } catch (error) {
     if (

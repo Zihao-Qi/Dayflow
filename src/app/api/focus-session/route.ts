@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
 import {
   FocusSessionConflictError,
   FocusSessionError,
@@ -27,7 +28,7 @@ const globalForFocusSessionStart = globalThis as typeof globalThis & {
 
 export async function GET() {
   try {
-    return NextResponse.json(await getFocusSnapshot());
+    return NextResponse.json(await getFocusSnapshot(prisma));
   } catch (error) {
     console.error("Focus snapshot load failed.", error);
     return NextResponse.json(

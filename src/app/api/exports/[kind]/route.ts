@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { csvExportResponseHeaders } from "@/lib/csv-export-contract";
+import { prisma } from "@/lib/prisma";
 import {
   CsvExportError,
   createCsvExport,
@@ -14,7 +15,7 @@ type Params = { params: Promise<{ kind: string }> };
 export async function GET(_request: Request, { params }: Params) {
   try {
     const kind = parseCsvExportKind((await params).kind);
-    const result = await createCsvExport(kind);
+    const result = await createCsvExport(kind, new Date(), prisma);
     return new Response(result.body, {
       status: 200,
       headers: csvExportResponseHeaders(result)

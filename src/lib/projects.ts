@@ -46,9 +46,10 @@ const projectRead = {
 };
 
 export async function listProjectSummaries(
+  client: Pick<Prisma.TransactionClient, "project">,
   reviewPeriod = reviewPeriodRange()
 ) {
-  const projects = await prisma.project.findMany({
+  const projects = await client.project.findMany({
     orderBy: [{ status: "asc" }, { updatedAt: "desc" }],
     include: {
       phases: {
@@ -67,13 +68,12 @@ export async function listProjectSummaries(
       }
     }
   });
-
   return projects.map((project) => summarizeProject(project, reviewPeriod));
 }
 
 export async function getProjectDetail(
   id: string,
-  client: Pick<Prisma.TransactionClient, "project"> = prisma
+  client: Pick<Prisma.TransactionClient, "project">
 ) {
   const reviewPeriod = reviewPeriodRange();
   const project = await client.project.findUnique({
@@ -112,7 +112,7 @@ export async function validateProjectPlacement(
   projectId: string | null,
   phaseId: string | null,
   options: { allowCompleted?: boolean } = {},
-  client: Pick<Prisma.TransactionClient, "project" | "projectPhase"> = prisma
+  client: Pick<Prisma.TransactionClient, "project" | "projectPhase">
 ) {
   if (!projectId && phaseId) {
     throw new ProjectRuleError("A task cannot have a phase without a project.");

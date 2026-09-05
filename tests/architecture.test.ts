@@ -64,6 +64,7 @@ const MODULE_EDGES: Readonly<Record<string, ReadonlySet<string>>> = {
 // Current production ActivityEntry writes. Rule 7 scans src/**, so prisma/seed.ts
 // and scripts/** are intentionally excluded instead of allowlisted.
 const ACTIVITY_WRITE_ALLOWLIST = new Set([
+  "src/app/api/activities/[id]/route.ts:60:activityEntry.deleteMany",
   "src/app/api/activities/route.ts:34:activityEntry.create",
   "src/lib/activity-persistence.ts:84:activityEntry.updateMany",
   "src/lib/focus-sessions.ts:280:activityEntry.upsert",
@@ -244,6 +245,15 @@ function scanArchitecture(
 
     const globalBindings = findGlobalClientBindings(record, singletonModules);
     visit(record.sourceFile, (node) => {
+      // Discovery identifies clients for import checks; it does not authorize
+      // new client owners beyond the explicitly named singleton modules.
+      if (
+        record.relativePath.startsWith("src/") &&
+        isNewPrismaClient(node) &&
+        !EXPLICIT_SINGLETON_MODULES.has(record.moduleKey)
+      ) {
+        add(record, 4, node, "constructs PrismaClient outside an explicit singleton module");
+      }
       if (isService && ts.isCallExpression(node) && callMethod(node) === "$transaction") {
         add(record, 4, node, "service opens a transaction");
       }
@@ -461,14 +471,18 @@ function addSingletonModule(
   }
 }
 
+function isNewPrismaClient(node: ts.Node) {
+  return (
+    ts.isNewExpression(node) &&
+    ((ts.isIdentifier(node.expression) && node.expression.text === "PrismaClient") ||
+      (ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === "PrismaClient"))
+  );
+}
+
 function containsNewPrismaClient(node: ts.Node) {
   let found = false;
   visit(node, (child) => {
-    if (
-      ts.isNewExpression(child) &&
-      ((ts.isIdentifier(child.expression) && child.expression.text === "PrismaClient") ||
-        (ts.isPropertyAccessExpression(child.expression) && child.expression.name.text === "PrismaClient"))
-    ) found = true;
+    if (isNewPrismaClient(child)) found = true;
   });
   return found;
 }
@@ -749,7 +763,7 @@ function activityWriteMethod(call: ts.CallExpression): string | null {
   const method = callMethod(call);
   if (
     !method ||
-    !["create", "upsert", "createMany", "update", "updateMany"].includes(method)
+    !["create", "upsert", "createMany", "update", "updateMany", "delete", "deleteMany"].includes(method)
   ) return null;
   const callee = call.expression;
   if (!ts.isPropertyAccessExpression(callee) && !ts.isElementAccessExpression(callee)) return null;
@@ -782,7 +796,7 @@ function nodeText(node: ts.StringLiteralLike | ts.TemplateExpression) {
   return ts.isStringLiteralLike(node) ? node.text : node.getText();
 }
 
-function activitySqlWriteOperation(sql: string): "INSERT INTO" | "UPDATE" | null {
+function activitySqlWriteOperation(sql: string): "INSERT INTO" | "UPDATE" | "DELETE FROM" | null {
   // A schema may be bare, double-quoted, bracketed, or backtick-quoted.
   // Double quotes and backticks escape themselves by doubling.
   const schema = /(?:[a-z_\u0080-\uffff][\w$\u0080-\uffff]*|"(?:[^"]|"")+"|\[[^\]]+\]|`(?:[^`]|``)+`)/.source;
@@ -790,11 +804,13 @@ function activitySqlWriteOperation(sql: string): "INSERT INTO" | "UPDATE" | null
   // The dot check prevents treating an ActivityEntry schema as the target table.
   const table = /(?:"ActivityEntry"|\[ActivityEntry\]|`ActivityEntry`|'ActivityEntry'|ActivityEntry)(?![\w$\u0080-\uffff"'`\]])(?!\s*\.)/.source;
   const match = new RegExp(
-    `\\b(insert(?:\\s+or\\s+(?:ignore|replace))?\\s+into|update)\\s+(?:${schema}\\s*\\.\\s*)?${table}`,
+    `\\b(insert(?:\\s+or\\s+(?:ignore|replace))?\\s+into|update|delete\\s+from)\\s+(?:${schema}\\s*\\.\\s*)?${table}`,
     "i"
   ).exec(sql);
   if (!match) return null;
-  return match[1].toUpperCase() === "UPDATE" ? "UPDATE" : "INSERT INTO";
+  const operation = match[1].toUpperCase();
+  if (operation === "UPDATE") return "UPDATE";
+  return operation.startsWith("DELETE") ? "DELETE FROM" : "INSERT INTO";
 }
 
 function isPrismaPackage(specifier: string) {
@@ -942,6 +958,53 @@ test("Rule 4: services neither import the singleton nor open transactions", () =
       "src/modules/planning/services/fail-prisma-subpath.ts:1",
       "src/modules/planning/services/fail-transaction.ts:1"
     ])
+  );
+});
+
+test("Rule 4: stray PrismaClient construction is actionable without legacy calls", () => {
+  withFixture(
+    {
+      "src/lib/stray.ts": [
+        'import { PrismaClient } from "@prisma/client";',
+        "const database = new PrismaClient();",
+        "export const list = () => database.task.findMany();"
+      ].join("\n"),
+      "src/lib/exported.ts": 'export const database = new PrismaClient();\n',
+      "src/lib/namespace.ts": 'import * as Prisma from "@prisma/client";\nconst database = new Prisma.PrismaClient();\n',
+      "src/app/stray.ts": "const database = new PrismaClient();\n",
+      "src/modules/planning/services/stray.ts": "const database = new PrismaClient();\n",
+      "src/server/stray.ts": "const database = new PrismaClient();\n"
+    },
+    (root) => {
+      const report = scanArchitecture(root);
+      assert.deepEqual(report.legacyGlobalClientCalls, {});
+      assert.deepEqual(
+        report.violations.map(({ rule, file, line, baselineGroup }) => ({ rule, file, line, baselineGroup })),
+        [
+          ["src/app/stray.ts", 1],
+          ["src/lib/exported.ts", 1],
+          ["src/lib/namespace.ts", 2],
+          ["src/lib/stray.ts", 2],
+          ["src/modules/planning/services/stray.ts", 1],
+          ["src/server/stray.ts", 1]
+        ].map(([file, line]) => ({ rule: 4, file, line, baselineGroup: undefined }))
+      );
+      assert.ok(report.violations.every(({ detail }) => detail.includes("constructs PrismaClient")));
+    }
+  );
+});
+
+test("Rule 4: canonical clients, scripts, and tests may construct PrismaClient", () => {
+  const source = 'import { PrismaClient } from "@prisma/client"; export const prisma = new PrismaClient();\n';
+  withFixture(
+    {
+      ...Object.fromEntries([...EXPLICIT_SINGLETON_MODULES].map((key) => [`${key}.ts`, source])),
+      "scripts/database.ts": source,
+      "tests/database.test.ts": source,
+      "src/lib/unrelated.ts": "const client = new OtherClient();\n",
+      "src/lib/prisma-barrel.ts": 'export { prisma } from "@/lib/prisma";\n'
+    },
+    (root) => assert.deepEqual(checkArchitecture(root), [])
   );
 });
 
@@ -1121,25 +1184,25 @@ test("Baseline identity: removing a transaction makes its baseline stale", () =>
   });
 });
 
-for (const verb of ["UPDATE", "INSERT INTO", "INSERT OR IGNORE INTO", "INSERT OR REPLACE INTO"]) {
+for (const verb of ["UPDATE", "INSERT INTO", "INSERT OR IGNORE INTO", "INSERT OR REPLACE INTO", "DELETE FROM"]) {
   test(`Rule 7: qualified ${verb} matches schema and table quoting variants`, () => {
     const schemas = ["main", '"ma""in"', "[main schema]", "`ma``in`"];
     const tables = ["ActivityEntry", '"ActivityEntry"', "[ActivityEntry]", "`ActivityEntry`", "'ActivityEntry'"];
     const files: Record<string, string> = {};
     for (const [schemaIndex, schema] of schemas.entries()) {
       for (const [tableIndex, table] of tables.entries()) {
-        const tail = verb === "UPDATE" ? " SET id = 1" : " (id) VALUES (1)";
+        const tail = verb === "DELETE FROM" ? " WHERE id = 1" : verb === "UPDATE" ? " SET id = 1" : " (id) VALUES (1)";
         const sql = `${verb.toLowerCase().replaceAll(" ", "\t")} ${schema} \n.\t ${table}${tail}`;
         files[`src/write-${schemaIndex}-${tableIndex}.ts`] = `export const sql = ${JSON.stringify(sql)};\n`;
       }
     }
     // Include the exact qualified spelling from the report and an unqualified control.
-    const tail = verb === "UPDATE" ? " SET id = 1" : " (id) VALUES (1)";
+    const tail = verb === "DELETE FROM" ? " WHERE id = 1" : verb === "UPDATE" ? " SET id = 1" : " (id) VALUES (1)";
     files["src/exact.ts"] = `export const sql = ${JSON.stringify(`${verb} main."ActivityEntry"${tail}`)};\n`;
     files["src/control.ts"] = `export const sql = ${JSON.stringify(`${verb} "ActivityEntry"${tail}`)};\n`;
     withFixture(files, (root) => {
       const report = scanArchitecture(root);
-      const operation = verb === "UPDATE" ? "UPDATE" : "INSERT INTO";
+      const operation = verb.startsWith("INSERT") ? "INSERT INTO" : verb;
       assert.deepEqual(
         report.activityWrites,
         Object.keys(files).map((file) => `${file}:1:SQL ${operation} ActivityEntry`).sort()
@@ -1156,11 +1219,13 @@ for (const verb of ["UPDATE", "INSERT INTO", "INSERT OR IGNORE INTO", "INSERT OR
 
 test("Rule 7: qualified writes retain the existing allowlist key spelling", () => {
   const activityWriteAllowlist = new Set([
+    "src/delete.ts:1:SQL DELETE FROM ActivityEntry",
     "src/insert.ts:1:SQL INSERT INTO ActivityEntry",
     "src/update.ts:1:SQL UPDATE ActivityEntry"
   ]);
   withFixture(
     {
+      "src/delete.ts": 'export const sql = `DELETE FROM "main" . [ActivityEntry] WHERE id = 1`;\n',
       "src/insert.ts": 'export const sql = `INSERT OR IGNORE INTO main."ActivityEntry" (id) VALUES (1)`;\n',
       "src/update.ts": 'export const sql = `UPDATE "main" . [ActivityEntry] SET id = 1`;\n'
     },
@@ -1192,11 +1257,11 @@ test("Rule 7: unrelated and suffixed SQL table names do not match", () => {
   const files: Record<string, string> = {};
   for (const [index, table] of tables.entries()) {
     for (const [prefixIndex, prefix] of ["", "main.", '"main" . ', "[main] . ", "`main` . "].entries()) {
-      const sql = `UPDATE ${prefix}${table} SET id = 1; INSERT OR IGNORE INTO ${prefix}${table} (id) VALUES (1)`;
+      const sql = `UPDATE ${prefix}${table} SET id = 1; INSERT OR IGNORE INTO ${prefix}${table} (id) VALUES (1); DELETE FROM ${prefix}${table} WHERE id = 1`;
       files[`src/negative-${index}-${prefixIndex}.ts`] = `export const sql = ${JSON.stringify(sql)};\n`;
     }
   }
-  files["src/schema-only.ts"] = 'export const sql = `UPDATE ActivityEntry.Task SET id = 1; INSERT INTO "ActivityEntry" . "Task" (id) VALUES (1)`;\n';
+  files["src/schema-only.ts"] = 'export const sql = `UPDATE ActivityEntry.Task SET id = 1; INSERT INTO "ActivityEntry" . "Task" (id) VALUES (1); DELETE FROM "ActivityEntry" . "Task" WHERE id = 1`;\n';
   withFixture(files, (root) => {
     const report = scanArchitecture(root);
     assert.deepEqual(report.activityWrites, []);
@@ -1249,6 +1314,35 @@ test("Rule 7: ActivityEntry updates and raw SQL updates require allowlisting", (
       }),
       ["src/fail-sql.ts:1", "src/fail-update-many.ts:1"]
     )
+  );
+});
+
+test("Rule 7: ActivityEntry deletions require exact call-site allowlisting", () => {
+  const activityWriteAllowlist = new Set(["src/allowed.ts:1:activityEntry.deleteMany"]);
+  withFixture(
+    {
+      "src/allowed.ts": "database.activityEntry.deleteMany({});\n",
+      "src/delete.ts": "database.activityEntry.delete({});\n",
+      "src/delete-many.ts": "database.activityEntry.deleteMany({});\n",
+      "src/unrelated.ts": "database.task.delete({}); database.task.deleteMany({});\n",
+      "scripts/delete.ts": "database.activityEntry.deleteMany({});\n",
+      "tests/delete.test.ts": "database.activityEntry.delete({});\n"
+    },
+    (root) => {
+      const report = scanArchitecture(root, { activityWriteAllowlist });
+      assert.deepEqual(report.activityWrites, [
+        "src/allowed.ts:1:activityEntry.deleteMany",
+        "src/delete-many.ts:1:activityEntry.deleteMany",
+        "src/delete.ts:1:activityEntry.delete"
+      ]);
+      assert.deepEqual(
+        report.violations.map(({ rule, file, line }) => ({ rule, file, line })),
+        [
+          { rule: 7, file: "src/delete-many.ts", line: 1 },
+          { rule: 7, file: "src/delete.ts", line: 1 }
+        ]
+      );
+    }
   );
 });
 

@@ -231,3 +231,14 @@ test("Review History GET pins query validation without a field", async () => {
     error: "Page limit must be a whole number between 1 and 100.", code: "VALIDATION_ERROR"
   });
 });
+
+test("current Review Window mode preserves its additive fieldless validation envelope before storage", async () => {
+  (prisma as unknown as { $transaction: unknown }).$transaction = async () => { throw new Error("storage unavailable"); };
+  for (const query of ["current=", "current=0", "current=1&current=1", "current=1&ending=2026-08-31"]) {
+    const response = await getReviewWindow(new NextRequest(`http://localhost/api/review/window?${query}`));
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), {
+      error: "Use current=1 without a Review Window ending day.", code: "VALIDATION_ERROR"
+    });
+  }
+});

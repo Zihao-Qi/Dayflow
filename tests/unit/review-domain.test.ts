@@ -229,3 +229,15 @@ function expectReviewError(action: () => unknown, field: string) {
       error.field === field
   );
 }
+
+test("ISO period validation retains legacy behavior at Calendar year boundaries", () => {
+  const period = parseReviewMutation({
+    periodStart: "0999-01-01T05:50:36.000Z", periodEnd: "0999-01-08T05:50:36.000Z", narrative: "Historical"
+  });
+  assert.equal(period.periodStart.toISOString(), "0999-01-01T05:50:36.000Z");
+  assert.throws(() => parseReviewMutation({
+    periodStart: "9999-12-28T06:00:00.000Z", periodEnd: "9999-12-31T06:00:00.000Z", narrative: "Too short"
+  }), (error: unknown) => error instanceof ReviewMutationRequestError && error.code === "VALIDATION_ERROR" && error.field === "periodEnd");
+  assert.throws(() => assertCurrentReviewPeriod(period, new Date("2026-09-04T17:00:00.000Z")),
+    (error: unknown) => error instanceof ReviewMutationRequestError && error.code === "REVIEW_PERIOD_CHANGED" && error.status === 409);
+});

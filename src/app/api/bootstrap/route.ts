@@ -15,7 +15,7 @@ import {
 } from "@/lib/day-view";
 import { appErrorResponse } from "@/lib/http-errors";
 import { prisma } from "@/lib/prisma";
-import { readReviewPeriodEvidence } from "@/lib/review-history";
+import { readReviewPeriodEvidence, readSavedReview } from "@/server/review";
 import { readTimeBlocks } from "@/server/time-blocks";
 import { isWorkspaceEmpty } from "@/lib/workspace-readiness";
 import { AppError } from "@/shared/kernel/errors";
@@ -99,14 +99,7 @@ async function loadBootstrap(now: Date) {
         orderBy: { date: "asc" }
       }),
       readReviewPeriodEvidence(tx, reviewPeriod),
-      tx.review.findUnique({
-        where: {
-          periodStart_periodEnd: {
-            periodStart: weekStart,
-            periodEnd: reviewEnd
-          }
-        }
-      }),
+      readSavedReview(tx, reviewPeriod),
       readActivityCategories(tx),
       isWorkspaceEmpty(tx),
       earliestRecordedDay(tx)

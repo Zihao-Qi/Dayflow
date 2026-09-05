@@ -1,3 +1,13 @@
+import {
+  requireObject as kernelRequireObject,
+  readJsonBody,
+  parseBoundedInteger as kernelParseBoundedInteger,
+  parseEnum as kernelParseEnum,
+  has,
+  parseRecordId,
+  parseBoundedString,
+  parseNullableLocalDate
+} from "@/shared/kernel/parsing";
 import { parseLocalDate, startOfLocalDay } from "@/lib/dates";
 
 export const TASK_TITLE_MAX_LENGTH = 500;
@@ -84,38 +94,21 @@ export class TaskMutationValidationError extends Error {
 export async function readTaskMutationBody(request: {
   json(): Promise<unknown>;
 }): Promise<JsonObject> {
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    throw new TaskMutationValidationError(
-      "Request body must be valid JSON.",
-      "body",
-      "INVALID_JSON"
-    );
-  }
+  const body = await readJsonBody(
+    request,
+    "body",
+    "Request body must be valid JSON.",
+    (message, field) =>
+      new TaskMutationValidationError(message, field, "INVALID_JSON")
+  );
   return requireObject(body);
 }
 
 export function parseTaskPathId(value: unknown) {
-  if (typeof value !== "string") {
-    throw new TaskMutationValidationError(
-      "Task identifier is invalid.",
-      "id"
-    );
-  }
-  const id = value.trim();
-  if (
-    !id ||
-    id.length > TASK_ID_MAX_LENGTH ||
-    /[\u0000-\u001f\u007f]/.test(id)
-  ) {
-    throw new TaskMutationValidationError(
-      "Task identifier is invalid.",
-      "id"
-    );
-  }
-  return id;
+  return parseRecordId(value, "id", "Task identifier is invalid.", validationError, {
+    maximumLength: TASK_ID_MAX_LENGTH,
+    rejectControlCharacters: true
+  });
 }
 
 export function parseTaskCreateMutation(
@@ -329,30 +322,18 @@ export function taskProjectRuleErrorDetails(
 }
 
 function requireObject(value: unknown): JsonObject {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new TaskMutationValidationError(
-      "Request body must be a JSON object.",
-      "body"
-    );
-  }
-  return value as JsonObject;
+  return kernelRequireObject(
+    value, "body", "Request body must be a JSON object.", validationError
+  );
 }
 
 function parseTitle(value: unknown) {
-  if (typeof value !== "string") {
-    throw new TaskMutationValidationError("Task title is required.", "title");
-  }
-  const title = value.trim();
-  if (!title) {
-    throw new TaskMutationValidationError("Task title is required.", "title");
-  }
-  if (title.length > TASK_TITLE_MAX_LENGTH) {
-    throw new TaskMutationValidationError(
-      `Task title must be ${TASK_TITLE_MAX_LENGTH} characters or fewer.`,
-      "title"
-    );
-  }
-  return title;
+  return parseBoundedString(value, "title", "Task title is required.", validationError, {
+    maximumLength: TASK_TITLE_MAX_LENGTH,
+    lengthMessage: `Task title must be ${TASK_TITLE_MAX_LENGTH} characters or fewer.`,
+    emptyMessage: "Task title is required.",
+    trim: true
+  });
 }
 
 function parseNullableDate(
@@ -360,46 +341,41 @@ function parseNullableDate(
   field: "date" | "deadline",
   message: string
 ) {
-  if (value === null || value === "") return null;
-  if (typeof value !== "string") {
-    throw new TaskMutationValidationError(message, field);
-  }
-  const date = parseLocalDate(value.trim());
-  if (!date) throw new TaskMutationValidationError(message, field);
-  return date;
+  return parseNullableLocalDate(value, field, message, validationError, {
+    nullValues: [null, ""],
+    trim: true,
+    parseDate: parseLocalDate
+  });
 }
 
 function parseRelationId(value: unknown, field: "projectId" | "phaseId") {
-  if (value === null || value === "") return null;
-  if (typeof value !== "string") {
-    throw new TaskMutationValidationError(
-      `${field === "projectId" ? "Project" : "Phase"} identifier is invalid.`,
-      field
-    );
-  }
-  const id = value.trim();
-  if (!id) return null;
-  if (id.length > TASK_RELATION_ID_MAX_LENGTH) {
-    throw new TaskMutationValidationError(
-      `${field === "projectId" ? "Project" : "Phase"} identifier is invalid.`,
-      field
-    );
-  }
-  return id;
+  return parseRecordId(
+    value,
+    field,
+    `${field === "projectId" ? "Project" : "Phase"} identifier is invalid.`,
+    validationError,
+    {
+      maximumLength: TASK_RELATION_ID_MAX_LENGTH,
+      rejectControlCharacters: false,
+      nullValues: [null, ""],
+      blankAsNull: true
+    }
+  );
 }
 
 function parseScheduleSource(value: unknown) {
   if (value === null || value === undefined) return "manual";
-  if (
-    typeof value !== "string" ||
-    value.length > TASK_SCHEDULE_SOURCE_MAX_LENGTH
-  ) {
-    throw new TaskMutationValidationError(
-      "Schedule source is invalid.",
-      "scheduleSource"
-    );
-  }
-  return value;
+  return parseBoundedString(
+    value,
+    "scheduleSource",
+    "Schedule source is invalid.",
+    validationError,
+    {
+      maximumLength: TASK_SCHEDULE_SOURCE_MAX_LENGTH,
+      lengthMessage: "Schedule source is invalid.",
+      trim: false
+    }
+  );
 }
 
 function parseBoundedInteger(
@@ -409,15 +385,9 @@ function parseBoundedInteger(
   maximum: number,
   message: string
 ) {
-  if (
-    typeof value !== "number" ||
-    !Number.isInteger(value) ||
-    value < minimum ||
-    value > maximum
-  ) {
-    throw new TaskMutationValidationError(message, field);
-  }
-  return value;
+  return kernelParseBoundedInteger(
+    value, field, minimum, maximum, message, validationError
+  );
 }
 
 function parseEnum<const Values extends readonly string[]>(
@@ -426,12 +396,9 @@ function parseEnum<const Values extends readonly string[]>(
   field: string,
   message: string
 ): Values[number] {
-  if (typeof value !== "string" || !values.includes(value)) {
-    throw new TaskMutationValidationError(message, field);
-  }
-  return value as Values[number];
+  return kernelParseEnum(value, values, field, message, validationError);
 }
 
-function has(object: JsonObject, key: string) {
-  return Object.prototype.hasOwnProperty.call(object, key);
+function validationError(message: string, field: string) {
+  return new TaskMutationValidationError(message, field);
 }

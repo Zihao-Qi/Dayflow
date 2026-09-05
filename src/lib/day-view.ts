@@ -1,6 +1,7 @@
 import { addDays, localDateKey, parseLocalDate, sameDayRange, startOfLocalDay } from "@/lib/dates";
 import { dayErrors } from "@/lib/day-errors";
-import { readTimeBlocks } from "@/modules/planning/services/time-blocks";
+import { readDayTasks } from "@/server/tasks";
+import { readTimeBlocks } from "@/server/time-blocks";
 import { AppError } from "@/shared/kernel/errors";
 import type { Prisma, PrismaClient } from "@prisma/client";
 
@@ -100,10 +101,7 @@ export async function readViewedDay(
   const { start, end } = sameDayRange(date);
 
   const [tasks, timeBlocks, activities] = await Promise.all([
-    database.task.findMany({
-      where: { date: { gte: start, lt: end } },
-      orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }]
-    }),
+    readDayTasks(database, { start, end }),
     readTimeBlocks(database, { start, end }, "day"),
     kind === "future"
       ? Promise.resolve([])

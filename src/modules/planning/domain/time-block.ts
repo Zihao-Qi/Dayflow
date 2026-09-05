@@ -329,7 +329,7 @@ function validationError(message: string, field: string) {
 }
 
 
-/** Exact envelopes owned by the time-block boundary. Property order is wire order. */
+/** Exact envelopes owned by the time-block boundary. The serializer emits exactly the declared properties. */
 export const timeBlockErrors = {
   timeBlockNotFound: {
     status: 404,

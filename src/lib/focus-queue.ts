@@ -1,5 +1,8 @@
-import { Prisma, TaskStatus } from "@prisma/client";
+import { appErrorConstructor } from "@/lib/error-compat";
+import { focusQueueErrors } from "@/lib/focus-queue-errors";
 import { prisma } from "@/lib/prisma";
+import { AppError, validation } from "@/shared/kernel/errors";
+import { Prisma, TaskStatus } from "@prisma/client";
 
 type QueueTransaction = Prisma.TransactionClient;
 export type QueuePlacement = "next" | "end";
@@ -28,9 +31,9 @@ export async function addToFocusQueue(
       where: { id: taskId },
       select: { id: true, status: true }
     });
-    if (!task) throw new FocusQueueNotFoundError("Task not found.");
+    if (!task) throw new AppError(focusQueueErrors.taskNotFound);
     if (task.status === TaskStatus.DONE) {
-      throw new FocusQueueConflictError("Completed tasks cannot be queued.");
+      throw new AppError(focusQueueErrors.completedTasksCannotBeQueued);
     }
 
     const current = await queueIds(transaction);
@@ -56,9 +59,7 @@ export async function reorderFocusQueue(
       new Set(ids).size !== ids.length ||
       current.some((id) => !ids.includes(id))
     ) {
-      throw new FocusQueueConflictError(
-        "Queue order is out of date. Refresh and try again."
-      );
+      throw new AppError(focusQueueErrors.queueOrderIsOutOfDateRefreshAndTryAgain);
     }
     await writeQueueOrder(transaction, ids);
     return listFocusQueue(transaction);
@@ -131,7 +132,7 @@ async function writeQueueOrder(
 
 export function parseQueuePlacement(value: unknown): QueuePlacement {
   if (value === "next" || value === "end") return value;
-  throw new FocusQueueError("Queue placement must be next or end.");
+  throw new AppError(focusQueueErrors.queuePlacementMustBeNextOrEnd);
 }
 
 function sameOrder(left: string[], right: string[]) {
@@ -141,6 +142,15 @@ function sameOrder(left: string[], right: string[]) {
   );
 }
 
-export class FocusQueueError extends Error {}
-export class FocusQueueNotFoundError extends FocusQueueError {}
-export class FocusQueueConflictError extends FocusQueueError {}
+/** @deprecated Compatibility constructor for existing callers; returns AppError. */
+export const FocusQueueError = appErrorConstructor(
+  (
+    message: string
+  ) => validation(message)
+);
+export type FocusQueueError = AppError;
+/** @deprecated Compatibility constructor for existing callers; returns AppError. */
+export { AppError as FocusQueueNotFoundError };
+
+/** @deprecated Compatibility constructor for existing callers; returns AppError. */
+export { AppError as FocusQueueConflictError };

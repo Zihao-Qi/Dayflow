@@ -1,12 +1,14 @@
+import { reviewPeriodRange } from "@/lib/dates";
+import { prisma } from "@/lib/prisma";
+import { calculateProjectMetrics } from "@/lib/project-domain";
+import { projectErrors } from "@/lib/project-errors";
+import { AppError } from "@/shared/kernel/errors";
 import {
   Prisma,
   ProjectDurationUnit,
   ProjectStatus,
   TaskStatus
 } from "@prisma/client";
-import { prisma } from "@/lib/prisma";
-import { calculateProjectMetrics } from "@/lib/project-domain";
-import { reviewPeriodRange } from "@/lib/dates";
 
 const projectRead = {
   phases: {
@@ -115,7 +117,7 @@ export async function validateProjectPlacement(
   client: Pick<Prisma.TransactionClient, "project" | "projectPhase">
 ) {
   if (!projectId && phaseId) {
-    throw new ProjectRuleError("A task cannot have a phase without a project.");
+    throw new AppError(projectErrors.aTaskCannotHaveAPhaseWithoutAProject);
   }
 
   if (!projectId) return;
@@ -124,9 +126,9 @@ export async function validateProjectPlacement(
     where: { id: projectId },
     select: { id: true, status: true }
   });
-  if (!project) throw new ProjectRuleError("The selected project could not be found.");
+  if (!project) throw new AppError(projectErrors.theSelectedProjectCouldNotBeFound);
   if (project.status === "COMPLETED" && !options.allowCompleted) {
-    throw new ProjectRuleError("Reopen the completed project before adding unfinished work.");
+    throw new AppError(projectErrors.reopenTheCompletedProjectBeforeAddingUnfinishedWork);
   }
 
   if (!phaseId) return;
@@ -136,10 +138,10 @@ export async function validateProjectPlacement(
     select: { projectId: true }
   });
   if (!phase) {
-    throw new ProjectRuleError("The selected phase could not be found.");
+    throw new AppError(projectErrors.theSelectedPhaseCouldNotBeFound);
   }
   if (phase.projectId !== projectId) {
-    throw new ProjectRuleError("The selected phase does not belong to this project.");
+    throw new AppError(projectErrors.theSelectedPhaseDoesNotBelongToThisProject);
   }
 }
 
@@ -184,7 +186,7 @@ export function parseProjectStatus(value: unknown): ProjectStatus | null {
     : null;
 }
 
-export class ProjectRuleError extends Error {}
+export { AppError as ProjectRuleError };
 
 type SummaryInput = {
   id: string;

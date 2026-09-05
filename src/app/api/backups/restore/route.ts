@@ -1,15 +1,18 @@
-import { NextRequest } from "next/server";
-import {
-  cancelManagedRestore,
-  getManagedBackupIndex,
-  stageManagedRestore
-} from "@/lib/backup-management";
+import { backupErrors } from "@/lib/backup-errors";
 import {
   assertLocalBackupMutation,
   backupErrorResponse,
   jsonNoStore,
   readBackupJsonObject
 } from "@/lib/backup-http";
+import {
+  cancelManagedRestore,
+  getManagedBackupIndex,
+  stageManagedRestore
+} from "@/lib/backup-management";
+import { appErrorResponse } from "@/lib/http-errors";
+import { AppError, validation } from "@/shared/kernel/errors";
+import { NextRequest } from "next/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,29 +30,16 @@ export async function POST(request: NextRequest) {
       (field) => !allowedFields.has(field)
     );
     if (unexpected) {
-      return jsonNoStore(
-        {
-          error: `Unexpected restore field: ${unexpected}.`,
-          code: "VALIDATION_ERROR",
-          field: unexpected
-        },
-        { status: 400 }
-      );
+      return appErrorResponse(validation(`Unexpected restore field: ${unexpected}.`, unexpected), true);
     }
     if (typeof body.backupId !== "string") {
-      return validationResponse("Choose a managed backup.", "backupId");
+      return appErrorResponse(new AppError(backupErrors.chooseAManagedBackup), true);
     }
     if (typeof body.expectedPayloadSha256 !== "string") {
-      return validationResponse(
-        "The selected backup checksum is required.",
-        "expectedPayloadSha256"
-      );
+      return appErrorResponse(new AppError(backupErrors.theSelectedBackupChecksumIsRequired), true);
     }
     if (typeof body.confirmation !== "string") {
-      return validationResponse(
-        "Type RESTORE exactly to schedule replacement.",
-        "confirmation"
-      );
+      return appErrorResponse(new AppError(backupErrors.typeRESTOREExactlyToScheduleReplacement), true);
     }
 
     const pendingRestore = stageManagedRestore({
@@ -71,24 +61,11 @@ export async function DELETE(request: NextRequest) {
     assertLocalBackupMutation(request);
     const body = await readBackupJsonObject(request);
     if (Object.keys(body).length > 0) {
-      return jsonNoStore(
-        {
-          error: "Canceling a restore does not accept any fields.",
-          code: "VALIDATION_ERROR"
-        },
-        { status: 400 }
-      );
+      return appErrorResponse(new AppError(backupErrors.cancelingARestoreDoesNotAcceptAnyFields), true);
     }
     cancelManagedRestore();
     return jsonNoStore(getManagedBackupIndex());
   } catch (error) {
     return backupErrorResponse(error, "Restore cancellation");
   }
-}
-
-function validationResponse(error: string, field: string) {
-  return jsonNoStore(
-    { error, code: "VALIDATION_ERROR", field },
-    { status: 400 }
-  );
 }

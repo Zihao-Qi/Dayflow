@@ -1,9 +1,11 @@
-import { NextResponse } from "next/server";
+import { appErrorResponse } from "@/lib/http-errors";
 import { prisma } from "@/lib/prisma";
+import { reviewErrors } from "@/lib/review-errors";
 import {
-  ReviewHistoryRequestError,
   readPastReviewPeriod
 } from "@/lib/review-history";
+import { AppError } from "@/shared/kernel/errors";
+import { NextResponse } from "next/server";
 
 export async function GET(
   _request: Request,
@@ -13,17 +15,9 @@ export async function GET(
     const { id } = await params;
     return NextResponse.json(await readPastReviewPeriod(prisma, id));
   } catch (error) {
-    if (error instanceof ReviewHistoryRequestError) {
-      return NextResponse.json(
-        { error: error.message, code: error.code },
-        { status: error.status }
-      );
-    }
+    if (error instanceof AppError) return appErrorResponse(error);
 
     console.error("Review period could not be read.", error);
-    return NextResponse.json(
-      { error: "Review period could not be read.", code: "INTERNAL_ERROR" },
-      { status: 500 }
-    );
+    return appErrorResponse(new AppError(reviewErrors.reviewPeriodCouldNotBeRead));
   }
 }

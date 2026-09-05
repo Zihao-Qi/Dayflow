@@ -1,7 +1,5 @@
-import { Prisma } from "@prisma/client";
-import { NextResponse } from "next/server";
 import { buildActivityCategorySuggestions } from "@/lib/activity-categories";
-import { prisma } from "@/lib/prisma";
+import { bootstrapErrors } from "@/lib/bootstrap-errors";
 import {
   addDays,
   localDateKey,
@@ -9,15 +7,20 @@ import {
   sameDayRange,
   startOfLocalDay
 } from "@/lib/dates";
-import { readReviewPeriodEvidence } from "@/lib/review-history";
-import { serializeTimeBlock } from "@/lib/time-block-persistence";
-import { isTimeBlockRecord } from "@/lib/time-blocks";
-import { isWorkspaceEmpty } from "@/lib/workspace-readiness";
 import {
   DAY_VIEW_FORWARD_WEEKS,
   earliestRecordedDay,
   resolveEarliestNavigableDayKey
 } from "@/lib/day-view";
+import { appErrorResponse } from "@/lib/http-errors";
+import { prisma } from "@/lib/prisma";
+import { readReviewPeriodEvidence } from "@/lib/review-history";
+import { serializeTimeBlock } from "@/lib/time-block-persistence";
+import { isTimeBlockRecord } from "@/lib/time-blocks";
+import { isWorkspaceEmpty } from "@/lib/workspace-readiness";
+import { AppError } from "@/shared/kernel/errors";
+import { Prisma } from "@prisma/client";
+import { NextResponse } from "next/server";
 
 const DATABASE_MIGRATION_REQUIRED_MESSAGE =
   "Dayflow's local database needs an update. Stop Dayflow, run `npm run db:migrate`, then start Dayflow again.";
@@ -30,23 +33,11 @@ export async function GET() {
       error instanceof Prisma.PrismaClientKnownRequestError &&
       (error.code === "P2021" || error.code === "P2022")
     ) {
-      return NextResponse.json(
-        {
-          code: "DATABASE_MIGRATION_REQUIRED",
-          error: DATABASE_MIGRATION_REQUIRED_MESSAGE
-        },
-        { status: 503 }
-      );
+      return appErrorResponse(new AppError(bootstrapErrors.migrationRequired));
     }
 
     console.error("Dayflow bootstrap failed.", error);
-    return NextResponse.json(
-      {
-        code: "INTERNAL_ERROR",
-        error: "Dayflow could not open its local data. Try again."
-      },
-      { status: 500 }
-    );
+    return appErrorResponse(new AppError(bootstrapErrors.openFailed));
   }
 }
 
@@ -144,14 +135,14 @@ async function loadBootstrap() {
   const diaryEntry = diary
     ? { ...diary, persisted: true }
     : {
-        id: null,
-        date: start,
-        content: "",
-        reflection: "",
-        mood: 3,
-        energy: 3,
-        persisted: false
-      };
+      id: null,
+      date: start,
+      content: "",
+      reflection: "",
+      mood: 3,
+      energy: 3,
+      persisted: false
+    };
   const { projects, summary: reviewSummary } = reviewEvidence;
   const stats = buildStats(
     weekTasks,
@@ -162,13 +153,13 @@ async function loadBootstrap() {
   const review = savedReview
     ? { ...savedReview, persisted: true }
     : {
-        id: null,
-        periodStart: weekStart,
-        periodEnd: reviewEnd,
-        narrative: "",
-        nextPeriodIntention: "",
-        persisted: false
-      };
+      id: null,
+      periodStart: weekStart,
+      periodEnd: reviewEnd,
+      narrative: "",
+      nextPeriodIntention: "",
+      persisted: false
+    };
 
   return NextResponse.json({
     today: start.toISOString(),

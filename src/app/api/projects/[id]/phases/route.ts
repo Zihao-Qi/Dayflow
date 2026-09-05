@@ -1,16 +1,17 @@
-import { Prisma } from "@prisma/client";
-import { NextRequest, NextResponse } from "next/server";
+import { appErrorResponse } from "@/lib/http-errors";
 import {
-  IdempotentMutationError,
   parseMutationId,
   runIdempotentCreate
 } from "@/lib/idempotent-mutations";
+import { projectErrors } from "@/lib/project-errors";
 import {
-  ProjectMutationRequestError,
   parsePhaseCreateMutation,
   parseProjectPathId,
   readProjectMutationBody
 } from "@/lib/project-mutations";
+import { AppError } from "@/shared/kernel/errors";
+import { Prisma } from "@prisma/client";
+import { NextRequest, NextResponse } from "next/server";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -38,20 +39,10 @@ export async function POST(request: NextRequest, { params }: Params) {
           select: { status: true }
         });
         if (!project) {
-          throw new ProjectMutationRequestError(
-            "The selected project could not be found.",
-            "projectId",
-            "NOT_FOUND",
-            404
-          );
+          throw new AppError(projectErrors.phaseParentNotFound);
         }
         if (project.status === "COMPLETED") {
-          throw new ProjectMutationRequestError(
-            "Reopen the completed project before adding unfinished work.",
-            "projectId",
-            "RELATIONSHIP_CONFLICT",
-            409
-          );
+          throw new AppError(projectErrors.reopenTheCompletedProjectBeforeAddingUnfinishedWork);
         }
 
         const lastPhase = await transaction.projectPhase.findFirst({
@@ -75,38 +66,15 @@ export async function POST(request: NextRequest, { params }: Params) {
 }
 
 function phaseCreateErrorResponse(error: unknown) {
-  if (error instanceof IdempotentMutationError) {
-    return NextResponse.json(
-      { error: error.message, code: error.code },
-      { status: error.status }
-    );
-  }
-  if (error instanceof ProjectMutationRequestError) {
-    return NextResponse.json(
-      { error: error.message, code: error.code, field: error.field },
-      { status: error.status }
-    );
-  }
+  if (error instanceof AppError) return appErrorResponse(error);
+
   if (
     error instanceof Prisma.PrismaClientKnownRequestError &&
     error.code === "P2003"
   ) {
-    return NextResponse.json(
-      {
-        error: "The selected Project is no longer available.",
-        code: "CONFLICT",
-        field: "projectId"
-      },
-      { status: 409 }
-    );
+    return appErrorResponse(new AppError(projectErrors.theSelectedProjectIsNoLongerAvailable));
   }
 
   console.error("Phase creation failed.", error);
-  return NextResponse.json(
-    {
-      error: "Phase could not be created.",
-      code: "INTERNAL_ERROR"
-    },
-    { status: 500 }
-  );
+  return appErrorResponse(new AppError(projectErrors.phaseCouldNotBeCreated));
 }

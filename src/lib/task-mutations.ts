@@ -1,14 +1,17 @@
+import { parseLocalDate, startOfLocalDay } from "@/lib/dates";
+import { requestErrors } from "@/lib/request-errors";
+import { taskErrors } from "@/lib/task-errors";
+import { AppError, validation } from "@/shared/kernel/errors";
 import {
-  requireObject as kernelRequireObject,
-  readJsonBody,
+  has,
   parseBoundedInteger as kernelParseBoundedInteger,
   parseEnum as kernelParseEnum,
-  has,
-  parseRecordId,
+  requireObject as kernelRequireObject,
   parseBoundedString,
-  parseNullableLocalDate
+  parseNullableLocalDate,
+  parseRecordId,
+  readJsonBody
 } from "@/shared/kernel/parsing";
-import { parseLocalDate, startOfLocalDay } from "@/lib/dates";
 
 export const TASK_TITLE_MAX_LENGTH = 500;
 export const TASK_ESTIMATE_MAX_MINUTES = 1_440;
@@ -71,25 +74,8 @@ export type TaskPatchMutation = {
   scheduleSource: string;
 };
 
-export type TaskProjectRuleErrorDetails = {
-  code:
-    | "RELATIONSHIP_NOT_FOUND"
-    | "RELATIONSHIP_CONFLICT"
-    | "VALIDATION_ERROR";
-  field: "projectId" | "phaseId";
-  status: 400 | 404 | 409;
-};
-
-export class TaskMutationValidationError extends Error {
-  constructor(
-    message: string,
-    readonly field: string,
-    readonly code: TaskMutationErrorCode = "VALIDATION_ERROR"
-  ) {
-    super(message);
-    this.name = "TaskMutationValidationError";
-  }
-}
+/** @deprecated Compatibility constructor for existing callers; returns AppError. */
+export { AppError as TaskMutationValidationError };
 
 export async function readTaskMutationBody(request: {
   json(): Promise<unknown>;
@@ -97,15 +83,14 @@ export async function readTaskMutationBody(request: {
   const body = await readJsonBody(
     request,
     "body",
-    "Request body must be valid JSON.",
-    (message, field) =>
-      new TaskMutationValidationError(message, field, "INVALID_JSON")
+    requestErrors.invalidJson.message,
+    () => new AppError(requestErrors.invalidJson)
   );
   return requireObject(body);
 }
 
 export function parseTaskPathId(value: unknown) {
-  return parseRecordId(value, "id", "Task identifier is invalid.", validationError, {
+  return parseRecordId(value, "id", taskErrors.taskIdentifierIsInvalid.message, validationError, {
     maximumLength: TASK_ID_MAX_LENGTH,
     rejectControlCharacters: true
   });
@@ -117,52 +102,52 @@ export function parseTaskCreateMutation(
 ): TaskCreateMutation {
   const body = requireObject(value);
   const status = has(body, "status")
-    ? parseEnum(body.status, taskStatuses, "status", "Task status is invalid.")
+    ? parseEnum(body.status, taskStatuses, "status", taskErrors.taskStatusIsInvalid.message)
     : "TODO";
 
   return {
     title: parseTitle(body.title),
     date: has(body, "date")
-      ? parseNullableDate(body.date, "date", "Scheduled date is invalid.")
+      ? parseNullableDate(body.date, "date", taskErrors.scheduledDateIsInvalid.message)
       : startOfLocalDay(now),
     priority: has(body, "priority")
       ? parseEnum(
-          body.priority,
-          taskPriorities,
-          "priority",
-          "Task priority is invalid."
-        )
+        body.priority,
+        taskPriorities,
+        "priority",
+        taskErrors.taskPriorityIsInvalid.message
+      )
       : "MEDIUM",
     status,
     urgentScore: has(body, "urgentScore")
       ? parseBoundedInteger(
-          body.urgentScore,
-          "urgentScore",
-          1,
-          5,
-          "Urgency score must be a whole number from 1 to 5."
-        )
+        body.urgentScore,
+        "urgentScore",
+        1,
+        5,
+        taskErrors.urgencyScoreMustBeAWholeNumberFrom1To5.message
+      )
       : 2,
     importanceScore: has(body, "importanceScore")
       ? parseBoundedInteger(
-          body.importanceScore,
-          "importanceScore",
-          1,
-          5,
-          "Importance score must be a whole number from 1 to 5."
-        )
+        body.importanceScore,
+        "importanceScore",
+        1,
+        5,
+        taskErrors.importanceScoreMustBeAWholeNumberFrom1To5.message
+      )
       : 3,
     deadline: has(body, "deadline")
-      ? parseNullableDate(body.deadline, "deadline", "Deadline is invalid.")
+      ? parseNullableDate(body.deadline, "deadline", taskErrors.deadlineIsInvalid.message)
       : null,
     estimateMinutes: has(body, "estimateMinutes")
       ? parseBoundedInteger(
-          body.estimateMinutes,
-          "estimateMinutes",
-          0,
-          TASK_ESTIMATE_MAX_MINUTES,
-          `Estimate must be a whole number from 0 to ${TASK_ESTIMATE_MAX_MINUTES} minutes.`
-        )
+        body.estimateMinutes,
+        "estimateMinutes",
+        0,
+        TASK_ESTIMATE_MAX_MINUTES,
+        taskErrors.estimateMustBeAWholeNumberFrom0To1440Minutes.message
+      )
       : 30,
     projectId: has(body, "projectId")
       ? parseRelationId(body.projectId, "projectId")
@@ -188,7 +173,7 @@ export function parseTaskPatchMutation(
       body.priority,
       taskPriorities,
       "priority",
-      "Task priority is invalid."
+      taskErrors.taskPriorityIsInvalid.message
     );
   }
 
@@ -198,7 +183,7 @@ export function parseTaskPatchMutation(
       body.status,
       taskStatuses,
       "status",
-      "Task status is invalid."
+      taskErrors.taskStatusIsInvalid.message
     );
     data.status = requestedStatus;
     data.completedAt = requestedStatus === "DONE" ? now : null;
@@ -210,7 +195,7 @@ export function parseTaskPatchMutation(
       "estimateMinutes",
       0,
       TASK_ESTIMATE_MAX_MINUTES,
-      `Estimate must be a whole number from 0 to ${TASK_ESTIMATE_MAX_MINUTES} minutes.`
+      taskErrors.estimateMustBeAWholeNumberFrom0To1440Minutes.message
     );
   }
   if (has(body, "actualMinutes")) {
@@ -219,7 +204,7 @@ export function parseTaskPatchMutation(
       "actualMinutes",
       0,
       PRISMA_INT_MAX,
-      "Actual minutes must be a non-negative whole number."
+      taskErrors.actualMinutesMustBeANonnegativeWholeNumber.message
     );
   }
   if (has(body, "sortOrder")) {
@@ -228,7 +213,7 @@ export function parseTaskPatchMutation(
       "sortOrder",
       0,
       PRISMA_INT_MAX,
-      "Task order must be a non-negative whole number."
+      taskErrors.taskOrderMustBeANonnegativeWholeNumber.message
     );
   }
   if (has(body, "urgentScore")) {
@@ -237,7 +222,7 @@ export function parseTaskPatchMutation(
       "urgentScore",
       1,
       5,
-      "Urgency score must be a whole number from 1 to 5."
+      taskErrors.urgencyScoreMustBeAWholeNumberFrom1To5.message
     );
   }
   if (has(body, "importanceScore")) {
@@ -246,21 +231,21 @@ export function parseTaskPatchMutation(
       "importanceScore",
       1,
       5,
-      "Importance score must be a whole number from 1 to 5."
+      taskErrors.importanceScoreMustBeAWholeNumberFrom1To5.message
     );
   }
   if (has(body, "date")) {
     data.date = parseNullableDate(
       body.date,
       "date",
-      "Scheduled date is invalid."
+      taskErrors.scheduledDateIsInvalid.message
     );
   }
   if (has(body, "deadline")) {
     data.deadline = parseNullableDate(
       body.deadline,
       "deadline",
-      "Deadline is invalid."
+      taskErrors.deadlineIsInvalid.message
     );
   }
 
@@ -304,34 +289,17 @@ export function validateTaskPatchMutation(
   );
 }
 
-export function taskProjectRuleErrorDetails(
-  errorMessage: string
-): TaskProjectRuleErrorDetails {
-  const message = errorMessage.toLowerCase();
-  const field = message.includes("phase") ? "phaseId" : "projectId";
-  if (message.includes("could not be found")) {
-    return { code: "RELATIONSHIP_NOT_FOUND", field, status: 404 };
-  }
-  if (
-    message.includes("does not belong") ||
-    message.includes("reopen the completed project")
-  ) {
-    return { code: "RELATIONSHIP_CONFLICT", field, status: 409 };
-  }
-  return { code: "VALIDATION_ERROR", field, status: 400 };
-}
-
 function requireObject(value: unknown): JsonObject {
   return kernelRequireObject(
-    value, "body", "Request body must be a JSON object.", validationError
+    value, "body", requestErrors.objectRequired.message, validationError
   );
 }
 
 function parseTitle(value: unknown) {
-  return parseBoundedString(value, "title", "Task title is required.", validationError, {
+  return parseBoundedString(value, "title", taskErrors.taskTitleIsRequired.message, validationError, {
     maximumLength: TASK_TITLE_MAX_LENGTH,
     lengthMessage: `Task title must be ${TASK_TITLE_MAX_LENGTH} characters or fewer.`,
-    emptyMessage: "Task title is required.",
+    emptyMessage: taskErrors.taskTitleIsRequired.message,
     trim: true
   });
 }
@@ -368,11 +336,11 @@ function parseScheduleSource(value: unknown) {
   return parseBoundedString(
     value,
     "scheduleSource",
-    "Schedule source is invalid.",
+    taskErrors.scheduleSourceIsInvalid.message,
     validationError,
     {
       maximumLength: TASK_SCHEDULE_SOURCE_MAX_LENGTH,
-      lengthMessage: "Schedule source is invalid.",
+      lengthMessage: taskErrors.scheduleSourceIsInvalid.message,
       trim: false
     }
   );
@@ -400,5 +368,5 @@ function parseEnum<const Values extends readonly string[]>(
 }
 
 function validationError(message: string, field: string) {
-  return new TaskMutationValidationError(message, field);
+  return validation(message, field);
 }

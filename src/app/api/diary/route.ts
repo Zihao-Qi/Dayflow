@@ -1,10 +1,12 @@
-import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { evidenceErrors } from "@/lib/evidence-errors";
 import {
-  EvidenceMutationRequestError,
   parseDiaryUpsertMutation,
   readEvidenceMutationBody
 } from "@/lib/evidence-mutations";
+import { appErrorResponse } from "@/lib/http-errors";
+import { prisma } from "@/lib/prisma";
+import { AppError } from "@/shared/kernel/errors";
+import { NextRequest, NextResponse } from "next/server";
 
 export async function PUT(request: NextRequest) {
   try {
@@ -25,17 +27,9 @@ export async function PUT(request: NextRequest) {
 
     return NextResponse.json({ ...diary, persisted: true });
   } catch (error) {
-    if (error instanceof EvidenceMutationRequestError) {
-      return NextResponse.json(
-        { error: error.message, code: error.code, field: error.field },
-        { status: 400 }
-      );
-    }
+    if (error instanceof AppError) return appErrorResponse(error);
 
     console.error("Diary save failed.", error);
-    return NextResponse.json(
-      { error: "Diary could not be saved.", code: "INTERNAL_ERROR" },
-      { status: 500 }
-    );
+    return appErrorResponse(new AppError(evidenceErrors.diaryCouldNotBeSaved));
   }
 }

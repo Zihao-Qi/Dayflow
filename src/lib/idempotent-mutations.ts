@@ -1,22 +1,22 @@
-import { createHash } from "node:crypto";
-import { Prisma } from "@prisma/client";
+import { appErrorConstructor } from "@/lib/error-compat";
+import { idempotencyErrors } from "@/lib/idempotency-errors";
 import { prisma } from "@/lib/prisma";
+import { AppError } from "@/shared/kernel/errors";
+import { Prisma } from "@prisma/client";
+import { createHash } from "node:crypto";
 
 export const DAYFLOW_MUTATION_ID_MAX_LENGTH = 128;
 
-export class IdempotentMutationError extends Error {
-  constructor(
-    readonly code:
-      | "INVALID_MUTATION_ID"
-      | "MUTATION_ID_CONFLICT"
-      | "INVALID_MUTATION_RECEIPT",
+/** @deprecated Compatibility constructor for existing callers; returns AppError. */
+export const IdempotentMutationError = appErrorConstructor(
+  (
+    code: "INVALID_MUTATION_ID" | "MUTATION_ID_CONFLICT" | "INVALID_MUTATION_RECEIPT",
     message: string,
-    readonly status: 400 | 409 | 500
-  ) {
-    super(message);
-    this.name = "IdempotentMutationError";
-  }
-}
+    status: 400 | 409 | 500
+  ) => new AppError({ status, message, code }),
+  (error) => ["INVALID_MUTATION_ID", "MUTATION_ID_CONFLICT", "INVALID_MUTATION_RECEIPT"].includes(error.code ?? "")
+);
+export type IdempotentMutationError = AppError;
 
 export function parseMutationId(value: string | null) {
   if (value === null) return null;
@@ -26,11 +26,7 @@ export function parseMutationId(value: string | null) {
     mutationId.length > DAYFLOW_MUTATION_ID_MAX_LENGTH ||
     /[\u0000-\u001f\u007f]/.test(mutationId)
   ) {
-    throw new IdempotentMutationError(
-      "INVALID_MUTATION_ID",
-      `X-Dayflow-Mutation-Id must contain 1 to ${DAYFLOW_MUTATION_ID_MAX_LENGTH} characters.`,
-      400
-    );
+    throw new AppError(idempotencyErrors.xDayflowMutationIdMustContain1To128Characters);
   }
   return mutationId;
 }
@@ -104,20 +100,12 @@ function decodeReceipt<T>(
     receipt.kind !== expectedKind ||
     receipt.requestHash !== expectedHash
   ) {
-    throw new IdempotentMutationError(
-      "MUTATION_ID_CONFLICT",
-      "This mutation identifier was already used for a different request.",
-      409
-    );
+    throw new AppError(idempotencyErrors.thisMutationIdentifierWasAlreadyUsedForADifferentRequest);
   }
   try {
     return JSON.parse(receipt.responseJson) as T;
   } catch {
-    throw new IdempotentMutationError(
-      "INVALID_MUTATION_RECEIPT",
-      "The saved mutation receipt could not be read.",
-      500
-    );
+    throw new AppError(idempotencyErrors.theSavedMutationReceiptCouldNotBeRead);
   }
 }
 

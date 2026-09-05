@@ -1,19 +1,19 @@
-import { Prisma } from "@prisma/client";
-import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { focusErrors } from "@/lib/focus-errors";
 import {
-  FocusSessionConflictError,
-  FocusSessionError,
-  FocusSessionNotFoundError,
   getFocusSnapshot,
   transitionFocusSession
 } from "@/lib/focus-sessions";
+import { appErrorResponse } from "@/lib/http-errors";
+import { prisma } from "@/lib/prisma";
+import { workflowErrors } from "@/lib/workflow-errors";
 import {
-  WorkflowMutationRequestError,
   parseFocusSessionTransitionMutation,
   parseWorkflowId,
   readWorkflowMutationBody
 } from "@/lib/workflow-mutations";
+import { AppError } from "@/shared/kernel/errors";
+import { Prisma } from "@prisma/client";
+import { NextRequest, NextResponse } from "next/server";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -23,7 +23,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     const id = parseWorkflowId(
       routeParams.id,
       "id",
-      "Focus session identifier is invalid."
+      workflowErrors.focusSessionIdentifierIsInvalid.message
     );
     const body = await readWorkflowMutationBody(request);
     const input = parseFocusSessionTransitionMutation(body);
@@ -33,47 +33,17 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       snapshot: await getFocusSnapshot(prisma)
     });
   } catch (error) {
-    if (error instanceof WorkflowMutationRequestError) {
-      return NextResponse.json(
-        { error: error.message, code: error.code, field: error.field },
-        { status: 400 }
-      );
-    }
-    if (error instanceof FocusSessionNotFoundError) {
-      return NextResponse.json(
-        { error: error.message, code: "NOT_FOUND", field: "id" },
-        { status: 404 }
-      );
-    }
-    if (error instanceof FocusSessionError) {
-      return NextResponse.json(
-        {
-          error: error.message,
-          code:
-            error instanceof FocusSessionConflictError
-              ? "CONFLICT"
-              : "VALIDATION_ERROR"
-        },
-        { status: error instanceof FocusSessionConflictError ? 409 : 400 }
-      );
-    }
+    if (error instanceof AppError) return appErrorResponse(error);
+
+
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       (error.code === "P2003" || error.code === "P2025")
     ) {
-      return NextResponse.json(
-        {
-          error: "The Focus session changed before it could be saved.",
-          code: "CONFLICT"
-        },
-        { status: 409 }
-      );
+      return appErrorResponse(new AppError(focusErrors.theFocusSessionChangedBeforeItCouldBeSaved));
     }
 
     console.error("Focus session transition failed.", error);
-    return NextResponse.json(
-      { error: "Focus timer could not be saved.", code: "INTERNAL_ERROR" },
-      { status: 500 }
-    );
+    return appErrorResponse(new AppError(focusErrors.focusTimerCouldNotBeSaved));
   }
 }

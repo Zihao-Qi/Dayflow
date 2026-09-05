@@ -1,25 +1,28 @@
-import type { Prisma } from "@prisma/client";
+import { appErrorConstructor } from "@/lib/error-compat";
 import {
   resolveTaskProjectAttribution
 } from "@/lib/evidence-attribution";
+import { evidenceErrors } from "@/lib/evidence-errors";
 import type { ActivityReplaceMutation } from "@/lib/evidence-mutations";
 import { prisma } from "@/lib/prisma";
+import { AppError } from "@/shared/kernel/errors";
+import type { Prisma } from "@prisma/client";
 
 export type ActivityPersistenceErrorCode =
   | "ACTIVITY_NOT_FOUND"
   | "FOCUS_ACTIVITY_PROTECTED"
   | "CONFLICT";
 
-export class ActivityPersistenceError extends Error {
-  constructor(
+/** @deprecated Compatibility constructor for existing callers; returns AppError. */
+export const ActivityPersistenceError = appErrorConstructor(
+  (
     message: string,
-    readonly code: ActivityPersistenceErrorCode,
-    readonly status: 404 | 409
-  ) {
-    super(message);
-    this.name = "ActivityPersistenceError";
-  }
-}
+    code: ActivityPersistenceErrorCode,
+    status: 404 | 409
+  ) => new AppError({ status, message, code }),
+  (error) => ["ACTIVITY_NOT_FOUND", "FOCUS_ACTIVITY_PROTECTED", "CONFLICT"].includes(error.code ?? "")
+);
+export type ActivityPersistenceError = AppError;
 
 export async function replaceManualActivity(
   id: string,
@@ -49,18 +52,10 @@ export async function replaceManualActivityInTransaction(
     }
   });
   if (!existing) {
-    throw new ActivityPersistenceError(
-      "Activity not found.",
-      "ACTIVITY_NOT_FOUND",
-      404
-    );
+    throw new AppError(evidenceErrors.activityNotFound);
   }
   if (existing.origin !== "MANUAL" || existing.focusSessionId) {
-    throw new ActivityPersistenceError(
-      "Focus evidence cannot be edited here.",
-      "FOCUS_ACTIVITY_PROTECTED",
-      409
-    );
+    throw new AppError(evidenceErrors.focusEvidenceCannotBeEditedHere);
   }
 
   const relationshipsChanged =
@@ -68,15 +63,15 @@ export async function replaceManualActivityInTransaction(
     input.projectId !== existing.projectId;
   const attribution = relationshipsChanged
     ? await resolveTaskProjectAttribution(
-        input.taskId,
-        input.projectId,
-        transaction
-      )
+      input.taskId,
+      input.projectId,
+      transaction
+    )
     : {
-        taskId: existing.taskId,
-        projectId: existing.projectId,
-        attributedProjectId: existing.attributedProjectId
-      };
+      taskId: existing.taskId,
+      projectId: existing.projectId,
+      attributedProjectId: existing.attributedProjectId
+    };
   const startedAt = applyTimeToLocalDate(
     existing.startedAt,
     input.startTime
@@ -99,21 +94,13 @@ export async function replaceManualActivityInTransaction(
     }
   });
   if (updated.count !== 1) {
-    throw new ActivityPersistenceError(
-      "The Activity changed before it could be updated.",
-      "CONFLICT",
-      409
-    );
+    throw new AppError(evidenceErrors.theActivityChangedBeforeItCouldBeUpdated);
   }
   const activity = await transaction.activityEntry.findUnique({
     where: { id }
   });
   if (!activity) {
-    throw new ActivityPersistenceError(
-      "The Activity changed before it could be updated.",
-      "CONFLICT",
-      409
-    );
+    throw new AppError(evidenceErrors.theActivityChangedBeforeItCouldBeUpdated);
   }
   return activity;
 }

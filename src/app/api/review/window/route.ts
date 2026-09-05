@@ -1,9 +1,11 @@
-import { NextRequest, NextResponse } from "next/server";
+import { appErrorResponse } from "@/lib/http-errors";
 import { prisma } from "@/lib/prisma";
+import { reviewErrors } from "@/lib/review-errors";
 import {
-  readReviewWindow,
-  ReviewHistoryRequestError
+  readReviewWindow
 } from "@/lib/review-history";
+import { AppError } from "@/shared/kernel/errors";
+import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(request: NextRequest) {
   try {
@@ -11,17 +13,9 @@ export async function GET(request: NextRequest) {
       await readReviewWindow(prisma, request.nextUrl.searchParams)
     );
   } catch (error) {
-    if (error instanceof ReviewHistoryRequestError) {
-      return NextResponse.json(
-        { error: error.message, code: error.code },
-        { status: error.status }
-      );
-    }
+    if (error instanceof AppError) return appErrorResponse(error);
 
     console.error("Review Window could not be read.", error);
-    return NextResponse.json(
-      { error: "Review Window could not be read.", code: "INTERNAL_ERROR" },
-      { status: 500 }
-    );
+    return appErrorResponse(new AppError(reviewErrors.reviewWindowCouldNotBeRead));
   }
 }

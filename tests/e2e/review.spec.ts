@@ -1,3 +1,4 @@
+import { tourDestinationsAndReturn } from "./destination-tour";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import {
   resetTestDatabase,
@@ -395,3 +396,19 @@ async function controlBootstrapPeriodShift(page: Page) {
     loadCount: () => bootstrapLoads
   };
 }
+
+// Review owns its editor/history locally: saved writing survives a tour, while
+// the earlier-review panel remounts closed. Do not lift that state in extraction.
+test("Review keeps saved writing and resets its history panel across the destination tour", async ({ page }) => {
+  await openReview(page);
+  await page.locator("#review-narrative").fill("Review shell parity");
+  await page.locator("#review-intention").fill("Keep the current lifetime");
+  await page.getByRole("button", { name: "Save review", exact: true }).click();
+  await expect(page.locator(".review-page").getByText("Saved", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Earlier reviews", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Hide earlier reviews", exact: true })).toBeVisible();
+  await tourDestinationsAndReturn(page, "review");
+  await expect(page.locator("#review-narrative")).toHaveValue("Review shell parity");
+  await expect(page.locator("#review-intention")).toHaveValue("Keep the current lifetime");
+  await expect(page.getByRole("button", { name: "Earlier reviews", exact: true })).toHaveAttribute("aria-expanded", "false");
+});

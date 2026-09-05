@@ -1,3 +1,4 @@
+import { tourDestinationsAndReturn } from "./destination-tour";
 import { expect, test, type Page } from "@playwright/test";
 import {
   resetTestDatabase,
@@ -46,11 +47,7 @@ async function openJournal(page: Page) {
 }
 
 async function leaveAndReturnToJournal(page: Page) {
-  await page.getByRole("button", { name: /^Today/ }).click();
-  await expect(
-    page.getByRole("heading", { name: "Journal", exact: true })
-  ).toHaveCount(0);
-  await openJournal(page);
+  await tourDestinationsAndReturn(page, "journal");
 }
 
 test("Journal keeps its loaded history, filters, and unsaved drafts across destination navigation", async ({

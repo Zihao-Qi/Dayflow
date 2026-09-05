@@ -2541,6 +2541,9 @@ test("explains an empty backlog and hides Arrange", async ({ page }) => {
 test("creates a project, keeps its plan on one page, and unifies its backlog", async ({
   page
 }) => {
+  // Leave a test deadline of clock headroom, so pauseAt cannot target
+  // the past if a browser command is delayed by machine load.
+  await page.clock.install({ time: new Date(Date.now() - test.info().timeout) });
   await openDashboard(page);
   await page.getByRole("button", { name: /Projects/ }).click();
   await page.getByRole("button", { name: "New project", exact: true }).click();
@@ -2559,8 +2562,16 @@ test("creates a project, keeps its plan on one page, and unifies its backlog", a
     name: "Edit Complete the systems course"
   });
   await expect(editProject.getByRole("button", { name: "Save changes" })).toBeDisabled();
+  // Keep the 600ms autosave and 2s Saved chip under test control. Let startup
+  // timers run first, then pause ahead of the running clock before editing.
+  // This preserves successful autosave and shortcut-save paths. Recovery timers
+  // stay paused: a failed save cannot retry until time advances (1000ms, then
+  // 4000ms in src/components/save-state.tsx:106). This test does not characterize
+  // save recovery.
+  await page.clock.pauseAt(new Date());
   await editProject.getByLabel("Name", { exact: true }).fill("Complete systems course");
   await expect(editProject.getByText("Unsaved changes", { exact: true })).toBeVisible();
+  await page.clock.runFor(600);
   const renamedProjectDialog = page.getByRole("dialog", {
     name: "Edit Complete systems course"
   });
@@ -2569,7 +2580,7 @@ test("creates a project, keeps its plan on one page, and unifies its backlog", a
   ).toBeVisible();
   await expect(renamedProjectDialog).toBeVisible();
   await renamedProjectDialog.getByRole("button", { name: "Cancel" }).click();
-  await expect(editProject).toHaveCount(0);
+  await expect(renamedProjectDialog).toHaveCount(0);
   await expect(
     page.getByRole("heading", {
       level: 1,
@@ -2579,6 +2590,8 @@ test("creates a project, keeps its plan on one page, and unifies its backlog", a
   ).toBeVisible();
 
   await page.getByRole("button", { name: "Add a phase", exact: true }).click();
+  await page.clock.runFor(0);
+  await expect(page.getByPlaceholder("Add an optional phase")).toBeFocused();
   await page.getByPlaceholder("Add an optional phase").fill("Foundations");
   await page.getByRole("button", { name: "Add phase" }).click();
   await expect(page.getByLabel("Phase name: Foundations")).toBeVisible();
@@ -2592,6 +2605,7 @@ test("creates a project, keeps its plan on one page, and unifies its backlog", a
       .filter({ has: renamedPhaseName })
       .getByText("Saved", { exact: true })
   ).toBeVisible();
+  await page.clock.resume();
 
   const addTaskPanel = page.locator(".project-plan-add");
   await addTaskPanel.getByLabel("New Project task").fill("Finish module one exercises");

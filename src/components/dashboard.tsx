@@ -37,7 +37,8 @@ import { safeTimeBlockDurationMinutes } from "@/components/day-workspace-helpers
 import {
   formatLongDate,
   formatLongLocalDateKey,
-  formatMinutes
+  formatMinutes,
+  formatShortDate
 } from "@/components/dashboard-formatters";
 import {
   ActivityDraft,
@@ -55,9 +56,16 @@ import { useFocusSession } from "@/components/focus-session-provider";
 import { SaveStateChip, useSaveState } from "@/components/save-state";
 import {
   MiniFocusRing,
-  PageHeader,
-  SegmentedControl
+  PageHeader
 } from "@/components/workspace-ui";
+import {
+  BacklogPage,
+  taskQuadrant,
+  useBacklogPage,
+  type FocusTarget,
+  type Task,
+  type TaskStatus
+} from "@/modules/planning/ui";
 import { useViewedDay } from "@/components/use-viewed-day";
 import {
   JournalPage,
@@ -74,7 +82,6 @@ import {
 } from "@/components/time-block-dialog";
 import {
   LayoutMode,
-  markDocumentResizing,
   useLayoutMode
 } from "@/components/use-layout-mode";
 import {
@@ -114,8 +121,6 @@ import {
 } from "@/lib/time-blocks";
 import type { QueuePlacement } from "@/lib/focus-queue";
 
-type TaskStatus = "TODO" | "IN_PROGRESS" | "DONE";
-type Priority = "LOW" | "MEDIUM" | "HIGH";
 type Screen =
   | "today"
   | "day-stream"
@@ -125,8 +130,6 @@ type Screen =
   | "journal"
   | "review";
 type DayView = "stream" | "timeline";
-type BacklogArrange = "figure" | "quadrant" | "project" | "due";
-type FocusTarget = Omit<FocusDraft, "revision">;
 type TimeBlockEditor = {
   id: string | null;
   date: string;
@@ -134,24 +137,6 @@ type TimeBlockEditor = {
   linkedTask: TimeBlockTaskSummary | null;
   draft: TimeBlockEditorDraft;
 };
-type Task = {
-  id: string;
-  title: string;
-  date: string | null;
-  status: TaskStatus;
-  priority: Priority;
-  urgentScore: number;
-  importanceScore: number;
-  deadline: string | null;
-  estimateMinutes: number;
-  actualMinutes: number;
-  sortOrder: number;
-  focusQueuePosition: number | null;
-  completedAt: string | null;
-  projectId: string | null;
-  phaseId: string | null;
-};
-
 type PaletteTaskRecord = Pick<
   Task,
   | "id"
@@ -408,11 +393,6 @@ export function Dashboard() {
       projects: projectById
     }
   );
-  const [backlogArrange, setBacklogArrange] =
-    useState<BacklogArrange>("quadrant");
-  const [backlogScopeProjectId, setBacklogScopeProjectId] = useState<string | null>(
-    null
-  );
   const [newTask, setNewTask] = useState("");
   const [taskCreatePending, setTaskCreatePending] = useState(false);
   const [noteDraft, setNoteDraft] = useState<NoteCaptureDraft>(
@@ -486,14 +466,6 @@ export function Dashboard() {
   useEffect(() => {
     if (focus.activityRevision > 0) void refresh();
   }, [focus.activityRevision]);
-
-  useEffect(() => {
-    if (!figureArrangement) {
-      setBacklogArrange((current) =>
-        current === "figure" ? "quadrant" : current
-      );
-    }
-  }, [figureArrangement]);
 
   useEffect(() => {
     if (focus.retryNext) setRailExpanded(true);
@@ -639,6 +611,14 @@ export function Dashboard() {
         .filter((task) => !task.date && task.status !== "DONE")
         .sort((a, b) => a.sortOrder - b.sortOrder),
     [data]
+  );
+  const backlog = useBacklogPage(
+    figureArrangement,
+    data && {
+      tasks: backlogTasks,
+      projects: projectById,
+      today: data.today
+    }
   );
   const queuedTasks = useMemo(
     () =>
@@ -886,8 +866,8 @@ export function Dashboard() {
   }
 
   function openProjectBacklog(id: string) {
-    setBacklogArrange("project");
-    setBacklogScopeProjectId(id);
+    backlog.setArrangement("project");
+    backlog.setScopeProjectId(id);
     navigate("backlog");
   }
 
@@ -2087,16 +2067,9 @@ export function Dashboard() {
           />
         )}
 
-        {screen === "backlog" && (
+        {screen === "backlog" && backlog.page && (
           <BacklogPage
-            figureArrangement={figureArrangement}
-            tasks={backlogTasks}
-            projects={projectById}
-            today={data.today}
-            arrangement={backlogArrange}
-            onArrangementChange={setBacklogArrange}
-            scopeProjectId={backlogScopeProjectId}
-            onClearScope={() => setBacklogScopeProjectId(null)}
+            {...backlog.page}
             onOpenProject={openProject}
             activeTaskId={focus.active?.taskId ?? null}
             onStartFocus={openFocus}
@@ -3178,396 +3151,6 @@ function FirstRunPage({
   );
 }
 
-function DayMatrix({
-  tasks,
-  today,
-  projects,
-  arrangement,
-  preferredProjectId,
-  activeTaskId,
-  onStartFocus,
-  onUpdateTask
-}: {
-  tasks: Task[];
-  today: string;
-  projects: Map<string, ProjectSummary>;
-  arrangement: BacklogArrange;
-  preferredProjectId?: string | null;
-  activeTaskId: string | null;
-  onStartFocus: (target: FocusTarget) => void;
-  onUpdateTask: (
-    id: string,
-    patch: Partial<Task> & { scheduleSource?: string }
-  ) => Promise<unknown>;
-}) {
-  const mode = arrangement === "figure" ? "figure" : "tables";
-  const [layout, setLayout] = useState<"figure" | "tables">(mode);
-  const [phase, setPhase] = useState<"closed" | "open">("open");
-  const [hovered, setHovered] = useState<string | null>(null);
-  const [selected, setSelected] = useState<string | null>(null);
-  const [stageWidth, setStageWidth] = useState(0);
-  const stageRef = useRef<HTMLDivElement | null>(null);
-  const previousStageWidth = useRef<number | null>(null);
-  const transitionTimer = useRef<number | null>(null);
-  const visibleTasks = tasks.filter((task) => task.status !== "DONE").slice(0, 60);
-  const groups = matrixGroups(
-    visibleTasks,
-    today,
-    projects,
-    arrangement,
-    preferredProjectId
-  );
-  const tableGeometry = matrixTableGeometry(groups, stageWidth);
-  const stageHeight = tableGeometry.height;
-
-  useEffect(
-    () => () => {
-      if (transitionTimer.current !== null) window.clearTimeout(transitionTimer.current);
-    },
-    []
-  );
-
-  useEffect(() => {
-    const stage = stageRef.current;
-    if (!stage) return;
-    const observer = new ResizeObserver(([entry]) => {
-      const width = entry.contentRect.width;
-      if (previousStageWidth.current === null) {
-        previousStageWidth.current = width;
-        setStageWidth(width);
-        return;
-      }
-      if (Math.abs(previousStageWidth.current - width) < 0.5) return;
-      previousStageWidth.current = width;
-      markDocumentResizing();
-      setStageWidth(width);
-    });
-    observer.observe(stage);
-    return () => observer.disconnect();
-  }, []);
-
-  useEffect(() => {
-    const next = arrangement === "figure" ? "figure" : "tables";
-    if (transitionTimer.current !== null) window.clearTimeout(transitionTimer.current);
-    if (next === "tables") {
-      setLayout("tables");
-      setPhase("closed");
-      transitionTimer.current = window.setTimeout(() => setPhase("open"), 190);
-    } else {
-      setPhase("closed");
-      transitionTimer.current = window.setTimeout(() => {
-        setLayout("figure");
-        setPhase("open");
-      }, 130);
-    }
-  }, [arrangement]);
-
-  const calloutTask =
-    visibleTasks.find((task) => task.id === (hovered ?? selected)) ?? null;
-  const selectedTask = visibleTasks.find((task) => task.id === selected) ?? null;
-
-  return (
-    <section className="day-view matrix-5a">
-      <div
-        ref={stageRef}
-        className={`matrix-stage matrix-layout-${layout} matrix-phase-${phase}`}
-        style={{ height: layout === "tables" ? `${stageHeight}px` : "386px" }}
-      >
-        <div className="matrix-figure-furniture">
-          <span className="matrix-axis-y">Importance →</span>
-          <div className="matrix-figure-plot">
-            <span className="figure-quadrant schedule">Schedule</span>
-            <span className="figure-quadrant do-now">Do now</span>
-            <span className="figure-quadrant later">Later</span>
-            <span className="figure-quadrant quick">Quick wins</span>
-          </div>
-          <div className="matrix-axis-x">
-            <span>7+ days out</span>
-            <strong>Urgency →</strong>
-            <span>due today</span>
-          </div>
-          {calloutTask && (
-            <div
-              className="matrix-hover-callout"
-              style={{
-                top: `${matrixFigurePoint(calloutTask, today, stageWidth).y - 18}px`,
-                left: `${Math.min(520, stageWidth || 520) + 24}px`
-              }}
-            >
-              <strong>{calloutTask.title}</strong>
-              <span>
-                {taskQuadrant(calloutTask, today).shortLabel} ·{" "}
-                {matrixProjectName(calloutTask, projects)} ·{" "}
-                {formatMinutes(calloutTask.estimateMinutes)}
-                {calloutTask.deadline
-                  ? ` · due ${formatShortDate(calloutTask.deadline)}`
-                  : ""}
-              </span>
-            </div>
-          )}
-        </div>
-        {groups.map((group) => {
-          const geometry = tableGeometry.groups.get(group.id);
-          if (!geometry) return null;
-          return (
-            <header
-              className={`matrix-table-heading arrangement-${arrangement} quadrant-${group.id}`}
-              key={group.id}
-              style={{ top: `${geometry.top}px` }}
-            >
-              {group.rank ? (
-                <span>{group.rank}</span>
-              ) : group.dotColor ? (
-                <span className="matrix-project-dot" style={{ background: group.dotColor }} />
-              ) : (
-                <span aria-hidden="true" />
-              )}
-              <div>
-                <strong>{group.name}</strong>
-                <small>{group.definition}</small>
-              </div>
-              <b>
-                {group.tasks.length} ·{" "}
-                {formatMinutes(
-                  group.tasks.reduce((sum, task) => sum + task.estimateMinutes, 0)
-                )}
-              </b>
-              <div className="matrix-column-heads">
-                <span>Task</span>
-                <span>Project</span>
-                <span>Time</span>
-                <span>Due</span>
-              </div>
-            </header>
-          );
-        })}
-        {visibleTasks.map((task, index) => {
-          const figure = matrixFigurePoint(task, today, stageWidth);
-          const table = tableGeometry.tasks.get(task.id) ?? { x: 14, y: 15 };
-          const color = matrixProjectColor(task.projectId);
-          const position = layout === "tables" ? table : figure;
-          const diameter =
-            layout === "tables"
-              ? 8
-              : Math.min(36, Math.max(10, 9 + task.estimateMinutes * 0.13));
-          const dueSoon = daysUntilTaskDeadline(task, today) <= 1;
-          return (
-            <button
-              key={task.id}
-              className={`matrix-persistent-task ${activeTaskId === task.id ? "running" : ""} ${dueSoon ? "due-soon" : ""}`}
-              style={{
-                left: `${position.x}px`,
-                top: `${position.y}px`,
-                width: `${diameter}px`,
-                height: `${diameter}px`,
-                backgroundColor: color,
-                transitionDelay: `${(index % 5) * 22}ms`
-              }}
-              aria-label={`${task.title}, ${matrixProjectName(task, projects)}, ${formatMinutes(task.estimateMinutes)}`}
-              onMouseEnter={() => setHovered(task.id)}
-              onMouseLeave={() => setHovered(null)}
-              onFocus={() => setHovered(task.id)}
-              onBlur={() => setHovered(null)}
-              onClick={() => {
-                if (mode === "figure") {
-                  setSelected(task.id);
-                  return;
-                }
-                onStartFocus({
-                  taskId: task.id,
-                  projectId: task.projectId ?? undefined,
-                  label: task.title,
-                  plannedMinutes: task.estimateMinutes
-                });
-              }}
-            >
-              <span className="matrix-row-unroll">
-                <span className="matrix-row-content">
-                  <strong>{task.title}</strong>
-                  <span className="matrix-row-project">
-                    <i style={{ backgroundColor: color }} />
-                    {matrixProjectName(task, projects)}
-                  </span>
-                  <time>{formatMinutes(task.estimateMinutes)}</time>
-                  <time className={task.deadline ? "has-deadline" : ""}>
-                    {task.deadline ? formatShortDate(task.deadline) : "—"}
-                  </time>
-                </span>
-              </span>
-            </button>
-          );
-        })}
-      </div>
-      {mode === "figure" && selectedTask && (
-        <div className="matrix-selection-caption">
-          <span>
-            <strong>{selectedTask.title}</strong>
-            <small>
-              {taskQuadrant(selectedTask, today).shortLabel} ·{" "}
-              {matrixProjectName(selectedTask, projects)} ·{" "}
-              {formatMinutes(selectedTask.estimateMinutes)}
-            </small>
-          </span>
-          <label className="pick-day-button compact">
-            Pick day
-            <input
-              type="date"
-              aria-label={`Pick a day for ${selectedTask.title}`}
-              onChange={(event) => {
-                if (event.target.value) {
-                  void onUpdateTask(selectedTask.id, {
-                    date: event.target.value,
-                    scheduleSource: "backlog-matrix-date"
-                  });
-                }
-              }}
-            />
-          </label>
-          <button
-            className="secondary-button"
-            onClick={() =>
-              void onUpdateTask(selectedTask.id, {
-                date: localDateKey(new Date(today)),
-                scheduleSource: "backlog-matrix-today"
-              })
-            }
-          >
-            Today
-          </button>
-        </div>
-      )}
-    </section>
-  );
-}
-
-function BacklogPage({
-  figureArrangement,
-  tasks,
-  projects,
-  today,
-  arrangement,
-  onArrangementChange,
-  scopeProjectId,
-  onClearScope,
-  onOpenProject,
-  activeTaskId,
-  onStartFocus,
-  onUpdateTask,
-  onOpenPalette
-}: {
-  figureArrangement: boolean;
-  tasks: Task[];
-  projects: Map<string, ProjectSummary>;
-  today: string;
-  arrangement: BacklogArrange;
-  onArrangementChange: (arrangement: BacklogArrange) => void;
-  scopeProjectId: string | null;
-  onClearScope: () => void;
-  onOpenProject: (id: string) => void;
-  activeTaskId: string | null;
-  onStartFocus: (target: FocusTarget) => void;
-  onUpdateTask: (
-    id: string,
-    patch: Partial<Task> & { scheduleSource?: string }
-  ) => Promise<unknown>;
-  onOpenPalette: () => void;
-}) {
-  const effectiveArrangement =
-    !figureArrangement && arrangement === "figure" ? "quadrant" : arrangement;
-  const arrangements: Array<[BacklogArrange, string]> = figureArrangement
-    ? [
-        ["quadrant", "Quadrant"],
-        ["figure", "Figure"],
-        ["project", "Project"],
-        ["due", "Due"]
-      ]
-    : [
-        ["quadrant", "Quadrant"],
-        ["project", "Project"],
-        ["due", "Due"]
-      ];
-
-  const explainer =
-    effectiveArrangement === "figure"
-      ? "Figure — position is the grouping. Hover a dot for its title."
-      : effectiveArrangement === "quadrant"
-        ? "Ranked by what deserves attention first. Deadlines lead within each quadrant, then importance."
-        : effectiveArrangement === "project"
-          ? "Grouped by project — all of them, separated."
-          : "Grouped by when a decision is due: Today, Next three days, Later this week, then No deadline.";
-
-  return (
-    <div className="backlog-page page-stack">
-      <PageHeader
-        eyebrow={`Defined, not scheduled · ${tasks.length}`}
-        title="Backlog"
-        actions={
-          tasks.length ? (
-            <ArrangementControl
-              value={effectiveArrangement}
-              options={arrangements}
-              onChange={onArrangementChange}
-            />
-          ) : null
-        }
-      />
-      {!tasks.length ? (
-        <section className="backlog-empty-state">
-          <h2>Everything defined has a day</h2>
-          <p>
-            Work lands here when you capture it without choosing a date. An empty
-            backlog is the healthy state, not a gap to fill.
-          </p>
-          <button className="secondary-button" onClick={onOpenPalette}>
-            <Plus size={14} />
-            Capture something<span className="desktop-shortcut"> · ⌘K</span>
-          </button>
-          <small>
-            Arrange is hidden while the backlog is empty — there is nothing to regroup.
-          </small>
-        </section>
-      ) : (
-        <>
-          <p className="view-explainer">
-            Arrange the same {tasks.length} {tasks.length === 1 ? "task" : "tasks"} by
-            pressure, project or deadline — nothing is ever filtered out.
-          </p>
-          <p className="backlog-arrangement-note">{explainer}</p>
-          {scopeProjectId && projects.get(scopeProjectId) && (
-            <div className="backlog-scope-bar">
-              <span>
-                All backlog tasks are visible ·{" "}
-                <strong>{projects.get(scopeProjectId)?.name} first</strong>
-              </span>
-              <div>
-                <button className="text-button" onClick={onClearScope}>
-                  Restore project order
-                </button>
-                <button
-                  className="secondary-button"
-                  onClick={() => onOpenProject(scopeProjectId)}
-                >
-                  Back to project
-                </button>
-              </div>
-            </div>
-          )}
-          <DayMatrix
-            tasks={tasks}
-            today={today}
-            projects={projects}
-            arrangement={effectiveArrangement}
-            preferredProjectId={scopeProjectId}
-            activeTaskId={activeTaskId}
-            onStartFocus={onStartFocus}
-            onUpdateTask={onUpdateTask}
-          />
-        </>
-      )}
-    </div>
-  );
-}
-
 function ActivityDialog({
   mode,
   tasks,
@@ -3782,28 +3365,6 @@ function ActivityDialog({
   );
 }
 
-function ArrangementControl({
-  value,
-  options,
-  onChange
-}: {
-  value: BacklogArrange;
-  options: Array<[BacklogArrange, string]>;
-  onChange: (value: BacklogArrange) => void;
-}) {
-  return (
-    <div className="arrange-control">
-      <span>Arrange</span>
-      <SegmentedControl
-        ariaLabel="Arrange backlog by"
-        value={value}
-        options={options}
-        onChange={onChange}
-      />
-    </div>
-  );
-}
-
 function ScoreDots({
   value,
   tone,
@@ -3866,247 +3427,6 @@ function suggestedTaskBlockDuration(
   );
 }
 
-type MatrixQuadrantId = "do-now" | "schedule" | "quick-wins" | "later";
-type MatrixGroup = {
-  id: string;
-  rank?: number;
-  name: string;
-  definition: string;
-  dotColor?: string;
-  tasks: Task[];
-};
-
-function taskQuadrant(task: Task, today: string) {
-  const important = task.importanceScore >= 3;
-  const urgent = effectiveUrgentScore(task, today) >= 3;
-  if (important && urgent) {
-    return {
-      id: "do-now" as const,
-      label: "Do now — important and urgent",
-      shortLabel: "Do now"
-    };
-  }
-  if (important) {
-    return {
-      id: "schedule" as const,
-      label: "Schedule — important, not urgent",
-      shortLabel: "Schedule"
-    };
-  }
-  if (urgent) {
-    return {
-      id: "quick-wins" as const,
-      label: "Quick wins — urgent, less important",
-      shortLabel: "Quick wins"
-    };
-  }
-  return {
-    id: "later" as const,
-    label: "Later — neither urgent nor important",
-    shortLabel: "Later"
-  };
-}
-
-function matrixGroups(
-  tasks: Task[],
-  today: string,
-  projects: Map<string, ProjectSummary>,
-  arrangement: BacklogArrange,
-  preferredProjectId?: string | null
-): MatrixGroup[] {
-  if (arrangement === "project") {
-    const projectIds = [
-      ...new Set(tasks.map((task) => task.projectId ?? "standalone"))
-    ].sort((a, b) => {
-      if (a === preferredProjectId) return -1;
-      if (b === preferredProjectId) return 1;
-      return (
-        a === "standalone" ? "Standalone" : projects.get(a)?.name ?? "Project"
-      ).localeCompare(
-        b === "standalone" ? "Standalone" : projects.get(b)?.name ?? "Project"
-      );
-    });
-    return projectIds.map((projectId) => ({
-      id: `project-${projectId}`,
-      name:
-        projectId === "standalone"
-          ? "Standalone"
-          : projects.get(projectId)?.name ?? "Project",
-      definition:
-        projectId === "standalone"
-          ? "Independent work"
-          : "Project work · all unscheduled tasks",
-      dotColor: matrixProjectColor(projectId === "standalone" ? null : projectId),
-      tasks: sortBacklogGroup(
-        tasks.filter((task) => (task.projectId ?? "standalone") === projectId)
-      )
-    }));
-  }
-
-  if (arrangement === "due") {
-    const definitions = [
-      {
-        id: "due-today",
-        name: "Today",
-        definition: "Due now",
-        includes: (task: Task) => Boolean(task.deadline) && daysUntilTaskDeadline(task, today) <= 0
-      },
-      {
-        id: "due-next-three",
-        name: "Next three days",
-        definition: "Close enough to decide",
-        includes: (task: Task) => {
-          const days = daysUntilTaskDeadline(task, today);
-          return Boolean(task.deadline) && days > 0 && days <= 3;
-        }
-      },
-      {
-        id: "due-later-week",
-        name: "Later this week",
-        definition: "Visible, not immediate",
-        includes: (task: Task) => Boolean(task.deadline) && daysUntilTaskDeadline(task, today) > 3
-      },
-      {
-        id: "due-none",
-        name: "No deadline",
-        definition: "Date it or drop it",
-        includes: (task: Task) => !task.deadline
-      }
-    ];
-    return definitions
-      .map((definition) => ({
-        id: definition.id,
-        name: definition.name,
-        definition: definition.definition,
-        tasks: tasks
-          .filter(definition.includes)
-          .sort(
-            (a, b) =>
-              b.importanceScore - a.importanceScore ||
-              b.urgentScore - a.urgentScore ||
-              a.sortOrder - b.sortOrder
-          )
-      }))
-      .filter((group) => group.tasks.length > 0);
-  }
-
-  const definitions: Array<{
-    id: MatrixQuadrantId;
-    rank: number;
-    name: string;
-    definition: string;
-  }> = [
-    { id: "do-now", rank: 1, name: "Do now", definition: "Important and urgent" },
-    { id: "schedule", rank: 2, name: "Schedule", definition: "Important, not urgent" },
-    { id: "quick-wins", rank: 3, name: "Quick wins", definition: "Urgent, less important" },
-    { id: "later", rank: 4, name: "Later", definition: "Neither" }
-  ];
-  return definitions.map((definition) => ({
-    ...definition,
-    tasks: sortBacklogGroup(
-      tasks.filter((task) => taskQuadrant(task, today).id === definition.id)
-    )
-  }));
-}
-
-function sortBacklogGroup(tasks: Task[]) {
-  return [...tasks].sort((a, b) => {
-    if (a.deadline && b.deadline) {
-      return (
-        new Date(a.deadline).getTime() - new Date(b.deadline).getTime() ||
-        b.importanceScore - a.importanceScore
-      );
-    }
-    if (a.deadline) return -1;
-    if (b.deadline) return 1;
-    return b.importanceScore - a.importanceScore || a.sortOrder - b.sortOrder;
-  });
-}
-
-function matrixTableGeometry(groups: MatrixGroup[], stageWidth = 0) {
-  const groupGeometry = new Map<string, { top: number }>();
-  const taskGeometry = new Map<string, { x: number; y: number }>();
-  const rowOrigin = stageWidth > 0 ? Math.min(14, stageWidth / 2) : 14;
-  let top = 0;
-  for (const group of groups) {
-    groupGeometry.set(group.id, { top });
-    group.tasks.forEach((task, index) => {
-      taskGeometry.set(task.id, {
-        x: rowOrigin,
-        y: top + 63 + index * 30 + 15
-      });
-    });
-    top += 78 + group.tasks.length * 30 + 26;
-  }
-  return {
-    groups: groupGeometry,
-    tasks: taskGeometry,
-    height: Math.max(380, top - 26)
-  };
-}
-
-function matrixFigurePoint(task: Task, today: string, stageWidth = 520) {
-  const days = daysUntilTaskDeadline(task, today);
-  const plotWidth = Math.min(520, stageWidth || 520);
-  const x =
-    20 +
-    (1 - Math.min(7, Math.max(0, days)) / 7) *
-      Math.max(0, plotWidth - 40);
-  const importance = Math.min(5, Math.max(1, task.importanceScore));
-  const y = 20 + ((5 - importance) / 4) * 300;
-  return { x, y };
-}
-
-function daysUntilTaskDeadline(task: Task, today: string) {
-  if (!task.deadline) return 7;
-  return Math.max(
-    0,
-    Math.ceil(
-      (startOfDay(new Date(task.deadline)) - startOfDay(new Date(today))) / 86400000
-    )
-  );
-}
-
-function matrixProjectColor(projectId: string | null) {
-  const palette = ["#4f76a8", "#96667c", "#8a6a3c", "#777066"];
-  if (!projectId) return palette[3];
-  let hash = 0;
-  for (const character of projectId) {
-    hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
-  }
-  return palette[hash % palette.length];
-}
-
-function matrixProjectName(
-  task: Task,
-  projects: Map<string, ProjectSummary>
-) {
-  return task.projectId ? projects.get(task.projectId)?.name ?? "Project" : "Standalone";
-}
-
-function coordinateToScore(value: number) {
-  return Math.min(5, Math.max(1, Math.round(value * 4 + 1)));
-}
-
-function scoreToCoordinate(score: number) {
-  return ((Math.min(5, Math.max(1, score)) - 1) / 4) * 86 + 7;
-}
-
-function effectiveUrgentScore(task: Task, today: string) {
-  if (!task.deadline) return task.urgentScore;
-  const days = Math.ceil(
-    (startOfDay(new Date(task.deadline)) - startOfDay(new Date(today))) / 86400000
-  );
-  const deadlineScore =
-    days <= 1 ? 5 : days <= 3 ? 4 : days <= 7 ? 3 : days <= 14 ? 2 : 1;
-  return Math.max(task.urgentScore, deadlineScore);
-}
-
-function startOfDay(value: Date) {
-  value.setHours(0, 0, 0, 0);
-  return value.getTime();
-}
-
 function taskDateLocalKey(value: string | null) {
   if (!value) return null;
   const date = parseLocalDate(value);
@@ -4126,21 +3446,6 @@ function mergeTimeBlockTaskOptions(
   return result;
 }
 
-function formatShortDate(value: string) {
-  return new Date(value).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric"
-  });
-}
-
-function formatBacklogDue(value: string | null, today: string) {
-  if (!value) return "—";
-  const days = Math.ceil(
-    (startOfDay(new Date(value)) - startOfDay(new Date(today))) / 86400000
-  );
-  if (days <= 0) return "Today";
-  return formatShortDate(value);
-}
 
 
 function numberWord(value: number) {

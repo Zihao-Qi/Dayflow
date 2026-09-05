@@ -247,6 +247,15 @@ export type PastReviewRecord = {
   nextPeriodIntention: string;
 };
 
+export type UnpersistedReviewRecord = {
+  id: null;
+  persisted: false;
+  periodStart: string;
+  periodEnd: string;
+  narrative: string;
+  nextPeriodIntention: string;
+};
+
 export type ReviewHistoryPage = {
   items: PastReviewRecord[];
   nextCursor: string | null;
@@ -289,7 +298,7 @@ export type ReviewWindowDetail = {
   ending: string;
   periodStart: string;
   periodEnd: string;
-  review: PastReviewRecord | null;
+  review: PastReviewRecord | UnpersistedReviewRecord | null;
   reviewSummary: PastReviewSummary;
   projects: PastReviewProject[];
 };
@@ -324,6 +333,21 @@ export function isPastReviewRecord(value: unknown): value is PastReviewRecord {
   return (
     typeof review.id === "string" &&
     review.id.length > 0 &&
+    isIsoDate(review.periodStart) &&
+    isIsoDate(review.periodEnd) &&
+    new Date(review.periodStart).getTime() <
+      new Date(review.periodEnd).getTime() &&
+    typeof review.narrative === "string" &&
+    typeof review.nextPeriodIntention === "string"
+  );
+}
+
+function isUnpersistedReviewRecord(value: unknown): value is UnpersistedReviewRecord {
+  if (!value || typeof value !== "object") return false;
+  const review = value as Record<string, unknown>;
+  return (
+    review.id === null &&
+    review.persisted === false &&
     isIsoDate(review.periodStart) &&
     isIsoDate(review.periodEnd) &&
     new Date(review.periodStart).getTime() <
@@ -418,7 +442,7 @@ export function isReviewWindowDetail(
   }
   if (detail.review === null) return true;
   return (
-    isPastReviewRecord(detail.review) &&
+    (isPastReviewRecord(detail.review) || isUnpersistedReviewRecord(detail.review)) &&
     detail.review.periodStart === detail.periodStart &&
     detail.review.periodEnd === detail.periodEnd
   );

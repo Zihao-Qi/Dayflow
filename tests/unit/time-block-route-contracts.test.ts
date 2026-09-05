@@ -14,7 +14,7 @@ import {
 } from "../../src/lib/time-blocks";
 import { IdempotentMutationError } from "../../src/lib/idempotent-mutations";
 import { prisma } from "../../src/lib/prisma";
-import { timeBlockMutationErrorResponse } from "../../src/lib/time-block-http";
+import { timeBlockMutationErrorResponse } from "../../src/server/time-blocks";
 
 const validBody = {
   date: localDateKey(new Date()),

@@ -87,7 +87,6 @@ const BASELINE: ReadonlyArray<Violation & { migration: string }> = [
   baseline(6, "src/lib/focus-sessions.ts", 181, "Phase 3: focus services"),
   baseline(6, "src/lib/focus-sessions.ts", 265, "Phase 3: focus services"),
   baseline(6, "src/lib/focus-sessions.ts", 348, "Phase 3: focus services"),
-  baseline(6, "src/lib/workspace-readiness.ts", 4, "Phase 3: read models"),
   baseline(8, "src/lib/backup-management.ts", 42, "Phase 4: backup engine")
 ];
 

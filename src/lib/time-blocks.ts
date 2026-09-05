@@ -1,4 +1,15 @@
-import { parseLocalDate, startOfLocalDay } from "@/lib/dates";
+import {
+  requireObject as kernelRequireObject,
+  readJsonBody,
+  parseBoundedInteger,
+  parseRecordId,
+  parseBoundedString,
+  parseNullableLocalDate
+} from "@/shared/kernel/parsing";
+import {
+  parseLocalDate,
+  startOfLocalDay
+} from "@/lib/dates";
 
 export const TIME_BLOCK_TITLE_MAX_LENGTH = 500;
 export const TIME_BLOCK_ID_MAX_LENGTH = 191;
@@ -66,17 +77,13 @@ export class TimeBlockError extends Error {
 export async function readTimeBlockMutationBody(request: {
   json(): Promise<unknown>;
 }): Promise<JsonObject> {
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    throw new TimeBlockError(
-      "Request body must be valid JSON.",
-      "INVALID_JSON",
-      400,
-      "body"
-    );
-  }
+  const body = await readJsonBody(
+    request,
+    "body",
+    "Request body must be valid JSON.",
+    (message, field) =>
+      new TimeBlockError(message, "INVALID_JSON", 400, field)
+  );
   return requireObject(body);
 }
 
@@ -142,18 +149,16 @@ export function assertTimeBlockIsNotPast(
 }
 
 export function parseTimeBlockPathId(value: unknown) {
-  if (typeof value !== "string") {
-    throw invalidTimeBlockId();
-  }
-  const id = value.trim();
-  if (
-    !id ||
-    id.length > TIME_BLOCK_ID_MAX_LENGTH ||
-    /[\u0000-\u001f\u007f]/.test(id)
-  ) {
-    throw invalidTimeBlockId();
-  }
-  return id;
+  return parseRecordId(
+    value,
+    "id",
+    "Time Block identifier is invalid.",
+    validationError,
+    {
+      maximumLength: TIME_BLOCK_ID_MAX_LENGTH,
+      rejectControlCharacters: true
+    }
+  );
 }
 
 export function parseTimeBlockTime(
@@ -181,18 +186,10 @@ export function timeBlockTimeToMinutes(value: string) {
 }
 
 export function minutesToTimeBlockTime(value: number) {
-  if (
-    !Number.isInteger(value) ||
-    value < 0 ||
-    value > TIME_BLOCK_LAST_MINUTE
-  ) {
-    throw new TimeBlockError(
-      "Time Block minutes must identify a time from 00:00 through 23:59.",
-      "VALIDATION_ERROR",
-      400,
-      "time"
-    );
-  }
+  parseBoundedInteger(
+    value, "time", 0, TIME_BLOCK_LAST_MINUTE,
+    "Time Block minutes must identify a time from 00:00 through 23:59.", validationError
+  );
   const hours = Math.floor(value / 60);
   const minutes = value % 60;
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
@@ -245,94 +242,51 @@ export function timeBlockIntervalsOverlap(
 }
 
 function requireObject(value: unknown): JsonObject {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new TimeBlockError(
-      "Request body must be a JSON object.",
-      "VALIDATION_ERROR",
-      400,
-      "body"
-    );
-  }
-  return value as JsonObject;
+  return kernelRequireObject(
+    value, "body", "Request body must be a JSON object.", validationError
+  );
 }
 
 function parseTimeBlockDate(value: unknown) {
-  if (
-    typeof value !== "string" ||
-    !/^\d{4}-\d{2}-\d{2}$/.test(value)
-  ) {
-    throw invalidTimeBlockDate();
-  }
-  const date = parseLocalDate(value);
-  if (!date) throw invalidTimeBlockDate();
-  return date;
+  return parseNullableLocalDate(
+    value,
+    "date",
+    "Time Block date must be a valid local date in YYYY-MM-DD format.",
+    validationError,
+    {
+      nullValues: [],
+      trim: false,
+      parseDate: parseLocalDate,
+      dateOnly: true
+    }
+  )!;
 }
 
 function parseTimeBlockTitle(value: unknown) {
-  if (typeof value !== "string") {
-    throw invalidTimeBlockTitle();
-  }
-  const title = value.trim();
-  if (!title) throw invalidTimeBlockTitle();
-  if (title.length > TIME_BLOCK_TITLE_MAX_LENGTH) {
-    throw new TimeBlockError(
-      `Time Block title must be ${TIME_BLOCK_TITLE_MAX_LENGTH} characters or fewer.`,
-      "VALIDATION_ERROR",
-      400,
-      "title"
-    );
-  }
-  return title;
+  return parseBoundedString(
+    value,
+    "title",
+    "Time Block title is required.",
+    validationError,
+    {
+      maximumLength: TIME_BLOCK_TITLE_MAX_LENGTH,
+      lengthMessage: `Time Block title must be ${TIME_BLOCK_TITLE_MAX_LENGTH} characters or fewer.`,
+      emptyMessage: "Time Block title is required.",
+      trim: true
+    }
+  );
 }
 
 export function parseTimeBlockTaskId(value: unknown) {
-  if (value === undefined || value === null || value === "") return null;
-  if (typeof value !== "string") throw invalidTimeBlockTaskId();
-  const taskId = value.trim();
-  if (
-    !taskId ||
-    taskId.length > TIME_BLOCK_TASK_ID_MAX_LENGTH ||
-    /[\u0000-\u001f\u007f]/.test(taskId)
-  ) {
-    throw invalidTimeBlockTaskId();
-  }
-  return taskId;
+  return parseRecordId(value, "taskId", "Task identifier is invalid.", validationError, {
+    maximumLength: TIME_BLOCK_TASK_ID_MAX_LENGTH,
+    rejectControlCharacters: true,
+    nullValues: [undefined, null, ""]
+  });
 }
 
-function invalidTimeBlockDate() {
-  return new TimeBlockError(
-    "Time Block date must be a valid local date in YYYY-MM-DD format.",
-    "VALIDATION_ERROR",
-    400,
-    "date"
-  );
-}
-
-function invalidTimeBlockTitle() {
-  return new TimeBlockError(
-    "Time Block title is required.",
-    "VALIDATION_ERROR",
-    400,
-    "title"
-  );
-}
-
-function invalidTimeBlockTaskId() {
-  return new TimeBlockError(
-    "Task identifier is invalid.",
-    "VALIDATION_ERROR",
-    400,
-    "taskId"
-  );
-}
-
-function invalidTimeBlockId() {
-  return new TimeBlockError(
-    "Time Block identifier is invalid.",
-    "VALIDATION_ERROR",
-    400,
-    "id"
-  );
+function validationError(message: string, field: string) {
+  return new TimeBlockError(message, "VALIDATION_ERROR", 400, field);
 }
 
 export { isTimeBlockRecord } from "@/modules/planning/ui/time-block-model";

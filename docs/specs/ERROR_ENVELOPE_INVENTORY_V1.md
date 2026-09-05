@@ -18,9 +18,9 @@ means a test already pinned the full status and parsed body before Phase 0;
 “New” means this characterization added that pin.
 Every row names its route and test explicitly. Backup inventory rows use real
 invalid requests or disposable-storage route cases to establish reachability.
-Defensive injected backup, Project-create Prisma, Focus, focus-queue, and
-fieldless Time Block serializers appear only in Appendix A; they are not part
-of the reachable HTTP inventory.
+Defensive injected backup, Project mutation Prisma (create and update),
+Focus, focus-queue, and fieldless Time Block serializers appear only in
+Appendix A; they are not part of the reachable HTTP inventory.
 
 Activity POST mutation-id, receipt, and attribution rows use real request inputs
 and transaction delegates that return missing relationships, conflicting attribution,
@@ -185,7 +185,6 @@ uses an exception injected into `headers.get`. See Appendix A for those pins.
 | `PATCH /api/projects/:id` | Invalid body or id | 400 | `{"error":"Project identifier is invalid.","code":"VALIDATION_ERROR","field":"id"}` | `code`, `field` | `tests/unit/project-route-contracts.test.ts` — “Project and Phase path identifiers are validated before querying” | Existing |
 | `PATCH /api/projects/:id` | Project absent or Prisma `P2025` | 404 | `{"error":"Project not found.","code":"NOT_FOUND"}` | `code`; no `field` | `tests/unit/project-route-contracts.test.ts` — “Project and Phase item routes pin P2025, P2003, confirmation, and fallbacks” | New |
 | `PATCH /api/projects/:id` | Unfinished Tasks and no completion confirmation | 409 | `{"error":"Confirm completion while unfinished tasks remain.","code":"CONFLICT","field":"status","requiresConfirmation":true}` | `code`, `field`, plus `requiresConfirmation` | `tests/integration/transactional-workflows.test.ts` — “Project completion with unfinished Tasks requires confirmation and changes nothing” | New |
-| `PATCH /api/projects/:id` | Prisma `P2003` | 409 | `{"error":"A related record changed before the Project could be saved.","code":"CONFLICT"}` | `code`; no `field` | `tests/unit/project-route-contracts.test.ts` — “Project and Phase item routes pin P2025, P2003, confirmation, and fallbacks” | New |
 | `PATCH /api/projects/:id` | Unexpected failure | 500 | `{"error":"Project could not be saved.","code":"INTERNAL_ERROR"}` | `code`; no `field` | `tests/unit/project-route-contracts.test.ts` — “Project and Phase item routes pin P2025, P2003, confirmation, and fallbacks” | New |
 | `DELETE /api/projects/:id` | Missing `confirm=true` | 400 | `{"error":"Project deletion requires confirmation.","code":"VALIDATION_ERROR","field":"confirm"}` | `code`, `field` | `tests/unit/project-route-contracts.test.ts` — “Project deletion requires a typed confirmation response” | Existing |
 | `DELETE /api/projects/:id` | Project absent or Prisma `P2025` | 404 | `{"error":"Project not found.","code":"NOT_FOUND"}` | `code`; no `field` | `tests/unit/project-route-contracts.test.ts` — “Project and Phase item routes pin P2025, P2003, confirmation, and fallbacks” | New |
@@ -352,8 +351,9 @@ when a relationship or validation condition is field-specific.
   Review History uses “Page limit must be a whole number between 1 and 100.”
   Both omit `field`. Their distinct HTTP bodies are pinned above.
 - The fieldless Time Block domain-error arm, two fieldless Focus validation
-  arms, and fieldless focus-queue validation arm are defensive serializer
-  contracts documented in Appendix A. Their mapper tests remain unchanged.
+  arms, fieldless focus-queue validation arm, and Project create/update Prisma
+  P2003 arms are defensive serializer contracts documented in Appendix A.
+  Their mapper tests remain unchanged.
 
 ## Appendix A — Defensive serializers (not reachable inventory)
 
@@ -389,23 +389,39 @@ These four rows are serializer pins, not reachable HTTP envelopes:
 | `POST /api/focus-session` | Injected FocusSessionError (preempted by request validation) | 400 | `{"error":"Timer duration must be between 1 and 240 minutes.","code":"VALIDATION_ERROR"}` | `code`; no `field` | `tests/unit/workflow-route-contracts.test.ts` — “Focus handlers preserve defensive fieldless validation envelopes” | New |
 | `PATCH /api/focus-session/:id` | Injected FocusSessionError (preempted by request validation) | 400 | `{"error":"Unknown timer action.","code":"VALIDATION_ERROR"}` | `code`; no `field` | `tests/unit/workflow-route-contracts.test.ts` — “Focus handlers preserve defensive fieldless validation envelopes” | New |
 
-### Project creation
+### Project creation and update
 
-`POST /api/projects` cannot produce `P2003` through its current writes.
-`parseProjectCreateMutation` returns scalar Project fields, `project.create`
-writes no foreign keys or nested relations, and `getProjectDetail` only reads.
-The optional MutationReceipt created by `runIdempotentCreate` has no relations
-in `prisma/schema.prisma`. The cited mapper test constructs a Prisma error and
-makes the transaction throw; keep it as defensive serializer coverage.
+Neither `POST /api/projects` nor `PATCH /api/projects/:id` can produce `P2003`
+through current writes:
 
-The other rows on this route remain applicable: malformed JSON, invalid
-mutation id and invalid body are request validation; mismatched and corrupt
-stored receipts have explicit guards; unexpected persistence/readback failures
-reach the generic 500. None requires a nonexistent foreign-key write.
+- `POST /api/projects`: `parseProjectCreateMutation` returns scalar Project fields,
+  `project.create` writes no foreign keys or nested relations, and
+  `getProjectDetail` only reads. The optional `MutationReceipt` created by
+  `runIdempotentCreate` has no relations in `prisma/schema.prisma`.
+- `PATCH /api/projects/:id`: `parseProjectPatchMutation` permits only scalar
+  Project fields (`name`, `desiredOutcome`, `targetDate`, `weeklyMinutesBudget`,
+  `targetDurationValue`, `targetDurationUnit`, `status`). The transaction does reads
+  (`findUnique` and optional `task.count`), a scalar `project.update`, and
+  `getProjectDetail` (which only reads).
+- `Project` itself has no foreign key references to any other model in
+  `prisma/schema.prisma`.
+
+In each case, these envelopes exist in the mapper as defence in depth, they are
+exercised only by fault injection where the test replaces `$transaction` with a
+function that throws, and they are not reachable through the current handler and
+schema. Keep them as defensive serializer coverage.
+
+The other rows on these routes remain applicable and reachable: malformed JSON,
+invalid mutation id or route id, and invalid body are request validation;
+mismatched and corrupt stored receipts have explicit guards; missing Project or
+P2025 race returns 404; unfinished task completion conflict returns 409; and
+unexpected persistence/readback failures reach the generic 500. None requires a
+nonexistent foreign-key write.
 
 | Route and method | Injected error (not an HTTP trigger) | Status | Exact JSON body | Keys | Contract test | Pin |
 | --- | --- | ---: | --- | --- | --- | --- |
 | `POST /api/projects` | Injected Prisma `P2003` (no foreign-key write) | 409 | `{"error":"A related record changed before the Project could be created.","code":"CONFLICT"}` | `code`; no `field` | `tests/unit/project-route-contracts.test.ts` — “Project and Phase create pin Prisma and internal envelopes” | New |
+| `PATCH /api/projects/:id` | Injected Prisma `P2003` (no foreign-key write) | 409 | `{"error":"A related record changed before the Project could be saved.","code":"CONFLICT"}` | `code`; no `field` | `tests/unit/project-route-contracts.test.ts` — “Project and Phase item routes pin P2025, P2003, confirmation, and fallbacks” | New |
 
 ### Backup boundaries
 

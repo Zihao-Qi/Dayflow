@@ -1,61 +1,65 @@
 "use client";
 
 import {
-  type CSSProperties,
-  useEffect,
-  useMemo,
-  useRef,
-  useState
-} from "react";
+  GENERIC_BOOTSTRAP_FAILURE,
+  loadBootstrap,
+  saveReview as saveReviewRequest
+} from "@/components/dashboard-api";
+import type { Bootstrap, Review } from "@/shared/client/decoders";
+import { mutationIdFor, type PendingMutation } from "@/shared/client/mutation-ids";
 import {
-  CalendarDays,
-  Circle,
-  DatabaseBackup,
-  FileText,
-  FolderKanban,
-  Layers3,
-  LayoutDashboard,
-  Library,
-  Menu,
-  NotebookPen,
-  Play,
-  Plus,
-  RefreshCw,
-  Save,
-  Sparkles
-} from "lucide-react";
+  queueTask as queueTaskRequest,
+  removeQueuedTask as removeQueuedTaskRequest,
+  reorderQueue as reorderQueueRequest
+} from "@/modules/focus/ui/api";
+import {
+  createMaterial as createMaterialRequest,
+  createNote as createNoteRequest,
+  saveDiary as saveDiaryRequest
+} from "@/modules/journal/ui/api";
+import {
+  createFirstTask as createFirstTaskRequest,
+  createTask as createTaskRequest,
+  deleteTask as deleteTaskRequest,
+  deleteTimeBlock as deleteTimeBlockRequest,
+  reorderTasks as reorderTasksRequest,
+  saveTimeBlock as saveTimeBlockRequest,
+  updateTask as updateTaskRequest
+} from "@/modules/planning/ui/api";
+import { ApiError } from "@/shared/client/api-client";
+import { ActivityDraft, ActivityEntry, ActivityTaskOption } from "@/components/activity-records";
 import { CommandPalette } from "@/components/command-palette";
-import { DataManagementDialog } from "@/modules/data-ops/ui/data-management-dialog";
+import { formatLongLocalDateKey, formatMinutes } from "@/components/dashboard-formatters";
 import { DayPage } from "@/components/day-workspace";
 import { safeTimeBlockDurationMinutes } from "@/components/day-workspace-helpers";
-import {
-  formatLongLocalDateKey,
-  formatMinutes
-} from "@/components/dashboard-formatters";
-import {
-  ActivityDraft,
-  ActivityEntry,
-  ActivityTaskOption,
-  PendingMutation,
-  isActivityResponse,
-  mutationIdFor
-} from "@/components/activity-records";
-import { useActivityCapture } from "@/components/use-activity-capture";
+import { useFocusSession } from "@/components/focus-session-provider";
 import { ProjectsWorkspace } from "@/components/projects-workspace";
 import { ReviewPage } from "@/components/review-workspace";
-import { FocusDraft, FocusRail } from "@/modules/focus/ui/focus-rail";
-import { useFocusSession } from "@/components/focus-session-provider";
 import {
-  BacklogPage,
-  FirstRunPage,
-  TodayPage,
-  describeTaskMove,
-  useBacklogPage,
-  useTodayPage,
-  type FocusTarget,
-  type Task
-} from "@/modules/planning/ui";
+  TimeBlockDialog,
+  type TimeBlockEditorDraft,
+  type TimeBlockErrorField
+} from "@/components/time-block-dialog";
+import { useActivityCapture } from "@/components/use-activity-capture";
+import { useLayoutMode } from "@/components/use-layout-mode";
 import { useViewedDay } from "@/components/use-viewed-day";
+import { ACTIVITY_CATEGORY_MAX_LENGTH } from "@/lib/activity-categories";
+import { resolvePalette, type PaletteItem } from "@/lib/command-palette";
+import { localDateKey, millisecondsUntilNextLocalDay, parseLocalDate } from "@/lib/dates";
+import { DEFAULT_FOCUS_MINUTES } from "@/lib/focus-domain";
+import type { QueuePlacement } from "@/lib/focus-queue";
+import { normalizeNoteTags } from "@/lib/journal-domain";
+import { type JournalMaterialRecord, type JournalNoteRecord } from "@/lib/journal-records";
+import { ProjectSummary } from "@/lib/project-domain";
+import {
+  minutesToTimeBlockTime,
+  TIME_BLOCK_LAST_MINUTE,
+  TIME_BLOCK_SLOT_INTERVAL_MINUTES,
+  type TimeBlockRecord,
+  type TimeBlockTaskSummary
+} from "@/lib/time-blocks";
+import { DataManagementDialog } from "@/modules/data-ops/ui/data-management-dialog";
+import { FocusDraft, FocusRail } from "@/modules/focus/ui/focus-rail";
 import {
   JournalPage,
   taskProjectIdFor,
@@ -65,47 +69,31 @@ import {
   type NoteCaptureDraft
 } from "@/modules/journal/ui";
 import {
-  TimeBlockDialog,
-  type TimeBlockEditorDraft,
-  type TimeBlockErrorField
-} from "@/components/time-block-dialog";
-import { useLayoutMode } from "@/components/use-layout-mode";
+  BacklogPage,
+  describeTaskMove,
+  FirstRunPage,
+  TodayPage,
+  useBacklogPage,
+  useTodayPage,
+  type FocusTarget,
+  type Task
+} from "@/modules/planning/ui";
 import {
-  DEFAULT_FOCUS_MINUTES,
-  focusRemainingSeconds,
-  formatFocusClock
-} from "@/lib/focus-domain";
-import {
-  localDateKey,
-  millisecondsUntilNextLocalDay,
-  parseLocalDate
-} from "@/lib/dates";
-import {
-  inferMaterialTitle,
-  inferMaterialType,
-  normalizeNoteTags
-} from "@/lib/journal-domain";
-import {
-  isJournalMaterialRecord as isMaterialResponse,
-  isJournalNoteRecord as isNoteResponse,
-  type JournalMaterialRecord,
-  type JournalNoteRecord
-} from "@/lib/journal-records";
-import { ACTIVITY_CATEGORY_MAX_LENGTH } from "@/lib/activity-categories";
-import { ProjectSummary } from "@/lib/project-domain";
-import {
-  resolvePalette,
-  type PaletteItem
-} from "@/lib/command-palette";
-import {
-  isTimeBlockRecord,
-  minutesToTimeBlockTime,
-  TIME_BLOCK_LAST_MINUTE,
-  TIME_BLOCK_SLOT_INTERVAL_MINUTES,
-  type TimeBlockRecord,
-  type TimeBlockTaskSummary
-} from "@/lib/time-blocks";
-import type { QueuePlacement } from "@/lib/focus-queue";
+  CalendarDays,
+  Circle,
+  DatabaseBackup,
+  FolderKanban,
+  Layers3,
+  LayoutDashboard,
+  Menu,
+  NotebookPen,
+  Play,
+  Plus,
+  RefreshCw,
+  Save,
+  Sparkles
+} from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type Screen =
   | "today"
@@ -123,89 +111,17 @@ type TimeBlockEditor = {
   linkedTask: TimeBlockTaskSummary | null;
   draft: TimeBlockEditorDraft;
 };
-type PaletteTaskRecord = Pick<
-  Task,
-  | "id"
-  | "title"
-  | "date"
-  | "estimateMinutes"
-  | "sortOrder"
-  | "focusQueuePosition"
-  | "projectId"
->;
-type Note = JournalNoteRecord;
 
-type Review = {
-  id: string | null;
-  periodStart: string;
-  periodEnd: string;
-  narrative: string;
-  nextPeriodIntention: string;
-  persisted: boolean;
-};
+type Note = JournalNoteRecord;
 
 type Material = JournalMaterialRecord;
 
 type TimeBlock = TimeBlockRecord;
 
-
-type DayStat = {
-  day: string;
-  completed: number;
-  total: number;
-  completionRate: number;
-  plannedHours: number;
-  actualHours: number;
-  mood: number | null;
-  energy: number | null;
-};
-
-type ReviewSummary = {
-  recordedMinutes: number;
-  focusedMinutes: number;
-  categoryMinutes: Array<{
-    category: string;
-    minutes: number;
-  }>;
-  completedTaskCount: number;
-  noteCount: number;
-  materialCount: number;
-  diaryDayCount: number;
-  averageMood: number | null;
-  averageEnergy: number | null;
-  movedProjectCount: number;
-  pendingEnrichmentSessions: number;
-  pendingEnrichmentMinutes: number;
-};
-
-type Bootstrap = {
-  today: string;
-  todayKey: string;
-  earliestDayKey: string;
-  dayViewForwardWeeks: number;
-  workspaceEmpty: boolean;
-  tasks: Task[];
-  paletteTasks: PaletteTaskRecord[];
-  notes: Note[];
-  diary: Diary;
-  materials: Material[];
-  timeBlocks: TimeBlock[];
-  activities: ActivityEntry[];
-  activityCategorySuggestions: string[];
-  projects: ProjectSummary[];
-  unfinishedTasks: Task[];
-  stats: DayStat[];
-  review: Review;
-  reviewSummary: ReviewSummary;
-};
-
 type BootstrapFailure = {
   code: string;
   message: string;
 };
-
-const GENERIC_BOOTSTRAP_FAILURE =
-  "Dayflow could not open its local data. Check that the local server is running, then try again.";
 
 class BootstrapRequestError extends Error {
   code: string;
@@ -218,8 +134,8 @@ class BootstrapRequestError extends Error {
 }
 
 function describeBootstrapFailure(error: unknown): BootstrapFailure {
-  if (error instanceof BootstrapRequestError) {
-    return { code: error.code, message: error.message };
+  if (error instanceof BootstrapRequestError || error instanceof ApiError) {
+    return { code: error.code ?? "BOOTSTRAP_UNAVAILABLE", message: error.message };
   }
 
   return { code: "BOOTSTRAP_UNAVAILABLE", message: GENERIC_BOOTSTRAP_FAILURE };
@@ -249,37 +165,6 @@ const nav = [
   { id: "review", label: "Review", icon: Sparkles }
 ] as const;
 
-function stringArraysEqual(left: string[], right: string[]) {
-  return (
-    left.length === right.length &&
-    left.every((value, index) => value === right[index])
-  );
-}
-
-function isTaskResponse(value: unknown): value is Task {
-  if (!value || typeof value !== "object") return false;
-  const task = value as Partial<Task>;
-  return (
-    typeof task.id === "string" &&
-    typeof task.title === "string" &&
-    (task.date === null || typeof task.date === "string") &&
-    ["TODO", "IN_PROGRESS", "DONE"].includes(String(task.status)) &&
-    ["LOW", "MEDIUM", "HIGH"].includes(String(task.priority)) &&
-    Number.isInteger(task.urgentScore) &&
-    Number.isInteger(task.importanceScore) &&
-    (task.deadline === null || typeof task.deadline === "string") &&
-    Number.isInteger(task.estimateMinutes) &&
-    Number.isInteger(task.actualMinutes) &&
-    Number.isInteger(task.sortOrder) &&
-    (task.focusQueuePosition === null ||
-      Number.isInteger(task.focusQueuePosition)) &&
-    (task.completedAt === null || typeof task.completedAt === "string") &&
-    (task.projectId === null || typeof task.projectId === "string") &&
-    (task.phaseId === null || typeof task.phaseId === "string")
-  );
-}
-
-
 function timeBlockErrorFieldFrom(
   value: unknown
 ): TimeBlockErrorField | null {
@@ -291,59 +176,6 @@ function timeBlockErrorFieldFrom(
     ? (field as TimeBlockErrorField)
     : null;
 }
-
-function isPersistedDiaryResponse(value: unknown): value is Diary & {
-  id: string;
-  persisted: true;
-} {
-  if (!value || typeof value !== "object") return false;
-  const diary = value as Partial<Diary>;
-  return (
-    typeof diary.id === "string" &&
-    typeof diary.date === "string" &&
-    typeof diary.content === "string" &&
-    typeof diary.reflection === "string" &&
-    Number.isInteger(diary.mood) &&
-    Number.isInteger(diary.energy) &&
-    diary.persisted === true
-  );
-}
-
-function isPersistedReviewResponse(value: unknown): value is Review & {
-  id: string;
-  persisted: true;
-} {
-  if (!value || typeof value !== "object") return false;
-  const review = value as Partial<Review>;
-  return (
-    typeof review.id === "string" &&
-    typeof review.periodStart === "string" &&
-    typeof review.periodEnd === "string" &&
-    typeof review.narrative === "string" &&
-    typeof review.nextPeriodIntention === "string" &&
-    review.persisted === true
-  );
-}
-
-function isFocusQueueResponse(
-  value: unknown
-): value is { tasks: Task[] } {
-  if (!value || typeof value !== "object") return false;
-  const result = value as { tasks?: unknown };
-  return Array.isArray(result.tasks) && result.tasks.every(isTaskResponse);
-}
-
-function isTaskReorderResponse(
-  value: unknown
-): value is { ok: true; tasks: Task[] } {
-  return (
-    Boolean(value) &&
-    typeof value === "object" &&
-    (value as { ok?: unknown }).ok === true &&
-    isFocusQueueResponse(value)
-  );
-}
-
 
 export function Dashboard() {
   const focus = useFocusSession();
@@ -474,46 +306,7 @@ export function Dashboard() {
   }, [focus.active, paletteOpen, screen]);
 
   async function refresh() {
-    const response = await fetch("/api/bootstrap", { cache: "no-store" });
-    const result = await response.json().catch(() => null);
-    if (!response.ok) {
-      const code =
-        result &&
-        typeof result === "object" &&
-        "code" in result &&
-        typeof result.code === "string"
-          ? result.code
-          : "BOOTSTRAP_UNAVAILABLE";
-      const message =
-        result &&
-        typeof result === "object" &&
-        "error" in result &&
-        typeof result.error === "string"
-          ? result.error
-          : GENERIC_BOOTSTRAP_FAILURE;
-      throw new BootstrapRequestError(code, message);
-    }
-    if (
-      !result ||
-      typeof result !== "object" ||
-      typeof result.workspaceEmpty !== "boolean" ||
-      !Array.isArray(result.tasks) ||
-      typeof result.todayKey !== "string" ||
-      !/^\d{4}-\d{2}-\d{2}$/.test(result.todayKey) ||
-      !Array.isArray(result.timeBlocks) ||
-      !result.timeBlocks.every(isTimeBlockRecord) ||
-      !Array.isArray(result.activities) ||
-      !result.activities.every(isActivityResponse) ||
-      !Array.isArray(result.activityCategorySuggestions) ||
-      !result.activityCategorySuggestions.every(
-        (category: unknown) => typeof category === "string"
-      )
-    ) {
-      throw new BootstrapRequestError(
-        "INVALID_BOOTSTRAP_RESPONSE",
-        "Dayflow received an invalid local data response. Try again."
-      );
-    }
+    const result = await loadBootstrap();
     setData(result as Bootstrap);
     setBootstrapFailure(null);
   }
@@ -751,7 +544,6 @@ export function Dashboard() {
     setRailExpanded(true);
   }
 
-
   function activatePaletteItem(item: PaletteItem) {
     closeCommandPaletteForHandoff();
 
@@ -870,29 +662,8 @@ export function Dashboard() {
     const mutationId = mutationIdFor(taskCreateMutation, payload);
     setTaskCreatePending(true);
     try {
-      const response = await fetch("/api/tasks", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Dayflow-Mutation-Id": mutationId
-        },
-        body: JSON.stringify(payload)
-      });
-      const result = await response.json().catch(() => null);
-      if (
-        !response.ok ||
-        !isTaskResponse(result) ||
-        result.title !== payload.title
-      ) {
-        const message =
-          result && typeof result.error === "string"
-            ? result.error
-            : "Your task was not saved. Your draft is still here.";
-        setAppError(message);
-        setAppAnnouncement("Task was not saved.");
-        taskCreateWasInError.current = true;
-        return false;
-      }
+      const result = await createTaskRequest(payload, mutationId);
+
       setNewTask((current) => (current.trim() === title ? "" : current));
       taskCreateMutation.current = null;
       setAppError("");
@@ -902,7 +673,16 @@ export function Dashboard() {
       }
       await refreshAfterConfirmedMutation();
       return true;
-    } catch {
+    } catch (failure) {
+      if (failure instanceof ApiError) {
+        const message =
+          failure.message;
+        setAppError(message);
+        setAppAnnouncement("Task was not saved.");
+        taskCreateWasInError.current = true;
+        return false;
+      }
+
       setAppError("Your task was not saved. Your draft is still here.");
       setAppAnnouncement("Task was not saved.");
       taskCreateWasInError.current = true;
@@ -923,28 +703,8 @@ export function Dashboard() {
     const mutationId = mutationIdFor(taskCreateMutation, payload);
     setTaskCreatePending(true);
     try {
-      const response = await fetch("/api/tasks", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Dayflow-Mutation-Id": mutationId
-        },
-        body: JSON.stringify(payload)
-      });
-      const result = await response.json().catch(() => null);
-      if (
-        !response.ok ||
-        !isTaskResponse(result) ||
-        result.title !== payload.title
-      ) {
-        setAppError(
-          result && typeof result.error === "string"
-            ? result.error
-            : "Your first task was not saved. Your draft is still here."
-        );
-        taskCreateWasInError.current = true;
-        return;
-      }
+      const result = await createFirstTaskRequest(payload, mutationId);
+
       window.localStorage.setItem("dayflow-first-run-seen", "1");
       taskCreateMutation.current = null;
       setNewTask((current) => (current.trim() === trimmed ? "" : current));
@@ -962,7 +722,15 @@ export function Dashboard() {
           plannedMinutes: DEFAULT_FOCUS_MINUTES
         });
       }
-    } catch {
+    } catch (failure) {
+      if (failure instanceof ApiError) {
+        setAppError(
+          failure.message
+        );
+        taskCreateWasInError.current = true;
+        return;
+      }
+
       setAppError("Your first task was not saved. Your draft is still here.");
       taskCreateWasInError.current = true;
     } finally {
@@ -986,15 +754,8 @@ export function Dashboard() {
         : current
     );
     try {
-      const response = await fetch(`/api/tasks/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(patch)
-      });
-      const result = await response.json().catch(() => null);
-      if (!response.ok || !isTaskResponse(result) || result.id !== id) {
-        return false;
-      }
+      const result = await updateTaskRequest(id, patch);
+
       await refreshAfterConfirmedMutation();
       return true;
     } catch {
@@ -1037,24 +798,18 @@ export function Dashboard() {
 
   async function deleteTask(id: string) {
     try {
-      const response = await fetch(`/api/tasks/${id}`, { method: "DELETE" });
-      const result = await response.json().catch(() => null);
-      if (
-        !response.ok ||
-        !result ||
-        typeof result !== "object" ||
-        result.ok !== true
-      ) {
+      const result = await deleteTaskRequest(id);
+
+      setAppError("");
+      await refreshAfterConfirmedMutation();
+    } catch (failure) {
+      if (failure instanceof ApiError) {
         setAppError(
-          result && typeof result.error === "string"
-            ? result.error
-            : "Task could not be deleted."
+          failure.message
         );
         return;
       }
-      setAppError("");
-      await refreshAfterConfirmedMutation();
-    } catch {
+
       setAppError("Task could not be deleted.");
     }
   }
@@ -1083,20 +838,8 @@ export function Dashboard() {
         : current
     );
     try {
-      const response = await fetch("/api/tasks/reorder", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids: reordered.map((task) => task.id) })
-      });
-      const result = await response.json().catch(() => null);
-      if (
-        !response.ok ||
-        !isTaskReorderResponse(result) ||
-        result.tasks.length !== reordered.length ||
-        result.tasks.some((task, index) => task.id !== reordered[index]?.id)
-      ) {
-        throw new Error("Order could not be saved.");
-      }
+      const result = await reorderTasksRequest(reordered);
+
       setAppError("");
       if (announce) {
         setAppAnnouncement(
@@ -1118,23 +861,8 @@ export function Dashboard() {
     placement: QueuePlacement
   ) {
     try {
-      const response = await fetch("/api/focus-queue", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ taskId: task.id, placement })
-      });
-      const result = await response.json().catch(() => null);
-      if (
-        !response.ok ||
-        !isFocusQueueResponse(result) ||
-        !result.tasks.some(
-          (queuedTask) =>
-            queuedTask.id === task.id &&
-            queuedTask.focusQueuePosition !== null
-        )
-      ) {
-        throw new Error("The queue could not be saved.");
-      }
+      const result = await queueTaskRequest(task, placement);
+
       setAppError("");
       setAppAnnouncement(
         placement === "next"
@@ -1152,19 +880,8 @@ export function Dashboard() {
 
   async function removeQueuedTask(task: Pick<Task, "id" | "title">) {
     try {
-      const response = await fetch("/api/focus-queue", {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ taskId: task.id })
-      });
-      const result = await response.json().catch(() => null);
-      if (
-        !response.ok ||
-        !isFocusQueueResponse(result) ||
-        result.tasks.some((queuedTask) => queuedTask.id === task.id)
-      ) {
-        throw new Error("The queue could not be saved.");
-      }
+      const result = await removeQueuedTaskRequest(task);
+
       setAppError("");
       setAppAnnouncement(`${task.title}, removed from the queue.`);
       await refreshAfterConfirmedMutation();
@@ -1192,23 +909,8 @@ export function Dashboard() {
         : current
     );
     try {
-      const response = await fetch("/api/focus-queue", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ids,
-          expectedIds: previous.map((task) => task.id)
-        })
-      });
-      const result = await response.json().catch(() => null);
-      if (
-        !response.ok ||
-        !isFocusQueueResponse(result) ||
-        result.tasks.some((task, index) => task.id !== ids[index]) ||
-        result.tasks.length !== ids.length
-      ) {
-        throw new Error("The queue could not be saved.");
-      }
+      const result = await reorderQueueRequest(ids, previous);
+
       setAppError("");
       setAppAnnouncement(announcement);
       await refreshAfterConfirmedMutation();
@@ -1285,33 +987,8 @@ export function Dashboard() {
     const mutationId = mutationIdFor(noteCreateMutation, payload);
     setNoteSaving(true);
     try {
-      const response = await fetch("/api/notes", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Dayflow-Mutation-Id": mutationId
-        },
-        body: JSON.stringify(payload)
-      });
-      const result = await response.json().catch(() => null);
-      if (
-        !response.ok ||
-        !isNoteResponse(result) ||
-        result.content !== payload.content ||
-        !stringArraysEqual(result.tags, payload.tags) ||
-        result.taskId !== payload.taskId ||
-        result.projectId !== expectedProjectId ||
-        !data?.todayKey ||
-        localDateKey(new Date(result.date)) !== data.todayKey
-      ) {
-        setAppError(
-          result && typeof result.error === "string"
-            ? result.error
-            : "The note could not be saved. Your draft is still here."
-        );
-        noteCreateWasInError.current = true;
-        return;
-      }
+      const result = await createNoteRequest(payload, mutationId, expectedProjectId, data?.todayKey);
+
       setNoteDraft(emptyNoteCaptureDraft);
       noteCreateMutation.current = null;
       journal.noteHistory.refresh();
@@ -1322,7 +999,15 @@ export function Dashboard() {
         setAppAnnouncement("Saved.");
       }
       await refreshAfterConfirmedMutation();
-    } catch {
+    } catch (failure) {
+      if (failure instanceof ApiError) {
+        setAppError(
+          failure.message
+        );
+        noteCreateWasInError.current = true;
+        return;
+      }
+
       setAppError("The note could not be saved. Your draft is still here.");
       noteCreateWasInError.current = true;
     } finally {
@@ -1350,36 +1035,8 @@ export function Dashboard() {
     const mutationId = mutationIdFor(materialCreateMutation, payload);
     setMaterialSaving(true);
     try {
-      const response = await fetch("/api/materials", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Dayflow-Mutation-Id": mutationId
-        },
-        body: JSON.stringify(payload)
-      });
-      const result = await response.json().catch(() => null);
-      if (
-        !response.ok ||
-        !isMaterialResponse(result) ||
-        result.url !== payload.url ||
-        result.title !==
-          (payload.title ||
-            inferMaterialTitle(inferMaterialType(payload.url))) ||
-        result.type !== inferMaterialType(payload.url) ||
-        result.notes !== payload.notes ||
-        result.taskId !== payload.taskId ||
-        result.noteId !== payload.noteId ||
-        result.projectId !== expectedProjectId
-      ) {
-        setAppError(
-          result && typeof result.error === "string"
-            ? result.error
-            : "The reference could not be saved. Your draft is still here."
-        );
-        materialCreateWasInError.current = true;
-        return;
-      }
+      const result = await createMaterialRequest(payload, mutationId, expectedProjectId);
+
       setMaterialDraft(emptyMaterialCaptureDraft);
       materialCreateMutation.current = null;
       journal.materialHistory.refresh();
@@ -1389,7 +1046,15 @@ export function Dashboard() {
         setAppAnnouncement("Saved.");
       }
       await refreshAfterConfirmedMutation();
-    } catch {
+    } catch (failure) {
+      if (failure instanceof ApiError) {
+        setAppError(
+          failure.message
+        );
+        materialCreateWasInError.current = true;
+        return;
+      }
+
       setAppError(
         "The reference could not be saved. Your draft is still here."
       );
@@ -1401,23 +1066,8 @@ export function Dashboard() {
 
   async function saveDiary(diary: Diary) {
     try {
-      const response = await fetch("/api/diary", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(diary)
-      });
-      const result = await response.json().catch(() => null);
-      if (
-        !response.ok ||
-        !isPersistedDiaryResponse(result) ||
-        result.date !== diary.date ||
-        result.content !== diary.content ||
-        result.reflection !== diary.reflection ||
-        result.mood !== diary.mood ||
-        result.energy !== diary.energy
-      ) {
-        return false;
-      }
+      const result = await saveDiaryRequest(diary);
+
       await refreshAfterConfirmedMutation();
       return true;
     } catch {
@@ -1454,18 +1104,15 @@ export function Dashboard() {
       nextPeriodIntention: review.nextPeriodIntention.trim()
     };
     try {
-      const response = await fetch("/api/review", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-      const result = await response.json().catch(() => null);
-      if (
-        response.status === 409 &&
-        result &&
-        typeof result === "object" &&
-        (result as { code?: unknown }).code === "REVIEW_PERIOD_CHANGED"
-      ) {
+      const result = await saveReviewRequest(payload);
+
+      setData((current) =>
+        current ? { ...current, review: result } : current
+      );
+      await refreshAfterConfirmedMutation();
+      return true;
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409 && error.code === "REVIEW_PERIOD_CHANGED") {
         try {
           await refresh();
           setAppAnnouncement(
@@ -1481,22 +1128,6 @@ export function Dashboard() {
           return false;
         }
       }
-      if (
-        !response.ok ||
-        !isPersistedReviewResponse(result) ||
-        result.periodStart !== payload.periodStart ||
-        result.periodEnd !== payload.periodEnd ||
-        result.narrative !== payload.narrative ||
-        result.nextPeriodIntention !== payload.nextPeriodIntention
-      ) {
-        return false;
-      }
-      setData((current) =>
-        current ? { ...current, review: result } : current
-      );
-      await refreshAfterConfirmedMutation();
-      return true;
-    } catch {
       return false;
     }
   }
@@ -1515,7 +1146,6 @@ export function Dashboard() {
     setAppAnnouncement("Saved.");
     setAppError("");
   }
-
 
   function defaultTimeBlockTimes(durationMinutes: number) {
     const now = new Date();
@@ -1655,40 +1285,8 @@ export function Dashboard() {
     setTimeBlockError("");
     setTimeBlockErrorField(null);
     try {
-      const response = await fetch(
-        creating
-          ? "/api/time-blocks"
-          : `/api/time-blocks/${timeBlockEditor.id}`,
-        {
-          method: creating ? "POST" : "PUT",
-          headers: {
-            "Content-Type": "application/json",
-            ...(mutationId
-              ? { "X-Dayflow-Mutation-Id": mutationId }
-              : {})
-          },
-          body: JSON.stringify(payload)
-        }
-      );
-      const result = await response.json().catch(() => null);
-      if (
-        !response.ok ||
-        !isTimeBlockRecord(result) ||
-        (!creating && result.id !== timeBlockEditor.id) ||
-        result.title !== payload.title.trim() ||
-        result.startTime !== payload.startTime ||
-        result.endTime !== payload.endTime ||
-        result.taskId !== payload.taskId ||
-        result.date !== payload.date
-      ) {
-        setTimeBlockError(
-          result && typeof result.error === "string"
-            ? result.error
-            : "Time block could not be saved. Your draft is still here."
-        );
-        setTimeBlockErrorField(timeBlockErrorFieldFrom(result));
-        return;
-      }
+      const result = await saveTimeBlockRequest(timeBlockEditor.id, payload, mutationId);
+
       setData((current) =>
         current
           ? {
@@ -1732,7 +1330,15 @@ export function Dashboard() {
         return;
       }
       setTimeBlockEditor(null);
-    } catch {
+    } catch (failure) {
+      if (failure instanceof ApiError) {
+        setTimeBlockError(
+          failure.message
+        );
+        setTimeBlockErrorField(timeBlockErrorFieldFrom(failure));
+        return;
+      }
+
       setTimeBlockError(
         "Time block could not be saved. Your draft is still here."
       );
@@ -1749,25 +1355,8 @@ export function Dashboard() {
     setTimeBlockError("");
     setTimeBlockErrorField(null);
     try {
-      const response = await fetch(`/api/time-blocks/${id}`, {
-        method: "DELETE"
-      });
-      const result = await response.json().catch(() => null);
-      if (
-        !response.ok ||
-        !result ||
-        typeof result !== "object" ||
-        result.ok !== true ||
-        result.id !== id
-      ) {
-        setTimeBlockError(
-          result && typeof result.error === "string"
-            ? result.error
-            : "Time block could not be deleted. Try again."
-        );
-        setTimeBlockErrorField(null);
-        return;
-      }
+      const result = await deleteTimeBlockRequest(id);
+
       setData((current) =>
         current
           ? {
@@ -1783,7 +1372,15 @@ export function Dashboard() {
       setAppError("");
       setAppAnnouncement("Time block deleted.");
       await refreshAfterConfirmedMutation();
-    } catch {
+    } catch (failure) {
+      if (failure instanceof ApiError) {
+        setTimeBlockError(
+          failure.message
+        );
+        setTimeBlockErrorField(null);
+        return;
+      }
+
       setTimeBlockError("Time block could not be deleted. Try again.");
       setTimeBlockErrorField(null);
     } finally {

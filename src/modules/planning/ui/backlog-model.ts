@@ -1,28 +1,12 @@
-import type { FocusDraft } from "@/lib/focus-draft";
+import { isFocusQueueResponse, type Task } from "@/shared/client/decoders";
+export { isTaskResponse, isFocusQueueResponse } from "@/shared/client/decoders";
+export type { Task, TaskStatus } from "@/shared/client/decoders";
 import { formatShortDate } from "@/components/dashboard-formatters";
+import type { FocusDraft } from "@/lib/focus-draft";
 import type { ProjectSummary } from "@/lib/project-domain";
 
-export type TaskStatus = "TODO" | "IN_PROGRESS" | "DONE";
-type Priority = "LOW" | "MEDIUM" | "HIGH";
 export type BacklogArrange = "figure" | "quadrant" | "project" | "due";
 export type FocusTarget = Omit<FocusDraft, "revision">;
-export type Task = {
-  id: string;
-  title: string;
-  date: string | null;
-  status: TaskStatus;
-  priority: Priority;
-  urgentScore: number;
-  importanceScore: number;
-  deadline: string | null;
-  estimateMinutes: number;
-  actualMinutes: number;
-  sortOrder: number;
-  focusQueuePosition: number | null;
-  completedAt: string | null;
-  projectId: string | null;
-  phaseId: string | null;
-};
 
 type MatrixQuadrantId = "do-now" | "schedule" | "quick-wins" | "later";
 type MatrixGroup = {
@@ -272,4 +256,15 @@ export function formatBacklogDue(value: string | null, today: string) {
   );
   if (days <= 0) return "Today";
   return formatShortDate(value);
+}
+
+export function isTaskReorderResponse(
+  value: unknown
+): value is { ok: true; tasks: Task[] } {
+  return (
+    Boolean(value) &&
+    typeof value === "object" &&
+    (value as { ok?: unknown }).ok === true &&
+    isFocusQueueResponse(value)
+  );
 }

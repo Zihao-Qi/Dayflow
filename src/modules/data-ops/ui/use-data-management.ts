@@ -1,21 +1,17 @@
 "use client";
 
+import {
+  cancelRestore as cancelRestoreRequest,
+  createBackup as createBackupRequest,
+  downloadCsv as downloadCsvRequest,
+  loadBackups as loadBackupsRequest,
+  saveAutomaticPolicy as saveAutomaticPolicyRequest,
+  stageRestore as stageRestoreRequest
+} from "@/modules/data-ops/ui/api";
+import { type AutomaticBackupPolicy } from "@/lib/automatic-backup-contract";
+import { type CsvExportKind } from "@/lib/csv-export-contract";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { parseCsvExportResponseMetadata, type CsvExportKind } from "@/lib/csv-export-contract";
-import {
-  isAutomaticBackupState,
-  type AutomaticBackupPolicy
-} from "@/lib/automatic-backup-contract";
-import {
-  type BackupIndex,
-  type BusyAction,
-  isBackupIndex,
-  isBackupCreateResponse,
-  backupCanRestore,
-  isPendingRestoreFor,
-  errorMessage,
-  messageFrom
-} from "./backup-model";
+import { backupCanRestore, messageFrom, type BackupIndex, type BusyAction } from "./backup-model";
 
 const focusableSelector = [
   "button:not([disabled])",
@@ -25,11 +21,6 @@ const focusableSelector = [
   "textarea:not([disabled])",
   "[tabindex]:not([tabindex='-1'])"
 ].join(",");
-
-const mutationHeaders = {
-  "Content-Type": "application/json",
-  "X-Dayflow-Local-Action": "1"
-} as const;
 
 // Called only by the dialog shell: confirmation, downloads and focus refs
 // remain alive together until that dialog unmounts.
@@ -80,14 +71,8 @@ export function useDataManagement({
     if (showLoading) setBusy("loading");
     setError("");
     try {
-      const response = await fetch("/api/backups", { cache: "no-store" });
-      const result = await readJson(response);
-      if (!response.ok) {
-        throw new Error(errorMessage(result, "Backups could not be loaded."));
-      }
-      if (!isBackupIndex(result)) {
-        throw new Error("Dayflow returned an invalid backup list.");
-      }
+      const result = await loadBackupsRequest();
+
       setBackupIndex(result);
       setSelectedBackupId((current) =>
         result.backups.some((backup) => backup.id === current)
@@ -199,20 +184,8 @@ export function useDataManagement({
     setError("");
     setNotice("Creating and verifying a complete backup…");
     try {
-      const response = await fetch("/api/backups", {
-        method: "POST",
-        headers: mutationHeaders,
-        body: "{}"
-      });
-      const result = await readJson(response);
-      if (!response.ok) {
-        throw new Error(errorMessage(result, "The backup could not be created."));
-      }
-      if (!isBackupCreateResponse(result) || !backupCanRestore(result.backup)) {
-        throw new Error(
-          "Dayflow returned an invalid backup result. Refresh before relying on this backup."
-        );
-      }
+      const result = await createBackupRequest();
+
       const createdBackup = result.backup;
       setBackupIndex((current) =>
         current
@@ -252,23 +225,8 @@ export function useDataManagement({
     setBusy("scheduling");
     setError("");
     try {
-      const response = await fetch("/api/backups/automatic", {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Dayflow-Local-Action": "1"
-        },
-        body: JSON.stringify(policy)
-      });
-      const result = await readJson(response);
-      if (!response.ok) {
-        throw new Error(
-          errorMessage(result, "Automatic backups could not be updated.")
-        );
-      }
-      if (!isAutomaticBackupState(result)) {
-        throw new Error("Dayflow returned invalid automatic backup settings.");
-      }
+      const result = await saveAutomaticPolicyRequest(policy);
+
       setBackupIndex((current) =>
         current ? { ...current, automatic: result } : current
       );
@@ -290,30 +248,7 @@ export function useDataManagement({
     setError("");
     setNotice(`Preparing complete ${label} history…`);
     try {
-      const response = await fetch(`/api/exports/${kind}`, {
-        cache: "no-store"
-      });
-      if (!response.ok) {
-        const result = await readJson(response);
-        throw new Error(
-          errorMessage(
-            result,
-            `${label} CSV could not be downloaded.`
-          )
-        );
-      }
-
-      const metadata = parseCsvExportResponseMetadata(
-        kind,
-        response.headers
-      );
-      if (!metadata) {
-        throw new Error(
-          `Dayflow returned an invalid ${label} CSV. Try again.`
-        );
-      }
-
-      const blob = await response.blob();
+      const { blob, metadata } = await downloadCsvRequest(kind);
       triggerDownload(blob, metadata.fileName);
       setNotice(
         `${label} CSV downloaded with ${metadata.recordCount.toLocaleString()} records.`
@@ -356,33 +291,8 @@ export function useDataManagement({
     setError("");
     setNotice("Scheduling the verified backup for the next startup…");
     try {
-      const response = await fetch("/api/backups/restore", {
-        method: "POST",
-        headers: mutationHeaders,
-        body: JSON.stringify({
-          backupId: selectedBackup.id,
-          expectedPayloadSha256,
-          confirmation: "RESTORE"
-        })
-      });
-      const result = await readJson(response);
-      if (!response.ok) {
-        throw new Error(
-          errorMessage(result, "The restore could not be scheduled.")
-        );
-      }
-      if (
-        !isBackupIndex(result) ||
-        !isPendingRestoreFor(
-          result.pendingRestore,
-          selectedBackup.id,
-          expectedPayloadSha256
-        )
-      ) {
-        throw new Error(
-          "Dayflow returned an invalid restore result. Refresh before trying again."
-        );
-      }
+      const result = await stageRestoreRequest(selectedBackup.id, expectedPayloadSha256);
+
       setBackupIndex(result);
       setRestoreConfirmOpen(false);
       setConfirmation("");
@@ -411,22 +321,8 @@ export function useDataManagement({
     setError("");
     setNotice("Canceling the pending restore…");
     try {
-      const response = await fetch("/api/backups/restore", {
-        method: "DELETE",
-        headers: mutationHeaders,
-        body: "{}"
-      });
-      const result = await readJson(response);
-      if (!response.ok) {
-        throw new Error(
-          errorMessage(result, "The pending restore could not be canceled.")
-        );
-      }
-      if (!isBackupIndex(result) || result.pendingRestore !== null) {
-        throw new Error(
-          "Dayflow returned an invalid cancellation result. Refresh before relying on this status."
-        );
-      }
+      const result = await cancelRestoreRequest();
+
       setBackupIndex(result);
       setNotice("Pending restore canceled. The current data will stay active.");
       onAnnounce("Pending restore canceled.");
@@ -487,10 +383,6 @@ export function useDataManagement({
 }
 
 export type DataManagementState = ReturnType<typeof useDataManagement>;
-
-async function readJson(response: Response) {
-  return response.json().catch(() => null) as Promise<unknown>;
-}
 
 function triggerDownload(blob: Blob, fileName: string) {
   const url = URL.createObjectURL(blob);

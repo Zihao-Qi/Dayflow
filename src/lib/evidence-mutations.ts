@@ -1,3 +1,12 @@
+import {
+  requireObject as kernelRequireObject,
+  readJsonBody,
+  parseBoundedInteger as kernelParseBoundedInteger,
+  has,
+  parseRecordId,
+  parseBoundedString,
+  parseNullableLocalDate
+} from "@/shared/kernel/parsing";
 import { parseLocalDate, startOfLocalDay } from "@/lib/dates";
 import {
   ACTIVITY_CATEGORY_MAX_LENGTH,
@@ -57,16 +66,13 @@ type JsonObject = Record<string, unknown>;
 export async function readEvidenceMutationBody(request: {
   json(): Promise<unknown>;
 }): Promise<JsonObject> {
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    throw new EvidenceMutationRequestError(
-      "Request body must be valid JSON.",
-      "body",
-      "INVALID_JSON"
-    );
-  }
+  const body = await readJsonBody(
+    request,
+    "body",
+    "Request body must be valid JSON.",
+    (message, field) =>
+      new EvidenceMutationRequestError(message, field, "INVALID_JSON")
+  );
   return requireObject(body);
 }
 
@@ -146,13 +152,9 @@ export function parseDiaryUpsertMutation(
 }
 
 function requireObject(value: unknown): JsonObject {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new EvidenceMutationRequestError(
-      "Request body must be a JSON object.",
-      "body"
-    );
-  }
-  return value as JsonObject;
+  return kernelRequireObject(
+    value, "body", "Request body must be a JSON object.", validationError
+  );
 }
 
 function parseDate(
@@ -161,17 +163,11 @@ function parseDate(
   field: "date",
   message: string
 ) {
-  if (value === undefined || value === null || value === "") {
-    return startOfLocalDay(now);
-  }
-  if (typeof value !== "string") {
-    throw new EvidenceMutationRequestError(message, field);
-  }
-  const date = parseLocalDate(value.trim());
-  if (!date) {
-    throw new EvidenceMutationRequestError(message, field);
-  }
-  return date;
+  return parseNullableLocalDate(value, field, message, validationError, {
+    nullValues: [undefined, null, ""],
+    trim: true,
+    parseDate: parseLocalDate
+  }) ?? startOfLocalDay(now);
 }
 
 function parseActivityDate(value: unknown, now: Date) {
@@ -225,69 +221,38 @@ function parseRequiredActivityTime(value: unknown) {
 }
 
 function parseActivityCategory(value: unknown) {
-  if (value === undefined || value === null) {
-    return DEFAULT_ACTIVITY_CATEGORY;
-  }
-  if (typeof value !== "string") {
-    throw new EvidenceMutationRequestError(
-      "Activity category must be text.",
-      "category"
-    );
-  }
-  const category = value.trim();
-  if (!category) {
-    throw new EvidenceMutationRequestError(
-      "Choose an Activity category.",
-      "category"
-    );
-  }
-  if (category.length > ACTIVITY_CATEGORY_MAX_LENGTH) {
-    throw new EvidenceMutationRequestError(
-      `Activity category must be ${ACTIVITY_CATEGORY_MAX_LENGTH} characters or fewer.`,
-      "category"
-    );
-  }
-  return category;
+  if (value === undefined || value === null) return DEFAULT_ACTIVITY_CATEGORY;
+  return parseRequiredActivityCategory(value);
 }
 
 function parseRequiredActivityCategory(value: unknown) {
-  if (typeof value !== "string") {
-    throw new EvidenceMutationRequestError(
-      "Activity category must be text.",
-      "category"
-    );
-  }
-  const category = value.trim();
-  if (!category) {
-    throw new EvidenceMutationRequestError(
-      "Choose an Activity category.",
-      "category"
-    );
-  }
-  if (category.length > ACTIVITY_CATEGORY_MAX_LENGTH) {
-    throw new EvidenceMutationRequestError(
-      `Activity category must be ${ACTIVITY_CATEGORY_MAX_LENGTH} characters or fewer.`,
-      "category"
-    );
-  }
-  return category;
+  return parseBoundedString(
+    value,
+    "category",
+    "Activity category must be text.",
+    validationError,
+    {
+      maximumLength: ACTIVITY_CATEGORY_MAX_LENGTH,
+      lengthMessage: `Activity category must be ${ACTIVITY_CATEGORY_MAX_LENGTH} characters or fewer.`,
+      emptyMessage: "Choose an Activity category.",
+      trim: true
+    }
+  );
 }
 
 function parseActivityNote(value: unknown) {
-  if (typeof value !== "string" || !value.trim()) {
-    throw new EvidenceMutationRequestError(
-      "Add a short note about what happened.",
-      "note"
-    );
-  }
-  const note = value.trim();
-  if (note.length > ACTIVITY_NOTE_MAX_LENGTH) {
-    throw new EvidenceMutationRequestError(
-      `Activity note must be ${ACTIVITY_NOTE_MAX_LENGTH.toLocaleString("en-US")} characters or fewer.`,
-      "note"
-    );
-  }
-  return note;
+  return parseBoundedString(
+    value,
+    "note",
+    "Add a short note about what happened.",
+    validationError,
+    {
+      maximumLength: ACTIVITY_NOTE_MAX_LENGTH,
+      lengthMessage: `Activity note must be ${ACTIVITY_NOTE_MAX_LENGTH.toLocaleString("en-US")} characters or fewer.`,
+      emptyMessage: "Add a short note about what happened.",
+      trim: true
+    }
+  );
 }
 
 function parseRelationshipId(
@@ -295,25 +260,11 @@ function parseRelationshipId(
   field: "taskId" | "projectId",
   label: "Task" | "Project"
 ) {
-  if (value === undefined || value === null || value === "") return null;
-  if (typeof value !== "string") {
-    throw new EvidenceMutationRequestError(
-      `${label} identifier is invalid.`,
-      field
-    );
-  }
-  const id = value.trim();
-  if (
-    !id ||
-    id.length > EVIDENCE_RELATION_ID_MAX_LENGTH ||
-    /[\u0000-\u001f\u007f]/.test(id)
-  ) {
-    throw new EvidenceMutationRequestError(
-      `${label} identifier is invalid.`,
-      field
-    );
-  }
-  return id;
+  return parseRecordId(value, field, `${label} identifier is invalid.`, validationError, {
+    maximumLength: EVIDENCE_RELATION_ID_MAX_LENGTH,
+    rejectControlCharacters: true,
+    nullValues: [undefined, null, ""]
+  });
 }
 
 function parseRequiredRelationshipId(
@@ -321,21 +272,23 @@ function parseRequiredRelationshipId(
   field: "taskId" | "projectId",
   label: "Task" | "Project"
 ) {
-  if (!Object.prototype.hasOwnProperty.call(body, field)) {
+  if (!has(body, field)) {
     throw new EvidenceMutationRequestError(
       `${label} relationship is required.`,
       field
     );
   }
-  const value = body[field];
-  if (value === null) return null;
-  if (typeof value !== "string" || !value.trim()) {
-    throw new EvidenceMutationRequestError(
-      `${label} identifier is invalid.`,
-      field
-    );
-  }
-  return parseRelationshipId(value, field, label);
+  return parseRecordId(
+    body[field],
+    field,
+    `${label} identifier is invalid.`,
+    validationError,
+    {
+      maximumLength: EVIDENCE_RELATION_ID_MAX_LENGTH,
+      rejectControlCharacters: true,
+      nullValues: [null]
+    }
+  );
 }
 
 function parseOptionalText(
@@ -345,16 +298,11 @@ function parseOptionalText(
   maxLength: number
 ) {
   if (value === undefined || value === null) return "";
-  if (typeof value !== "string") {
-    throw new EvidenceMutationRequestError(`${label} must be text.`, field);
-  }
-  if (value.length > maxLength) {
-    throw new EvidenceMutationRequestError(
-      `${label} must be ${maxLength.toLocaleString("en-US")} characters or fewer.`,
-      field
-    );
-  }
-  return value;
+  return parseBoundedString(value, field, `${label} must be text.`, validationError, {
+    maximumLength: maxLength,
+    lengthMessage: `${label} must be ${maxLength.toLocaleString("en-US")} characters or fewer.`,
+    trim: false
+  });
 }
 
 function parseRating(
@@ -379,13 +327,11 @@ function parseBoundedInteger(
   maximum: number,
   message: string
 ) {
-  if (
-    typeof value !== "number" ||
-    !Number.isInteger(value) ||
-    value < minimum ||
-    value > maximum
-  ) {
-    throw new EvidenceMutationRequestError(message, field);
-  }
-  return value;
+  return kernelParseBoundedInteger(
+    value, field, minimum, maximum, message, validationError
+  );
+}
+
+function validationError(message: string, field: string) {
+  return new EvidenceMutationRequestError(message, field);
 }

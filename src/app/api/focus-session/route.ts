@@ -1,23 +1,21 @@
-import { Prisma } from "@prisma/client";
-import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { focusErrors } from "@/lib/focus-errors";
 import {
-  FocusSessionConflictError,
-  FocusSessionError,
-  FocusSessionNotFoundError,
   getFocusSnapshot,
   startFocusSession
 } from "@/lib/focus-sessions";
+import { appErrorResponse } from "@/lib/http-errors";
 import {
-  IdempotentMutationError,
   parseMutationId,
   runIdempotentCreate
 } from "@/lib/idempotent-mutations";
+import { prisma } from "@/lib/prisma";
 import {
-  WorkflowMutationRequestError,
   parseFocusSessionStartMutation,
   readWorkflowMutationBody
 } from "@/lib/workflow-mutations";
+import { AppError } from "@/shared/kernel/errors";
+import { Prisma } from "@prisma/client";
+import { NextRequest, NextResponse } from "next/server";
 
 // SQLite allows one writer at a time. Queue local starts so competing Prisma
 // transactions reach the active-session guard without timing out; the unique
@@ -31,10 +29,7 @@ export async function GET() {
     return NextResponse.json(await getFocusSnapshot(prisma));
   } catch (error) {
     console.error("Focus snapshot load failed.", error);
-    return NextResponse.json(
-      { error: "Focus timer could not be loaded.", code: "INTERNAL_ERROR" },
-      { status: 500 }
-    );
+    return appErrorResponse(new AppError(focusErrors.focusTimerCouldNotBeLoaded));
   }
 }
 
@@ -61,54 +56,19 @@ export async function POST(request: NextRequest) {
     );
     return NextResponse.json(result, { status: 201 });
   } catch (error) {
-    if (error instanceof IdempotentMutationError) {
-      return NextResponse.json(
-        { error: error.message, code: error.code },
-        { status: error.status }
-      );
-    }
-    if (error instanceof WorkflowMutationRequestError) {
-      return NextResponse.json(
-        { error: error.message, code: error.code, field: error.field },
-        { status: 400 }
-      );
-    }
-    if (error instanceof FocusSessionNotFoundError) {
-      return NextResponse.json(
-        { error: error.message, code: "NOT_FOUND" },
-        { status: 404 }
-      );
-    }
-    if (error instanceof FocusSessionError) {
-      return NextResponse.json(
-        {
-          error: error.message,
-          code:
-            error instanceof FocusSessionConflictError
-              ? "CONFLICT"
-              : "VALIDATION_ERROR"
-        },
-        { status: error instanceof FocusSessionConflictError ? 409 : 400 }
-      );
-    }
+    if (error instanceof AppError) return appErrorResponse(error);
+
+
+
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2003"
     ) {
-      return NextResponse.json(
-        {
-          error: "A selected Focus relationship changed before the timer started.",
-          code: "CONFLICT"
-        },
-        { status: 409 }
-      );
+      return appErrorResponse(new AppError(focusErrors.aSelectedFocusRelationshipChangedBeforeTheTimerStarted));
     }
 
     console.error("Focus session start failed.", error);
-    return NextResponse.json(
-      { error: "Focus timer could not be started.", code: "INTERNAL_ERROR" },
-      { status: 500 }
-    );
+    return appErrorResponse(new AppError(focusErrors.focusTimerCouldNotBeStarted));
   }
 }
 

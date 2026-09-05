@@ -1,13 +1,14 @@
-import { Prisma } from "@prisma/client";
 import { localDateKey } from "@/lib/dates";
 import { prisma } from "@/lib/prisma";
+import { timeBlockErrors, timeBlockOverlapError } from "@/lib/time-block-errors";
 import {
   assertTimeBlockIsNotPast,
   isTimeBlockRecord,
-  TimeBlockError,
   timeBlockIntervalsOverlap,
   type TimeBlockDraft
 } from "@/lib/time-blocks";
+import { AppError } from "@/shared/kernel/errors";
+import { Prisma } from "@prisma/client";
 
 type TimeBlockDatabase = Prisma.TransactionClient | typeof prisma;
 const timeBlockTaskSelection = {
@@ -53,12 +54,7 @@ export async function replaceTimeBlock(
       select: { id: true, date: true, taskId: true }
     });
     if (!current) {
-      throw new TimeBlockError(
-        "Time Block not found.",
-        "NOT_FOUND",
-        404,
-        "id"
-      );
+      throw new AppError(timeBlockErrors.timeBlockNotFound);
     }
     if (input.date.getTime() !== current.date.getTime()) {
       assertTimeBlockIsNotPast(input);
@@ -108,12 +104,7 @@ async function validatePersistedTimeBlock(
       select: { id: true, status: true, date: true }
     });
     if (!task) {
-      throw new TimeBlockError(
-        "The selected Task could not be found.",
-        "RELATIONSHIP_NOT_FOUND",
-        404,
-        "taskId"
-      );
+      throw new AppError(timeBlockErrors.theSelectedTaskCouldNotBeFound);
     }
     const retainsExistingLink = input.taskId === retainedTaskId;
     if (
@@ -121,12 +112,7 @@ async function validatePersistedTimeBlock(
       (task.status === "DONE" ||
         task.date?.getTime() !== input.date.getTime())
     ) {
-      throw new TimeBlockError(
-        "Choose an unfinished Task scheduled for the same day as the Time Block.",
-        "RELATIONSHIP_CONFLICT",
-        409,
-        "taskId"
-      );
+      throw new AppError(timeBlockErrors.chooseAnUnfinishedTaskScheduledForTheSameDayAsThe);
     }
   }
 
@@ -148,11 +134,6 @@ async function validatePersistedTimeBlock(
     .filter(isTimeBlockRecord)
     .find((candidate) => timeBlockIntervalsOverlap(input, candidate));
   if (overlap) {
-    throw new TimeBlockError(
-      `This Time Block overlaps "${overlap.title}" at ${overlap.startTime}–${overlap.endTime}.`,
-      "TIME_BLOCK_OVERLAP",
-      409,
-      "startTime"
-    );
+    throw timeBlockOverlapError(overlap);
   }
 }

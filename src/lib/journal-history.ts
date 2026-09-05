@@ -1,13 +1,5 @@
-import { createHash } from "node:crypto";
-import {
-  Prisma,
-  type Material as StoredMaterial,
-  type Note as StoredNote,
-  type PrismaClient
-} from "@prisma/client";
 import {
   encodeJournalCursor,
-  JournalRequestError,
   JOURNAL_SEARCH_MAX_LENGTH,
   normalizeNoteTags,
   parseJournalPage,
@@ -15,6 +7,15 @@ import {
   type JournalCursor,
   type JournalCursorKind
 } from "@/lib/journal-domain";
+import { journalErrors } from "@/lib/journal-errors";
+import { AppError } from "@/shared/kernel/errors";
+import {
+  Prisma,
+  type PrismaClient,
+  type Material as StoredMaterial,
+  type Note as StoredNote
+} from "@prisma/client";
+import { createHash } from "node:crypto";
 
 type NoteHistoryRecord = Omit<StoredNote, "tags"> & { tags: string[] };
 type JournalHistoryPage<T> = {
@@ -173,8 +174,8 @@ export function parseJournalHistoryCriteria(
   const scope =
     text || tag
       ? createHash("sha256")
-          .update(JSON.stringify({ version: 1, kind, text, tag }))
-          .digest("base64url")
+        .update(JSON.stringify({ version: 1, kind, text, tag }))
+        .digest("base64url")
       : "";
   const page = parseJournalPage(searchParams, kind, scope);
   return { text, tag, scope, ...page };
@@ -183,23 +184,14 @@ export function parseJournalHistoryCriteria(
 function parseSearchText(searchParams: URLSearchParams) {
   const values = searchParams.getAll("q");
   if (values.length > 1) {
-    throw new JournalRequestError(
-      "VALIDATION_ERROR",
-      "Provide only one Journal search query."
-    );
+    throw new AppError(journalErrors.provideOnlyOneJournalSearchQuery);
   }
   const text = (values[0] ?? "").normalize("NFKC").trim();
   if (text.length > JOURNAL_SEARCH_MAX_LENGTH) {
-    throw new JournalRequestError(
-      "VALIDATION_ERROR",
-      `Journal search must be ${JOURNAL_SEARCH_MAX_LENGTH} characters or fewer.`
-    );
+    throw new AppError(journalErrors.journalSearchMustBe200CharactersOrFewer);
   }
   if (/[\u0000-\u001f\u007f]/.test(text)) {
-    throw new JournalRequestError(
-      "VALIDATION_ERROR",
-      "Journal search cannot contain control characters."
-    );
+    throw new AppError(journalErrors.journalSearchCannotContainControlCharacters);
   }
   return text;
 }
@@ -210,16 +202,10 @@ function parseTagFilter(
 ) {
   const values = searchParams.getAll("tag");
   if (values.length > 1) {
-    throw new JournalRequestError(
-      "VALIDATION_ERROR",
-      "Provide only one Note tag filter."
-    );
+    throw new AppError(journalErrors.provideOnlyOneNoteTagFilter);
   }
   if (kind === "material" && values.length > 0) {
-    throw new JournalRequestError(
-      "VALIDATION_ERROR",
-      "Tag filtering is available only for Notes."
-    );
+    throw new AppError(journalErrors.tagFilteringIsAvailableOnlyForNotes);
   }
   if (values.length === 0) return null;
   return normalizeNoteTags([values[0]])[0] ?? null;

@@ -1,13 +1,15 @@
-import { Prisma } from "@prisma/client";
-import { NextRequest, NextResponse } from "next/server";
+import { appErrorResponse } from "@/lib/http-errors";
 import { prisma } from "@/lib/prisma";
+import { projectErrors } from "@/lib/project-errors";
 import {
-  ProjectMutationRequestError,
   parsePhasePatchMutation,
   parseProjectPathId,
   readProjectMutationBody
 } from "@/lib/project-mutations";
 import { deletePhaseSafely } from "@/lib/projects";
+import { AppError } from "@/shared/kernel/errors";
+import { Prisma } from "@prisma/client";
+import { NextRequest, NextResponse } from "next/server";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -39,31 +41,14 @@ function phaseMutationErrorResponse(
   error: unknown,
   action: "save" | "delete" = "save"
 ) {
-  if (error instanceof ProjectMutationRequestError) {
-    return NextResponse.json(
-      { error: error.message, code: error.code, field: error.field },
-      { status: error.status }
-    );
-  }
+  if (error instanceof AppError) return appErrorResponse(error);
   if (
     error instanceof Prisma.PrismaClientKnownRequestError &&
     error.code === "P2025"
   ) {
-    return NextResponse.json(
-      { error: "Phase not found.", code: "NOT_FOUND" },
-      { status: 404 }
-    );
+    return appErrorResponse(new AppError(projectErrors.phaseNotFound));
   }
 
   console.error(`Phase ${action} failed.`, error);
-  return NextResponse.json(
-    {
-      error:
-        action === "delete"
-          ? "Phase could not be deleted."
-          : "Phase could not be saved.",
-      code: "INTERNAL_ERROR"
-    },
-    { status: 500 }
-  );
+  return appErrorResponse((action === "delete" ? new AppError(projectErrors.phaseCouldNotBeDeleted) : new AppError(projectErrors.phaseCouldNotBeSaved)));
 }

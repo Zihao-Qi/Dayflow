@@ -1,19 +1,18 @@
-import { NextRequest, NextResponse } from "next/server";
 import {
   addToFocusQueue,
-  FocusQueueConflictError,
-  FocusQueueError,
-  FocusQueueNotFoundError,
   removeFromFocusQueue,
   reorderFocusQueue
 } from "@/lib/focus-queue";
+import { focusQueueErrors } from "@/lib/focus-queue-errors";
+import { appErrorResponse } from "@/lib/http-errors";
 import {
-  WorkflowMutationRequestError,
   parseFocusQueueAddMutation,
   parseFocusQueueRemoveMutation,
   parseFocusQueueReorderMutation,
   readWorkflowMutationBody
 } from "@/lib/workflow-mutations";
+import { AppError } from "@/shared/kernel/errors";
+import { NextRequest, NextResponse } from "next/server";
 
 export async function POST(request: NextRequest) {
   return respond(async () => {
@@ -46,34 +45,11 @@ async function respond(
   try {
     return NextResponse.json({ tasks: await action() });
   } catch (error) {
-    if (error instanceof WorkflowMutationRequestError) {
-      return NextResponse.json(
-        { error: error.message, code: error.code, field: error.field },
-        { status: 400 }
-      );
-    }
-    if (error instanceof FocusQueueNotFoundError) {
-      return NextResponse.json(
-        { error: error.message, code: "NOT_FOUND", field: "taskId" },
-        { status: 404 }
-      );
-    }
-    if (error instanceof FocusQueueConflictError) {
-      return NextResponse.json(
-        { error: error.message, code: "CONFLICT" },
-        { status: 409 }
-      );
-    }
-    if (error instanceof FocusQueueError) {
-      return NextResponse.json(
-        { error: error.message, code: "VALIDATION_ERROR" },
-        { status: 400 }
-      );
-    }
+    if (error instanceof AppError) return appErrorResponse(error);
+
+
+
     console.error(`Focus queue ${operation} failed.`, error);
-    return NextResponse.json(
-      { error: "Focus queue could not be saved.", code: "INTERNAL_ERROR" },
-      { status: 500 }
-    );
+    return appErrorResponse(new AppError(focusQueueErrors.focusQueueCouldNotBeSaved));
   }
 }

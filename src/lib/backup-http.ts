@@ -1,21 +1,15 @@
+import { backupErrors } from "@/lib/backup-errors";
+import { appErrorResponse } from "@/lib/http-errors";
+import { AppError } from "@/shared/kernel/errors";
 import { NextRequest, NextResponse } from "next/server";
-import { BackupManagementError } from "@/lib/backup-management";
 
 export function assertLocalBackupMutation(request: NextRequest) {
   if (request.headers.get("x-dayflow-local-action") !== "1") {
-    throw new BackupHttpError(
-      "This local data action requires an explicit Dayflow request.",
-      "FORBIDDEN",
-      403
-    );
+    throw new AppError(backupErrors.thisLocalDataActionRequiresAnExplicitDayflowRequest);
   }
   const contentType = request.headers.get("content-type") ?? "";
   if (!contentType.toLowerCase().startsWith("application/json")) {
-    throw new BackupHttpError(
-      "Use application/json for local data actions.",
-      "UNSUPPORTED_MEDIA_TYPE",
-      415
-    );
+    throw new AppError(backupErrors.useApplicationjsonForLocalDataActions);
   }
   const origin = request.headers.get("origin");
   const requestHost =
@@ -27,11 +21,7 @@ export function assertLocalBackupMutation(request: NextRequest) {
     ? `${requestProtocol}://${requestHost}`
     : request.nextUrl.origin;
   if (origin && origin !== requestOrigin) {
-    throw new BackupHttpError(
-      "Cross-origin local data actions are not allowed.",
-      "FORBIDDEN",
-      403
-    );
+    throw new AppError(backupErrors.crossoriginLocalDataActionsAreNotAllowed);
   }
   assertSafeFetchSite(request);
 }
@@ -45,47 +35,19 @@ export async function readBackupJsonObject(request: NextRequest) {
   try {
     value = await request.json();
   } catch {
-    throw new BackupHttpError(
-      "The request body must be valid JSON.",
-      "INVALID_JSON",
-      400
-    );
+    throw new AppError(backupErrors.theRequestBodyMustBeValidJSON);
   }
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new BackupHttpError(
-      "The request body must be a JSON object.",
-      "VALIDATION_ERROR",
-      400
-    );
+    throw new AppError(backupErrors.theRequestBodyMustBeAJSONObject);
   }
   return value as Record<string, unknown>;
 }
 
-export function backupErrorResponse(error: unknown, operation: string) {
-  if (error instanceof BackupManagementError) {
-    return jsonNoStore(
-      {
-        error: error.message,
-        code: error.code,
-        ...(error.field ? { field: error.field } : {})
-      },
-      { status: error.status }
-    );
-  }
-  if (error instanceof BackupHttpError) {
-    return jsonNoStore(
-      { error: error.message, code: error.code },
-      { status: error.status }
-    );
-  }
+export function backupErrorResponse(error: unknown, operation: keyof typeof backupOperationErrors) {
+  if (error instanceof AppError) return appErrorResponse(error, true);
+
   console.error(`${operation} failed.`, error);
-  return jsonNoStore(
-    {
-      error: `${operation} could not be completed.`,
-      code: "INTERNAL_ERROR"
-    },
-    { status: 500 }
-  );
+  return appErrorResponse(new AppError(backupOperationErrors[operation], error), true);
 }
 
 export function jsonNoStore(
@@ -97,28 +59,19 @@ export function jsonNoStore(
   return response;
 }
 
-class BackupHttpError extends Error {
-  constructor(
-    message: string,
-    readonly code:
-      | "FORBIDDEN"
-      | "UNSUPPORTED_MEDIA_TYPE"
-      | "INVALID_JSON"
-      | "VALIDATION_ERROR",
-    readonly status: 400 | 403 | 415
-  ) {
-    super(message);
-    this.name = "BackupHttpError";
-  }
-}
-
 function assertSafeFetchSite(request: NextRequest) {
   const fetchSite = request.headers.get("sec-fetch-site");
   if (fetchSite && fetchSite !== "same-origin" && fetchSite !== "none") {
-    throw new BackupHttpError(
-      "Cross-site local data requests are not allowed.",
-      "FORBIDDEN",
-      403
-    );
+    throw new AppError(backupErrors.crosssiteLocalDataRequestsAreNotAllowed);
   }
 }
+
+const backupOperationErrors = {
+  "Backup operation": backupErrors.operationFailed,
+  "Backup list": backupErrors.backupListFailed,
+  "Backup creation": backupErrors.backupCreationFailed,
+  "Automatic backup settings": backupErrors.automaticBackupSettingsFailed,
+  "Backup download": backupErrors.backupDownloadFailed,
+  "Restore scheduling": backupErrors.restoreSchedulingFailed,
+  "Restore cancellation": backupErrors.restoreCancellationFailed
+};

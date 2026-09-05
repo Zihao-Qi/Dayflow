@@ -1,19 +1,20 @@
-import { Prisma } from "@prisma/client";
-import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
 import {
   compactFocusQueue,
   consumeFocusQueueTask
 } from "@/lib/focus-queue";
-import { ProjectRuleError, validateProjectPlacement } from "@/lib/projects";
+import { appErrorResponse } from "@/lib/http-errors";
+import { prisma } from "@/lib/prisma";
+import { validateProjectPlacement } from "@/lib/projects";
+import { taskErrors } from "@/lib/task-errors";
 import {
-  TaskMutationValidationError,
   parseTaskPatchMutation,
   parseTaskPathId,
   readTaskMutationBody,
-  taskProjectRuleErrorDetails,
   validateTaskPatchMutation
 } from "@/lib/task-mutations";
+import { AppError } from "@/shared/kernel/errors";
+import { Prisma } from "@prisma/client";
+import { NextRequest, NextResponse } from "next/server";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -81,33 +82,15 @@ export async function DELETE(_request: NextRequest, { params }: Params) {
 }
 
 function taskNotFoundResponse() {
-  return NextResponse.json(
-    { error: "Task not found.", code: "NOT_FOUND" },
-    { status: 404 }
-  );
+  return appErrorResponse(new AppError(taskErrors.taskNotFound));
 }
 
 function taskMutationErrorResponse(
   error: unknown,
   action: "save" | "delete"
 ) {
-  if (error instanceof TaskMutationValidationError) {
-    return NextResponse.json(
-      { error: error.message, code: error.code, field: error.field },
-      { status: 400 }
-    );
-  }
-  if (error instanceof ProjectRuleError) {
-    const relationshipError = taskProjectRuleErrorDetails(error.message);
-    return NextResponse.json(
-      {
-        error: error.message,
-        code: relationshipError.code,
-        field: relationshipError.field
-      },
-      { status: relationshipError.status }
-    );
-  }
+  if (error instanceof AppError) return appErrorResponse(error);
+
   if (
     error instanceof Prisma.PrismaClientKnownRequestError &&
     error.code === "P2025"
@@ -118,24 +101,9 @@ function taskMutationErrorResponse(
     error instanceof Prisma.PrismaClientKnownRequestError &&
     error.code === "P2003"
   ) {
-    return NextResponse.json(
-      {
-        error: "A related record changed before the task could be saved.",
-        code: "CONFLICT"
-      },
-      { status: 409 }
-    );
+    return appErrorResponse(new AppError(taskErrors.aRelatedRecordChangedBeforeTheTaskCouldBeSaved));
   }
 
   console.error(`Task ${action} failed.`, error);
-  return NextResponse.json(
-    {
-      error:
-        action === "delete"
-          ? "Task could not be deleted."
-          : "Task could not be saved.",
-      code: "INTERNAL_ERROR"
-    },
-    { status: 500 }
-  );
+  return appErrorResponse((action === "delete" ? new AppError(taskErrors.taskCouldNotBeDeleted) : new AppError(taskErrors.taskCouldNotBeSaved)));
 }

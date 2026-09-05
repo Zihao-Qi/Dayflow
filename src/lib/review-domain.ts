@@ -1,14 +1,17 @@
 import {
-  requireObject as kernelRequireObject,
-  readJsonBody,
-  parseBoundedString
-} from "@/shared/kernel/parsing";
-import type { ActivityOrigin } from "@prisma/client";
-import {
   addDays,
   reviewPeriodRange,
   startOfLocalDay
 } from "@/lib/dates";
+import { requestErrors } from "@/lib/request-errors";
+import { reviewErrors } from "@/lib/review-errors";
+import { AppError, validation } from "@/shared/kernel/errors";
+import {
+  requireObject as kernelRequireObject,
+  parseBoundedString,
+  readJsonBody
+} from "@/shared/kernel/parsing";
+import type { ActivityOrigin } from "@prisma/client";
 
 export const REVIEW_NARRATIVE_MAX_LENGTH = 5_000;
 export const REVIEW_INTENTION_MAX_LENGTH = 1_000;
@@ -18,17 +21,8 @@ export type ReviewMutationErrorCode =
   | "VALIDATION_ERROR"
   | "REVIEW_PERIOD_CHANGED";
 
-export class ReviewMutationRequestError extends Error {
-  constructor(
-    message: string,
-    readonly field: string,
-    readonly code: ReviewMutationErrorCode = "VALIDATION_ERROR",
-    readonly status: 400 | 409 = 400
-  ) {
-    super(message);
-    this.name = "ReviewMutationRequestError";
-  }
-}
+/** @deprecated Compatibility constructor for existing callers; returns AppError. */
+export { AppError as ReviewMutationRequestError };
 
 export type ReviewMutation = {
   periodStart: Date;
@@ -83,9 +77,8 @@ export async function readReviewMutationBody(request: {
   const body = await readJsonBody(
     request,
     "body",
-    "Request body must be valid JSON.",
-    (message, field) =>
-      new ReviewMutationRequestError(message, field, "INVALID_JSON")
+    requestErrors.invalidJson.message,
+    () => new AppError(requestErrors.invalidJson)
   );
   return requireObject(body);
 }
@@ -95,28 +88,16 @@ export function parseReviewMutation(value: unknown): ReviewMutation {
   const periodStart = parseReviewBoundary(body.periodStart, "periodStart");
   const periodEnd = parseReviewBoundary(body.periodEnd, "periodEnd");
   if (periodEnd <= periodStart) {
-    throw new ReviewMutationRequestError(
-      "Review Period end must be after its start.",
-      "periodEnd"
-    );
+    throw new AppError(reviewErrors.reviewPeriodEndMustBeAfterItsStart);
   }
   if (startOfLocalDay(periodStart).getTime() !== periodStart.getTime()) {
-    throw new ReviewMutationRequestError(
-      "Review Period start must be local midnight.",
-      "periodStart"
-    );
+    throw new AppError(reviewErrors.reviewPeriodStartMustBeLocalMidnight);
   }
   if (startOfLocalDay(periodEnd).getTime() !== periodEnd.getTime()) {
-    throw new ReviewMutationRequestError(
-      "Review Period end must be local midnight.",
-      "periodEnd"
-    );
+    throw new AppError(reviewErrors.reviewPeriodEndMustBeLocalMidnight);
   }
   if (addDays(periodStart, 7).getTime() !== periodEnd.getTime()) {
-    throw new ReviewMutationRequestError(
-      "Review Period must span exactly seven local days.",
-      "periodEnd"
-    );
+    throw new AppError(reviewErrors.reviewPeriodMustSpanExactlySevenLocalDays);
   }
 
   const narrative = parseReviewText(
@@ -132,10 +113,7 @@ export function parseReviewMutation(value: unknown): ReviewMutation {
     REVIEW_INTENTION_MAX_LENGTH
   );
   if (!narrative && !nextPeriodIntention) {
-    throw new ReviewMutationRequestError(
-      "Write a narrative or next-period intention before saving this Review.",
-      "review"
-    );
+    throw new AppError(reviewErrors.writeANarrativeOrNextperiodIntentionBeforeSavingThisReview);
   }
 
   return {
@@ -155,12 +133,7 @@ export function assertCurrentReviewPeriod(
     period.periodStart.getTime() !== current.start.getTime() ||
     period.periodEnd.getTime() !== current.end.getTime()
   ) {
-    throw new ReviewMutationRequestError(
-      "The Review Period changed. Refresh and try again.",
-      "reviewPeriod",
-      "REVIEW_PERIOD_CHANGED",
-      409
-    );
+    throw new AppError(reviewErrors.theReviewPeriodChangedRefreshAndTryAgain);
   }
   return current;
 }
@@ -217,7 +190,7 @@ export function buildReviewSummary({
 
 function requireObject(value: unknown): JsonObject {
   return kernelRequireObject(
-    value, "body", "Request body must be a JSON object.", validationError
+    value, "body", requestErrors.objectRequired.message, validationError
   );
 }
 
@@ -226,10 +199,7 @@ function parseReviewBoundary(
   field: "periodStart" | "periodEnd"
 ) {
   if (typeof value !== "string" || !isCanonicalIsoInstant(value)) {
-    throw new ReviewMutationRequestError(
-      `Review Period ${field === "periodStart" ? "start" : "end"} must be a valid ISO timestamp.`,
-      field
-    );
+    throw validation(`Review Period ${field === "periodStart" ? "start" : "end"} must be a valid ISO timestamp.`, field);
   }
   return new Date(value);
 }
@@ -268,5 +238,5 @@ function compareText(left: string, right: string) {
 }
 
 function validationError(message: string, field: string) {
-  return new ReviewMutationRequestError(message, field);
+  return validation(message, field);
 }

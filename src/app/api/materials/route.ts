@@ -1,16 +1,17 @@
-import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
 import {
-  IdempotentMutationError,
   parseMutationId,
   runIdempotentCreate
 } from "@/lib/idempotent-mutations";
 import {
-  JournalRequestError,
   parseMaterialCreateInput
 } from "@/lib/journal-domain";
+import { journalErrors } from "@/lib/journal-errors";
 import { readJournalHistory } from "@/lib/journal-history";
+import { journalErrorResponse } from "@/lib/journal-http";
 import { resolveMaterialRelations } from "@/lib/journal-relations";
+import { prisma } from "@/lib/prisma";
+import { AppError } from "@/shared/kernel/errors";
+import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(request: NextRequest) {
   try {
@@ -18,7 +19,7 @@ export async function GET(request: NextRequest) {
       await readJournalHistory(prisma, "material", request.nextUrl.searchParams)
     );
   } catch (error) {
-    return journalErrorResponse(error, "References could not be loaded.");
+    return journalErrorResponse(error, journalErrors.referencesCouldNotBeLoaded);
   }
 }
 
@@ -51,7 +52,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(material, { status: 201 });
   } catch (error) {
-    return journalErrorResponse(error, "The reference could not be saved.");
+    return journalErrorResponse(error, journalErrors.theReferenceCouldNotBeSaved);
   }
 }
 
@@ -59,29 +60,6 @@ async function parseJson(request: NextRequest) {
   try {
     return await request.json();
   } catch {
-    throw new JournalRequestError(
-      "INVALID_JSON",
-      "Request body must be valid JSON."
-    );
+    throw new AppError(journalErrors.requestBodyMustBeValidJSON);
   }
-}
-
-function journalErrorResponse(error: unknown, fallback: string) {
-  if (error instanceof IdempotentMutationError) {
-    return NextResponse.json(
-      { code: error.code, error: error.message },
-      { status: error.status }
-    );
-  }
-  if (error instanceof JournalRequestError) {
-    return NextResponse.json(
-      { code: error.code, error: error.message },
-      { status: error.status }
-    );
-  }
-  console.error(fallback, error);
-  return NextResponse.json(
-    { code: "INTERNAL_ERROR", error: fallback },
-    { status: 500 }
-  );
 }

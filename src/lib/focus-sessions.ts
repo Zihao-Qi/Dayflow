@@ -1,12 +1,15 @@
+import { sameDayRange } from "@/lib/dates";
+import { appErrorConstructor } from "@/lib/error-compat";
+import { suggestedBreakMinutes } from "@/lib/focus-domain";
+import { focusErrors } from "@/lib/focus-errors";
+import { consumeFocusQueueTask } from "@/lib/focus-queue";
+import { prisma } from "@/lib/prisma";
+import { AppError, validation } from "@/shared/kernel/errors";
 import {
   FocusSessionKind,
   FocusSessionStatus,
   Prisma
 } from "@prisma/client";
-import { sameDayRange } from "@/lib/dates";
-import { suggestedBreakMinutes } from "@/lib/focus-domain";
-import { consumeFocusQueueTask } from "@/lib/focus-queue";
-import { prisma } from "@/lib/prisma";
 
 const focusSessionInclude = {
   task: {
@@ -89,7 +92,7 @@ export async function startFocusSession(
     plannedMinutes < 1 ||
     plannedMinutes > 240
   ) {
-    throw new FocusSessionError("Timer duration must be between 1 and 240 minutes.");
+    throw new AppError(focusErrors.timerDurationMustBeBetween1And240Minutes);
   }
 
   const database = transaction;
@@ -98,9 +101,7 @@ export async function startFocusSession(
     select: { id: true }
   });
   if (active) {
-    throw new FocusSessionConflictError(
-      "Finish or cancel the active timer first."
-    );
+    throw new AppError(focusErrors.finishOrCancelTheActiveTimerFirst);
   }
 
   if (kind === "BREAK") {
@@ -123,27 +124,23 @@ export async function startFocusSession(
   const createSession = async (sessionTransaction: Prisma.TransactionClient) => {
     const task = taskId
       ? await sessionTransaction.task.findUnique({
-          where: { id: taskId },
-          select: {
-            id: true,
-            title: true,
-            projectId: true
-          }
-        })
+        where: { id: taskId },
+        select: {
+          id: true,
+          title: true,
+          projectId: true
+        }
+      })
       : null;
     if (taskId && !task) {
-      throw new FocusSessionNotFoundError(
-        "The selected task could not be found."
-      );
+      throw new AppError(focusErrors.theSelectedTaskCouldNotBeFound);
     }
 
     let projectId = requestedProjectId;
     let projectName = "";
     if (task?.projectId) {
       if (projectId && projectId !== task.projectId) {
-        throw new FocusSessionConflictError(
-          "The selected task belongs to a different project."
-        );
+        throw new AppError(focusErrors.theSelectedTaskBelongsToADifferentProject);
       }
       projectId = null;
     } else if (projectId) {
@@ -152,9 +149,7 @@ export async function startFocusSession(
         select: { name: true }
       });
       if (!project) {
-        throw new FocusSessionNotFoundError(
-          "The selected project could not be found."
-        );
+        throw new AppError(focusErrors.theSelectedProjectCouldNotBeFound);
       }
       projectName = project.name;
     }
@@ -201,14 +196,12 @@ export async function transitionFocusSession(
     include: focusSessionInclude
   });
   if (!session) {
-    throw new FocusSessionNotFoundError("Focus session not found.");
+    throw new AppError(focusErrors.focusSessionNotFound);
   }
 
   if (action === "pause") {
     if (session.status !== "RUNNING") {
-      throw new FocusSessionConflictError(
-        "Only a running timer can be paused."
-      );
+      throw new AppError(focusErrors.onlyARunningTimerCanBePaused);
     }
     const paused = await prisma.focusSession.updateMany({
       where: { id, status: "RUNNING", activeKey: 1 },
@@ -220,9 +213,7 @@ export async function transitionFocusSession(
 
   if (action === "resume") {
     if (session.status !== "PAUSED" || !session.pausedAt) {
-      throw new FocusSessionConflictError(
-        "Only a paused timer can be resumed."
-      );
+      throw new AppError(focusErrors.onlyAPausedTimerCanBeResumed);
     }
     const pausedSeconds = Math.max(
       0,
@@ -242,9 +233,7 @@ export async function transitionFocusSession(
 
   if (action === "cancel") {
     if (!isActive(session.status)) {
-      throw new FocusSessionConflictError(
-        "This timer is no longer active."
-      );
+      throw new AppError(focusErrors.thisTimerIsNoLongerActive);
     }
     const canceled = await prisma.focusSession.updateMany({
       where: {
@@ -265,9 +254,7 @@ export async function transitionFocusSession(
 
   if (action === "enrich" || action === "record") {
     if (session.kind !== "FOCUS" || session.status !== "COMPLETED") {
-      throw new FocusSessionConflictError(
-        "Only a completed focus block can be enriched."
-      );
+      throw new AppError(focusErrors.onlyACompletedFocusBlockCanBeEnriched);
     }
     const note = String(input.note ?? "").trim();
     const category = String(input.category ?? "").trim() || "Deep Work";
@@ -343,16 +330,14 @@ export async function transitionFocusSession(
       };
     }
     if (!isActive(session.status)) {
-      throw new FocusSessionConflictError(
-        "This timer is no longer active."
-      );
+      throw new AppError(focusErrors.thisTimerIsNoLongerActive);
     }
 
     const effectiveEnd = session.status === "PAUSED" && session.pausedAt ? session.pausedAt : now;
     const elapsedSeconds = Math.max(
       0,
       Math.floor((effectiveEnd.getTime() - session.startedAt.getTime()) / 1000) -
-        session.accumulatedPauseSeconds
+      session.accumulatedPauseSeconds
     );
     const actualMinutes = Math.min(
       session.plannedMinutes,
@@ -414,17 +399,26 @@ export async function transitionFocusSession(
     };
   }
 
-  throw new FocusSessionError("Unknown timer action.");
+  throw new AppError(focusErrors.unknownTimerAction);
 }
 
-export class FocusSessionError extends Error {}
-export class FocusSessionConflictError extends FocusSessionError {}
-export class FocusSessionNotFoundError extends FocusSessionError {}
+/** @deprecated Compatibility constructor for existing callers; returns AppError. */
+export const FocusSessionError = appErrorConstructor(
+  (
+    message: string
+  ) => validation(message)
+);
+export type FocusSessionError = AppError;
+/** @deprecated Compatibility constructor for existing callers; returns AppError. */
+export { AppError as FocusSessionConflictError };
+
+/** @deprecated Compatibility constructor for existing callers; returns AppError. */
+export { AppError as FocusSessionNotFoundError };
 
 function parseKind(value: unknown): FocusSessionKind {
   const kind = String(value ?? "FOCUS").trim().toUpperCase();
   if (kind === "FOCUS" || kind === "BREAK") return kind;
-  throw new FocusSessionError("Timer kind must be FOCUS or BREAK.");
+  throw new AppError(focusErrors.timerKindMustBeFOCUSOrBREAK);
 }
 
 function isActive(status: FocusSessionStatus) {
@@ -432,9 +426,7 @@ function isActive(status: FocusSessionStatus) {
 }
 
 function terminalTransitionConflict() {
-  return new FocusSessionConflictError(
-    "This timer was updated in another tab. Refresh and try again."
-  );
+  return new AppError(focusErrors.thisTimerWasUpdatedInAnotherTabRefreshAndTryAgain);
 }
 
 async function createWithActiveSessionGuard<T>(
@@ -447,9 +439,7 @@ async function createWithActiveSessionGuard<T>(
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2002"
     ) {
-      throw new FocusSessionConflictError(
-        "Finish or cancel the active timer first."
-      );
+      throw new AppError(focusErrors.finishOrCancelTheActiveTimerFirst);
     }
     throw error;
   }

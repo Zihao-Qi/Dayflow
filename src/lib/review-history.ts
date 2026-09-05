@@ -1,6 +1,3 @@
-import type { Prisma, PrismaClient } from "@prisma/client";
-import { listProjectSummaries } from "@/lib/projects";
-import { buildReviewSummary } from "@/lib/review-domain";
 import {
   addDays,
   localDateKey,
@@ -8,6 +5,11 @@ import {
   reviewPeriodRange,
   startOfLocalDay
 } from "@/lib/dates";
+import { listProjectSummaries } from "@/lib/projects";
+import { buildReviewSummary } from "@/lib/review-domain";
+import { reviewErrors } from "@/lib/review-errors";
+import { AppError } from "@/shared/kernel/errors";
+import type { Prisma, PrismaClient } from "@prisma/client";
 
 export const REVIEW_HISTORY_DEFAULT_LIMIT = 20;
 export const REVIEW_HISTORY_MAX_LIMIT = 100;
@@ -18,16 +20,8 @@ export type ReviewHistoryErrorCode =
   | "INVALID_CURSOR"
   | "REVIEW_NOT_FOUND";
 
-export class ReviewHistoryRequestError extends Error {
-  constructor(
-    readonly code: ReviewHistoryErrorCode,
-    message: string,
-    readonly status: 400 | 404 = 400
-  ) {
-    super(message);
-    this.name = "ReviewHistoryRequestError";
-  }
-}
+/** @deprecated Compatibility constructor for existing callers; returns AppError. */
+export { AppError as ReviewHistoryRequestError };
 
 export type ReviewPeriodInterval = {
   start: Date;
@@ -108,34 +102,20 @@ export function parseReviewWindowRequest(
 ): ReviewWindowRequest {
   const values = searchParams.getAll("ending");
   if (values.length !== 1) {
-    throw new ReviewHistoryRequestError(
-      "VALIDATION_ERROR",
-      values.length
-        ? "Provide only one Review Window ending day."
-        : "Choose a Review Window ending day."
-    );
+    throw new AppError(values.length ? reviewErrors.multipleWindowEndingDays : reviewErrors.windowEndingDayRequired);
   }
 
   const ending = values[0];
   if (!/^\d{4}-\d{2}-\d{2}$/.test(ending)) {
-    throw new ReviewHistoryRequestError(
-      "VALIDATION_ERROR",
-      "A Review Window ending day must be a calendar date such as 2026-08-31."
-    );
+    throw new AppError(reviewErrors.aReviewWindowEndingDayMustBeACalendarDateSuch);
   }
 
   const endingDay = parseLocalDate(ending);
   if (!endingDay || localDateKey(endingDay) !== ending) {
-    throw new ReviewHistoryRequestError(
-      "VALIDATION_ERROR",
-      "That Review Window ending day is not a real calendar date."
-    );
+    throw new AppError(reviewErrors.thatReviewWindowEndingDayIsNotARealCalendarDate);
   }
   if (endingDay.getTime() >= startOfLocalDay(now).getTime()) {
-    throw new ReviewHistoryRequestError(
-      "VALIDATION_ERROR",
-      "Review Windows must end before today."
-    );
+    throw new AppError(reviewErrors.reviewWindowsMustEndBeforeToday);
   }
 
   return {
@@ -177,10 +157,7 @@ export async function readReviewWindow(
 export function parseReviewHistoryPage(searchParams: URLSearchParams) {
   const limitValues = searchParams.getAll("limit");
   if (limitValues.length > 1) {
-    throw new ReviewHistoryRequestError(
-      "VALIDATION_ERROR",
-      "Provide only one page limit."
-    );
+    throw new AppError(reviewErrors.provideOnlyOnePageLimit);
   }
 
   let limit = REVIEW_HISTORY_DEFAULT_LIMIT;
@@ -193,20 +170,14 @@ export function parseReviewHistoryPage(searchParams: URLSearchParams) {
       parsed < 1 ||
       parsed > REVIEW_HISTORY_MAX_LIMIT
     ) {
-      throw new ReviewHistoryRequestError(
-        "VALIDATION_ERROR",
-        `Page limit must be a whole number between 1 and ${REVIEW_HISTORY_MAX_LIMIT}.`
-      );
+      throw new AppError(reviewErrors.pageLimitMustBeAWholeNumberBetween1And100);
     }
     limit = parsed;
   }
 
   const cursorValues = searchParams.getAll("cursor");
   if (cursorValues.length > 1) {
-    throw new ReviewHistoryRequestError(
-      "INVALID_CURSOR",
-      "Provide only one pagination cursor."
-    );
+    throw new AppError(reviewErrors.provideOnlyOnePaginationCursor);
   }
 
   return {
@@ -254,10 +225,7 @@ export function decodeReviewCursor(value: string): ReviewCursor {
     }
     return { periodStart, id: decoded.id };
   } catch {
-    throw new ReviewHistoryRequestError(
-      "INVALID_CURSOR",
-      "That pagination cursor is no longer usable. Reload Review history."
-    );
+    throw new AppError(reviewErrors.thatPaginationCursorIsNoLongerUsableReloadReviewHistory);
   }
 }
 
@@ -280,19 +248,19 @@ export async function readReviewHistoryPage(
     database.review.findMany({
       where: cursor
         ? {
-            AND: [
-              pastPeriods,
-              {
-                OR: [
-                  { periodStart: { lt: cursor.periodStart } },
-                  {
-                    periodStart: cursor.periodStart,
-                    id: { lt: cursor.id }
-                  }
-                ]
-              }
-            ]
-          }
+          AND: [
+            pastPeriods,
+            {
+              OR: [
+                { periodStart: { lt: cursor.periodStart } },
+                {
+                  periodStart: cursor.periodStart,
+                  id: { lt: cursor.id }
+                }
+              ]
+            }
+          ]
+        }
         : pastPeriods,
       orderBy: [{ periodStart: "desc" }, { id: "desc" }],
       take: limit + 1
@@ -326,19 +294,12 @@ export async function readPastReviewPeriod(
   now = new Date()
 ) {
   if (!isReviewIdentifier(id)) {
-    throw new ReviewHistoryRequestError(
-      "VALIDATION_ERROR",
-      "That Review identifier is not valid."
-    );
+    throw new AppError(reviewErrors.thatReviewIdentifierIsNotValid);
   }
 
   const review = await database.review.findUnique({ where: { id } });
   if (!review) {
-    throw new ReviewHistoryRequestError(
-      "REVIEW_NOT_FOUND",
-      "That Review no longer exists.",
-      404
-    );
+    throw new AppError(reviewErrors.thatReviewNoLongerExists);
   }
 
   const period = { start: review.periodStart, end: review.periodEnd };

@@ -1,17 +1,18 @@
-import { Prisma } from "@prisma/client";
-import { NextRequest, NextResponse } from "next/server";
+import { appErrorResponse } from "@/lib/http-errors";
 import {
-  IdempotentMutationError,
   parseMutationId,
   runIdempotentCreate
 } from "@/lib/idempotent-mutations";
+import { prisma } from "@/lib/prisma";
+import { projectErrors } from "@/lib/project-errors";
 import {
-  ProjectMutationRequestError,
   parseProjectCreateMutation,
   readProjectMutationBody
 } from "@/lib/project-mutations";
-import { prisma } from "@/lib/prisma";
 import { getProjectDetail, listProjectSummaries } from "@/lib/projects";
+import { AppError } from "@/shared/kernel/errors";
+import { Prisma } from "@prisma/client";
+import { NextRequest, NextResponse } from "next/server";
 
 export async function GET() {
   return NextResponse.json(await listProjectSummaries(prisma));
@@ -48,34 +49,15 @@ export async function POST(request: NextRequest) {
 }
 
 function projectCreateErrorResponse(error: unknown) {
-  if (error instanceof IdempotentMutationError) {
-    return NextResponse.json(
-      { error: error.message, code: error.code },
-      { status: error.status }
-    );
-  }
-  if (error instanceof ProjectMutationRequestError) {
-    return NextResponse.json(
-      { error: error.message, code: error.code, field: error.field },
-      { status: error.status }
-    );
-  }
+  if (error instanceof AppError) return appErrorResponse(error);
+
   if (
     error instanceof Prisma.PrismaClientKnownRequestError &&
     error.code === "P2003"
   ) {
-    return NextResponse.json(
-      {
-        error: "A related record changed before the Project could be created.",
-        code: "CONFLICT"
-      },
-      { status: 409 }
-    );
+    return appErrorResponse(new AppError(projectErrors.aRelatedRecordChangedBeforeTheProjectCouldBeCreated));
   }
 
   console.error("Project creation failed.", error);
-  return NextResponse.json(
-    { error: "Project could not be created.", code: "INTERNAL_ERROR" },
-    { status: 500 }
-  );
+  return appErrorResponse(new AppError(projectErrors.projectCouldNotBeCreated));
 }

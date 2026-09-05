@@ -1,11 +1,13 @@
-import { Prisma } from "@prisma/client";
-import { NextRequest, NextResponse } from "next/server";
+import { appErrorResponse } from "@/lib/http-errors";
 import { prisma } from "@/lib/prisma";
+import { taskErrors } from "@/lib/task-errors";
 import {
-  WorkflowMutationRequestError,
   parseTaskReorderMutation,
   readWorkflowMutationBody
 } from "@/lib/workflow-mutations";
+import { AppError } from "@/shared/kernel/errors";
+import { Prisma } from "@prisma/client";
+import { NextRequest, NextResponse } from "next/server";
 
 export async function POST(request: NextRequest) {
   try {
@@ -33,40 +35,19 @@ export async function POST(request: NextRequest) {
     });
 
     if (!tasks) {
-      return NextResponse.json(
-        {
-          error: "One or more tasks could not be found.",
-          code: "NOT_FOUND",
-          field: "ids"
-        },
-        { status: 404 }
-      );
+      return appErrorResponse(new AppError(taskErrors.oneOrMoreTasksCouldNotBeFound));
     }
     return NextResponse.json({ ok: true, tasks });
   } catch (error) {
-    if (error instanceof WorkflowMutationRequestError) {
-      return NextResponse.json(
-        { error: error.message, code: error.code, field: error.field },
-        { status: 400 }
-      );
-    }
+    if (error instanceof AppError) return appErrorResponse(error);
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2025"
     ) {
-      return NextResponse.json(
-        {
-          error: "A task changed before its order could be saved.",
-          code: "CONFLICT"
-        },
-        { status: 409 }
-      );
+      return appErrorResponse(new AppError(taskErrors.aTaskChangedBeforeItsOrderCouldBeSaved));
     }
 
     console.error("Task reorder failed.", error);
-    return NextResponse.json(
-      { error: "Task order could not be saved.", code: "INTERNAL_ERROR" },
-      { status: 500 }
-    );
+    return appErrorResponse(new AppError(taskErrors.taskOrderCouldNotBeSaved));
   }
 }

@@ -64,8 +64,7 @@ const MODULE_EDGES: Readonly<Record<string, ReadonlySet<string>>> = {
 const ACTIVITY_WRITE_ALLOWLIST = new Set([
   "src/modules/evidence/services/activities.ts:25:activityEntry.create",
   "src/modules/evidence/services/activities.ts:74:activityEntry.updateMany",
-  "src/modules/evidence/services/focus-activity.ts:17:activityEntry.upsert",
-  "src/modules/evidence/services/focus-activity.ts:40:activityEntry.upsert",
+  "src/modules/evidence/services/focus-activity.ts:22:activityEntry.upsert",
   "src/lib/focus-sessions.ts:268:activityEntry.upsert",
   "src/lib/focus-sessions.ts:373:activityEntry.upsert",
   "src/server/workflows/delete-project.ts:15:activityEntry.updateMany"

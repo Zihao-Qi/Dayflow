@@ -222,9 +222,8 @@ test("evidence services run headlessly on SQLite", async context => {
               createdAt: now,
               updatedAt: now
             };
-            const actual = await prisma.$transaction(tx => enrich
-              ? enrichFocusActivity(stable(tx), session.id, { ...session, category: "Learning", note: "Enriched note" })
-              : recordFocusActivity(stable(tx), session));
+            const actual = await prisma.$transaction(tx => recordFocusActivity(stable(tx), session,
+              enrich ? { category: "Learning", note: "Enriched note" } : undefined));
             const scenario = `task=${Boolean(taskId)}, enrich=${enrich}, existing=${existing}`;
             assert.deepEqual(actual, expected, scenario);
             assert.deepEqual(await prisma.activityEntry.findUniqueOrThrow({

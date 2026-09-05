@@ -4,7 +4,7 @@ import { AppError } from "@/shared/kernel/errors";
 import { readFocusTask, completeFocusTask } from "@/modules/planning/services/tasks";
 import { consumeFocusQueueTask } from "@/modules/planning/services/focus-queue";
 import { readProjectName } from "@/modules/projects/services/projects";
-import { recordFocusActivity, enrichFocusActivity } from "@/modules/evidence/services/focus-activity";
+import { recordFocusActivity } from "@/modules/evidence/services/focus-activity";
 import { focusErrors, parseKind, transition, suggestedBreakMinutes,
   type StartSessionInput, type EnrichmentDetails } from "../domain/session";
 
@@ -151,8 +151,8 @@ export async function enrichSession(tx: Prisma.TransactionClient, id: string, de
     const note = String(details.note ?? "").trim();
     const category = String(details.category ?? "").trim() || "Deep Work";
     const activityNote = note || session.task?.title || session.label || "Focus session";
-    const activity = session.actualMinutes >= 1 ? await enrichFocusActivity(tx, session.id, {
-      ...session, category, note: activityNote
+    const activity = session.actualMinutes >= 1 ? await recordFocusActivity(tx, session, {
+      category, note: activityNote
     }) : null;
     if (details.taskCompleted === true && session.taskId) {
       await completeFocusTask(tx, session.taskId, now);

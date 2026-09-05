@@ -1139,6 +1139,14 @@ function ProjectRowAddTask({
   const [phaseId, setPhaseId] = useState("");
   const [saving, setSaving] = useState(false);
 
+  useEffect(() => {
+    // Refreshes keep this composer mounted so its title draft survives.
+    // Drop only a selection that no longer exists in the refreshed plan.
+    if (phaseId && !phases.some((phase) => phase.id === phaseId)) {
+      setPhaseId("");
+    }
+  }, [phases, phaseId]);
+
   async function submit() {
     const trimmed = title.trim();
     if (!trimmed || saving) return;
@@ -1324,6 +1332,17 @@ function ProjectDetailWorkspace({
     phaseCreateMutation.current = null;
     taskCreateMutation.current = null;
   }, [detail?.id]);
+
+  useEffect(() => {
+    // A phase can also be deleted elsewhere, bypassing deletePhase below.
+    if (
+      detail &&
+      newTaskPhase &&
+      !detail.phases.some((phase) => phase.id === newTaskPhase)
+    ) {
+      setNewTaskPhase("");
+    }
+  }, [detail, newTaskPhase]);
 
   if (loading || !detail) {
     return (

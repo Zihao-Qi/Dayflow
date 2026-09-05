@@ -720,6 +720,94 @@ test("keeps an add draft mounted while another drawer task refreshes", async ({
   await expect(draft).toHaveValue("Do not lose this");
 });
 
+for (const surface of ["List drawer", "Project page"] as const) {
+  for (const keepAnotherPhase of [false, true]) {
+    test(`keeps the ${surface} draft unphased after deleting ${keepAnotherPhase ? "the selected" : "the last"} phase elsewhere`, async ({
+      page
+    }) => {
+      const projectName = "Refreshed phases Project";
+      const project = await createProject(page, projectName);
+      const phaseResponse = await page.request.post(
+        `/api/projects/${project.id}/phases`,
+        { data: { name: "Selected phase" } }
+      );
+      expect(phaseResponse.status()).toBe(201);
+      const phase = (await phaseResponse.json()) as { id: string };
+      if (keepAnotherPhase) {
+        const remainingPhase = await page.request.post(
+          `/api/projects/${project.id}/phases`,
+          { data: { name: "Remaining phase" } }
+        );
+        expect(remainingPhase.status()).toBe(201);
+      }
+      const existingTask = await page.request.post("/api/tasks", {
+        data: {
+          title: "Refresh trigger",
+          projectId: project.id,
+          date: null,
+          estimateMinutes: 30
+        }
+      });
+      expect(existingTask.status()).toBe(201);
+
+      await openListProjects(page);
+      if (surface === "List drawer") {
+        await projectToggle(page, projectName).click();
+      } else {
+        await page.getByRole("button", { name: `Open ${projectName} overview` }).click();
+      }
+      const workspace = surface === "List drawer"
+        ? projectRowFor(page, projectName).locator(".project-row-drawer")
+        : page.locator(".project-detail-page");
+      const draft = workspace.getByRole("textbox", { name: "New Project task" });
+      const phaseSelect = workspace.getByRole("combobox", {
+        name: surface === "List drawer" ? "Phase for the new task" : "Task phase",
+        exact: true
+      });
+      const title = "Keep this draft after phase deletion";
+      await draft.fill(title);
+      await phaseSelect.selectOption(phase.id);
+      await expect(phaseSelect).toHaveValue(phase.id);
+
+      // Model deletion in another client, then refresh through an existing
+      // task mutation without navigating away or remounting the composer.
+      const deleted = await page.request.delete(`/api/phases/${phase.id}`);
+      expect(deleted.status()).toBe(200);
+      await workspace.getByRole("button", { name: "Complete Refresh trigger", exact: true }).click();
+      await expect(workspace.getByRole("button", { name: "Reopen Refresh trigger", exact: true })).toBeVisible();
+      await expect(phaseSelect.locator(`option[value="${phase.id}"]`)).toHaveCount(0);
+      await expect(draft).toHaveValue(title);
+      if (surface === "List drawer" && !keepAnotherPhase) {
+        await expect(phaseSelect).toHaveCount(0);
+      } else {
+        await expect(phaseSelect).toHaveValue("");
+      }
+
+      const submission = page.waitForRequest((request) =>
+        request.method() === "POST" && new URL(request.url()).pathname === "/api/tasks"
+      );
+      await workspace.getByRole("button", { name: "Add", exact: true }).click();
+      // The DOM can look unphased even while React still holds the removed
+      // identifier, so verify the actual payload as well as the saved task.
+      expect((await submission).postDataJSON()).toMatchObject({
+        title,
+        projectId: project.id,
+        phaseId: null
+      });
+      await expect(workspace.getByRole("textbox", { name: `Task title: ${title}`, exact: true })).toBeVisible();
+      await expect(draft).toHaveValue("");
+      const refreshed = await page.request.get(`/api/projects/${project.id}`);
+      expect(refreshed.status()).toBe(200);
+      const detail = (await refreshed.json()) as {
+        tasks: Array<{ title: string; phaseId: string | null }>;
+      };
+      expect(detail.tasks.filter((task) => task.title === title)).toEqual([
+        expect.objectContaining({ title, phaseId: null })
+      ]);
+    });
+  }
+}
+
 test("deletes a task from the List drawer", async ({ page }) => {
   const project = await createProject(page, "Shrinking Project");
   const created = await page.request.post("/api/tasks", {

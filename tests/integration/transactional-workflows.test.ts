@@ -719,6 +719,101 @@ test("seeded transactional workflow conflicts preserve their invariants", async 
         }
       }
     );
+
+    await context.test(
+      "Focus completion rolls back the Session when its generated Activity write fails",
+      async (completionContext) => {
+        const task = await prisma.task.create({
+          data: { title: "Rollback completion", focusQueuePosition: 2 }
+        });
+        await prisma.task.create({
+          data: { title: "Keep trailing queue position", focusQueuePosition: 3 }
+        });
+        const session = await prisma.focusSession.create({
+          data: {
+            activeKey: 1,
+            kind: "FOCUS",
+            status: "RUNNING",
+            plannedMinutes: 25,
+            label: "Rollback completion",
+            startedAt: new Date(Date.now() - 13 * 60_000),
+            accumulatedPauseSeconds: 60,
+            taskId: task.id
+          }
+        });
+        const readState = async () => ({
+          session: await prisma.focusSession.findUniqueOrThrow({ where: { id: session.id } }),
+          sessions: await prisma.focusSession.findMany({ orderBy: { id: "asc" } }),
+          activities: await prisma.activityEntry.findMany({ orderBy: { id: "asc" } }),
+          tasks: await prisma.task.findMany({ orderBy: { id: "asc" } }),
+          queue: await prisma.task.findMany({
+            where: { focusQueuePosition: { not: null } },
+            orderBy: [{ focusQueuePosition: "asc" }, { id: "asc" }]
+          })
+        });
+        const before = await readState();
+        assert.equal(before.session.status, "RUNNING");
+        assert.equal(before.session.activeKey, 1);
+        assert.equal(await prisma.activityEntry.count({ where: { focusSessionId: session.id } }), 0);
+        const sqlId = (id: string) => id.replaceAll("'", "''");
+        // Fail only this generated Activity insert, after the Session claim is visible.
+        // needsEnrichment maps to needsRecord. A real NOT NULL violation yields
+        // P2011 and the inventory's HTTP 500, unlike RAISE(ABORT)'s P2003/409.
+        await prisma.$executeRawUnsafe(`
+          CREATE TABLE completion_failure_probe (injected_completion_activity_write_failure TEXT NOT NULL);
+        `);
+        await prisma.$executeRawUnsafe(`
+          CREATE TRIGGER abort_completion_activity_write
+          BEFORE INSERT ON "ActivityEntry"
+          WHEN NEW.focusSessionId = '${sqlId(session.id)}'
+            AND NEW.origin = 'FOCUS' AND NEW.taskId = '${sqlId(task.id)}'
+            AND NEW.durationMinutes = 12
+            AND EXISTS (SELECT 1 FROM "FocusSession"
+              WHERE id = '${sqlId(session.id)}' AND status = 'COMPLETED'
+                AND activeKey IS NULL AND completedAt IS NOT NULL
+                AND actualMinutes = 12 AND needsRecord = 1)
+          BEGIN
+            INSERT INTO completion_failure_probe (injected_completion_activity_write_failure) VALUES (NULL);
+          END;
+        `);
+        const errors = completionContext.mock.method(console, "error", () => undefined);
+        try {
+          const response = await patchFocus(
+            jsonRequest(`/api/focus-session/${session.id}`, "PATCH", {
+              action: "complete"
+            }),
+            params(session.id)
+          );
+          // docs/specs/ERROR_ENVELOPE_INVENTORY_V1.md: Focus PATCH unexpected failure.
+          assert.equal(response.status, 500);
+          assert.deepEqual(await response.json(), {
+            error: "Focus timer could not be saved.", code: "INTERNAL_ERROR"
+          });
+          assert.match(
+            errors.mock.calls.map((call) => call.arguments.map(String).join(" ")).join("\n"),
+            /injected_completion_activity_write_failure/,
+            "the generated Activity write must fail after observing the completed Session claim"
+          );
+          const after = await readState();
+          assert.deepEqual(
+            after.session,
+            before.session,
+            "every Session field and timestamp must survive the failed Activity write unchanged"
+          );
+          assert.equal(after.session.status, "RUNNING");
+          assert.equal(after.session.activeKey, 1);
+          assert.equal(await prisma.activityEntry.count({ where: { focusSessionId: session.id } }), 0);
+          assert.deepEqual(
+            after,
+            before,
+            "no Activity, Session, Task, or queue row or timestamp may change"
+          );
+        } finally {
+          await prisma.$executeRawUnsafe("DROP TRIGGER abort_completion_activity_write");
+          await prisma.$executeRawUnsafe("DROP TABLE completion_failure_probe");
+        }
+      }
+    );
   });
 });
 

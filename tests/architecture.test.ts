@@ -18,6 +18,8 @@ type Violation = {
   rule: Rule;
   file: string;
   line: number;
+  // Scanner results always set this; existing baseline entries omit it for zero.
+  occurrence?: number;
   detail: string;
   baselineGroup?: "legacy-global-client-call";
 };
@@ -121,6 +123,7 @@ function scanArchitecture(
   const activityWriteAllowlist =
     options.activityWriteAllowlist ?? ACTIVITY_WRITE_ALLOWLIST;
   const violations: Violation[] = [];
+  const occurrences = new Map<string, number>();
   const activityWrites: string[] = [];
   const legacyGlobalClientCalls: Record<string, number> = {};
   const add = (
@@ -130,10 +133,16 @@ function scanArchitecture(
     detail: string,
     baselineGroup?: Violation["baselineGroup"]
   ) => {
+    const line = lineOf(record.sourceFile, node);
+    const group = `${rule}:${record.relativePath}:${line}`;
+    // Sorted files and deterministic AST traversal keep numbering stable per rule.
+    const occurrence = occurrences.get(group) ?? 0;
+    occurrences.set(group, occurrence + 1);
     violations.push({
       rule,
       file: record.relativePath,
-      line: lineOf(record.sourceFile, node),
+      line,
+      occurrence,
       detail,
       baselineGroup
     });
@@ -279,14 +288,10 @@ function scanArchitecture(
       }
       if (
         record.relativePath.startsWith("src/") &&
-        isStringLike(node) &&
-        /\b(?:insert(?:\s+or\s+(?:ignore|replace))?\s+into|update)\s+(?:["'`\[]\s*)?ActivityEntry(?:["'`\]]|\b)/i.test(nodeText(node))
+        isStringLike(node)
       ) {
-        const operation = /\bupdate\s+(?:["'`\[]\s*)?ActivityEntry/i.test(
-          nodeText(node)
-        )
-          ? "UPDATE"
-          : "INSERT INTO";
+        const operation = activitySqlWriteOperation(nodeText(node));
+        if (!operation) return;
         const key = `${record.relativePath}:${lineOf(record.sourceFile, node)}:SQL ${operation} ActivityEntry`;
         activityWrites.push(key);
         if (!activityWriteAllowlist.has(key)) {
@@ -777,6 +782,21 @@ function nodeText(node: ts.StringLiteralLike | ts.TemplateExpression) {
   return ts.isStringLiteralLike(node) ? node.text : node.getText();
 }
 
+function activitySqlWriteOperation(sql: string): "INSERT INTO" | "UPDATE" | null {
+  // A schema may be bare, double-quoted, bracketed, or backtick-quoted.
+  // Double quotes and backticks escape themselves by doubling.
+  const schema = /(?:[a-z_\u0080-\uffff][\w$\u0080-\uffff]*|"(?:[^"]|"")+"|\[[^\]]+\]|`(?:[^`]|``)+`)/.source;
+  // Retain single-quoted tables too, but require the whole identifier to match.
+  // The dot check prevents treating an ActivityEntry schema as the target table.
+  const table = /(?:"ActivityEntry"|\[ActivityEntry\]|`ActivityEntry`|'ActivityEntry'|ActivityEntry)(?![\w$\u0080-\uffff"'`\]])(?!\s*\.)/.source;
+  const match = new RegExp(
+    `\\b(insert(?:\\s+or\\s+(?:ignore|replace))?\\s+into|update)\\s+(?:${schema}\\s*\\.\\s*)?${table}`,
+    "i"
+  ).exec(sql);
+  if (!match) return null;
+  return match[1].toUpperCase() === "UPDATE" ? "UPDATE" : "INSERT INTO";
+}
+
 function isPrismaPackage(specifier: string) {
   return specifier === "@prisma/client" || specifier.startsWith("@prisma/client/");
 }
@@ -822,12 +842,13 @@ function compareViolations(left: Violation, right: Violation) {
     left.rule - right.rule ||
     left.file.localeCompare(right.file) ||
     left.line - right.line ||
+    (left.occurrence ?? 0) - (right.occurrence ?? 0) ||
     left.detail.localeCompare(right.detail)
   );
 }
 
-function violationKey(violation: Pick<Violation, "rule" | "file" | "line">) {
-  return `${violation.rule}:${violation.file}:${violation.line}`;
+function violationKey(violation: Pick<Violation, "rule" | "file" | "line" | "occurrence">) {
+  return `${violation.rule}:${violation.file}:${violation.line}:${violation.occurrence ?? 0}`;
 }
 
 function withFixture(files: Record<string, string>, run: (root: string) => void) {
@@ -1050,6 +1071,137 @@ test("Rule 6: transaction roots are confined to their allowlisted directories", 
     },
     (root) => assert.deepEqual(locations(root, 6), ["src/lib/fail.ts:1"])
   );
+});
+
+test("Baseline identity: a second same-line transaction remains actionable", () => {
+  const file = "src/lib/transactions.ts";
+  const known = baseline(6, file, 1, "fixture migration");
+  withFixture(
+    { [file]: "database.$transaction(() => null); database.$transaction(() => null);\n" },
+    (root) => {
+      const report = scanArchitecture(root);
+      const baselineByKey = new Map([[violationKey(known), known]]);
+      const actionable = report.violations.filter((entry) => !baselineByKey.has(violationKey(entry)));
+      assert.equal(report.violations.length, 2);
+      assert.equal(actionable.length, 1);
+      assert.deepEqual(report.violations.map(violationKey), [`6:${file}:1:0`, `6:${file}:1:1`]);
+      assert.equal(violationKey(known), `6:${file}:1:0`);
+      assert.equal(violationKey(actionable[0]), `6:${file}:1:1`);
+      assert.deepEqual(report.legacyGlobalClientCalls, {});
+      const secondKnown = { ...known, occurrence: 1 };
+      assert.equal(violationKey(secondKnown), violationKey(actionable[0]));
+    }
+  );
+});
+
+test("Baseline identity: another rule on the same line does not shift occurrences", () => {
+  const file = "src/lib/transactions.ts";
+  const source = "database.$transaction(() => null); database.$transaction(() => null);\n";
+  withFixture({ [file]: source }, (root) => {
+    const before = checkArchitecture(root).map(violationKey);
+    writeFileSync(join(root, file), 'import "../../scripts/helper"; ' + source);
+    const after = checkArchitecture(root);
+    assert.deepEqual(after.filter(({ rule }) => rule === 6).map(violationKey), before);
+    assert.deepEqual(after.filter(({ rule }) => rule === 8).map(violationKey), [`8:${file}:1:0`]);
+    assert.equal(before[0], violationKey(baseline(6, file, 1, "fixture migration")));
+  });
+});
+
+test("Baseline identity: removing a transaction makes its baseline stale", () => {
+  const file = "src/lib/transactions.ts";
+  const entries = [baseline(6, file, 1, "fixture migration")];
+  withFixture({ [file]: "database.$transaction(() => null);\n" }, (root) => {
+    const staleEntries = () => {
+      const actualByKey = new Map(checkArchitecture(root).map((entry) => [violationKey(entry), entry]));
+      return entries.filter((entry) => !actualByKey.has(violationKey(entry)));
+    };
+    assert.deepEqual(staleEntries(), []);
+    writeFileSync(join(root, file), "export const removed = true;\n");
+    assert.deepEqual(staleEntries(), entries);
+  });
+});
+
+for (const verb of ["UPDATE", "INSERT INTO", "INSERT OR IGNORE INTO", "INSERT OR REPLACE INTO"]) {
+  test(`Rule 7: qualified ${verb} matches schema and table quoting variants`, () => {
+    const schemas = ["main", '"ma""in"', "[main schema]", "`ma``in`"];
+    const tables = ["ActivityEntry", '"ActivityEntry"', "[ActivityEntry]", "`ActivityEntry`", "'ActivityEntry'"];
+    const files: Record<string, string> = {};
+    for (const [schemaIndex, schema] of schemas.entries()) {
+      for (const [tableIndex, table] of tables.entries()) {
+        const tail = verb === "UPDATE" ? " SET id = 1" : " (id) VALUES (1)";
+        const sql = `${verb.toLowerCase().replaceAll(" ", "\t")} ${schema} \n.\t ${table}${tail}`;
+        files[`src/write-${schemaIndex}-${tableIndex}.ts`] = `export const sql = ${JSON.stringify(sql)};\n`;
+      }
+    }
+    // Include the exact qualified spelling from the report and an unqualified control.
+    const tail = verb === "UPDATE" ? " SET id = 1" : " (id) VALUES (1)";
+    files["src/exact.ts"] = `export const sql = ${JSON.stringify(`${verb} main."ActivityEntry"${tail}`)};\n`;
+    files["src/control.ts"] = `export const sql = ${JSON.stringify(`${verb} "ActivityEntry"${tail}`)};\n`;
+    withFixture(files, (root) => {
+      const report = scanArchitecture(root);
+      const operation = verb === "UPDATE" ? "UPDATE" : "INSERT INTO";
+      assert.deepEqual(
+        report.activityWrites,
+        Object.keys(files).map((file) => `${file}:1:SQL ${operation} ActivityEntry`).sort()
+      );
+      assert.deepEqual(
+        report.violations.map(({ rule, file, detail }) => ({ rule, file, detail })),
+        Object.keys(files).sort().map((file) => ({
+          rule: 7, file, detail: `SQL ${operation} ActivityEntry is not allowlisted`
+        }))
+      );
+    });
+  });
+}
+
+test("Rule 7: qualified writes retain the existing allowlist key spelling", () => {
+  const activityWriteAllowlist = new Set([
+    "src/insert.ts:1:SQL INSERT INTO ActivityEntry",
+    "src/update.ts:1:SQL UPDATE ActivityEntry"
+  ]);
+  withFixture(
+    {
+      "src/insert.ts": 'export const sql = `INSERT OR IGNORE INTO main."ActivityEntry" (id) VALUES (1)`;\n',
+      "src/update.ts": 'export const sql = `UPDATE "main" . [ActivityEntry] SET id = 1`;\n'
+    },
+    (root) => {
+      const report = scanArchitecture(root, { activityWriteAllowlist });
+      assert.deepEqual(report.violations, []);
+      assert.deepEqual(report.activityWrites, [...activityWriteAllowlist].sort());
+    }
+  );
+});
+
+test("Rule 7: SQL operation comes from the same Activity write match", () => {
+  withFixture(
+    {
+      "src/write.ts": 'export const sql = `INSERT INTO main."ActivityEntry" (id) VALUES (1); UPDATE "ActivityEntry" SET id = 2`;\n'
+    },
+    (root) => assert.deepEqual(scanArchitecture(root).activityWrites, [
+      "src/write.ts:1:SQL INSERT INTO ActivityEntry"
+    ])
+  );
+});
+
+test("Rule 7: unrelated and suffixed SQL table names do not match", () => {
+  const tables = [
+    "Task", "ActivityEntryArchive", "ActivityEntry_backup", "ActivityEntry$archive", "ActivityEntryé",
+    '"ActivityEntryArchive"', '"ActivityEntry archive"', '"ActivityEntry""archive"',
+    "[ActivityEntryArchive]", "`ActivityEntryArchive`", "`ActivityEntry``archive`", "'ActivityEntryArchive'"
+  ];
+  const files: Record<string, string> = {};
+  for (const [index, table] of tables.entries()) {
+    for (const [prefixIndex, prefix] of ["", "main.", '"main" . ', "[main] . ", "`main` . "].entries()) {
+      const sql = `UPDATE ${prefix}${table} SET id = 1; INSERT OR IGNORE INTO ${prefix}${table} (id) VALUES (1)`;
+      files[`src/negative-${index}-${prefixIndex}.ts`] = `export const sql = ${JSON.stringify(sql)};\n`;
+    }
+  }
+  files["src/schema-only.ts"] = 'export const sql = `UPDATE ActivityEntry.Task SET id = 1; INSERT INTO "ActivityEntry" . "Task" (id) VALUES (1)`;\n';
+  withFixture(files, (root) => {
+    const report = scanArchitecture(root);
+    assert.deepEqual(report.activityWrites, []);
+    assert.deepEqual(report.violations, []);
+  });
 });
 
 test("Rule 7: every ActivityEntry write has a call-site allowlist entry", () => {

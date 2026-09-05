@@ -8,7 +8,7 @@ import { PrismaClient, type Prisma } from "@prisma/client";
 import { calendarFor } from "../../src/shared/kernel/calendar";
 import { AppError } from "../../src/shared/kernel/errors";
 import { serializeAppError } from "../../src/lib/http-errors";
-import { parseReviewMutation } from "../../src/modules/review/domain/review";
+import { isReviewWindowDetail, parseReviewMutation } from "../../src/modules/review/domain/review";
 import {
   saveReview, readSavedReview, readReviewPeriodEvidence, readPastReviewPeriod,
   readReviewWindow, readReviewHistoryPage
@@ -51,6 +51,7 @@ test("Review services run headlessly on SQLite", async context => {
           narrative: "", nextPeriodIntention: "", persisted: false },
         reviewSummary: emptySummary, projects: []
       }));
+      assert.equal(isReviewWindowDetail(JSON.parse(JSON.stringify(detail))), true);
       assert.equal(await db.review.count(), 0);
     });
 

@@ -7,6 +7,8 @@ import { GET as getReviewHistory } from "../../src/app/api/review/history/route"
 import { GET as getReviewWindow } from "../../src/app/api/review/window/route";
 import { reviewPeriodRange } from "../../src/lib/dates";
 import { prisma } from "../../src/lib/prisma";
+import { clock } from "../../src/lib/time";
+import { isReviewWindowDetail } from "../../src/lib/review-records";
 
 // Route reads now enter a transaction before calling these delegates.
 const originalTransactionRoot = prisma.$transaction;
@@ -16,6 +18,42 @@ beforeEach(() => {
   ) => operation(prisma);
 });
 afterEach(() => { prisma.$transaction = originalTransactionRoot; });
+
+test("current Review Window GET preserves exact draft JSON and satisfies its response validator", async context => {
+  context.mock.method(clock, "now", () => new Date("2026-09-04T17:00:00.000Z"));
+  const originalFindUnique = prisma.review.findUnique;
+  context.after(() => { prisma.review.findUnique = originalFindUnique; });
+  (prisma.review as unknown as { findUnique: unknown }).findUnique = async () => null;
+  for (const delegate of [prisma.activityEntry, prisma.diaryEntry, prisma.task, prisma.note, prisma.material, prisma.project]) {
+    const originalFindMany = delegate.findMany;
+    context.after(() => { delegate.findMany = originalFindMany; });
+    (delegate as unknown as { findMany: unknown }).findMany = async () => [];
+  }
+
+  const response = await getReviewWindow(new NextRequest("http://localhost/api/review/window?current=1"));
+  assert.equal(response.status, 200);
+  const serialized = await response.text();
+  assert.equal(serialized, JSON.stringify({
+    ending: "2026-09-04",
+    periodStart: "2026-08-29T05:00:00.000Z",
+    periodEnd: "2026-09-05T05:00:00.000Z",
+    review: {
+      id: null,
+      periodStart: "2026-08-29T05:00:00.000Z",
+      periodEnd: "2026-09-05T05:00:00.000Z",
+      narrative: "",
+      nextPeriodIntention: "",
+      persisted: false
+    },
+    reviewSummary: {
+      recordedMinutes: 0, focusedMinutes: 0, categoryMinutes: [], completedTaskCount: 0,
+      noteCount: 0, materialCount: 0, diaryDayCount: 0, averageMood: null, averageEnergy: null,
+      pendingEnrichmentSessions: 0, pendingEnrichmentMinutes: 0, movedProjectCount: 0
+    },
+    projects: []
+  }));
+  assert.equal(isReviewWindowDetail(JSON.parse(serialized)), true);
+});
 
 test("Review route returns typed malformed and empty mutation errors", async () => {
   const malformed = await saveReview(

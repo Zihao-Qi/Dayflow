@@ -2541,9 +2541,6 @@ test("explains an empty backlog and hides Arrange", async ({ page }) => {
 test("creates a project, keeps its plan on one page, and unifies its backlog", async ({
   page
 }) => {
-  // Leave a test deadline of clock headroom, so pauseAt cannot target
-  // the past if a browser command is delayed by machine load.
-  await page.clock.install({ time: new Date(Date.now() - test.info().timeout) });
   await openDashboard(page);
   await page.getByRole("button", { name: /Projects/ }).click();
   await page.getByRole("button", { name: "New project", exact: true }).click();
@@ -2562,12 +2559,15 @@ test("creates a project, keeps its plan on one page, and unifies its backlog", a
     name: "Edit Complete the systems course"
   });
   await expect(editProject.getByRole("button", { name: "Save changes" })).toBeDisabled();
-  // Keep the 600ms autosave and 2s Saved chip under test control. Let startup
-  // timers run first, then pause ahead of the running clock before editing.
-  // This preserves successful autosave and shortcut-save paths. Recovery timers
-  // stay paused: a failed save cannot retry until time advances (1000ms, then
-  // 4000ms in src/components/save-state.tsx:106). This test does not characterize
-  // save recovery.
+  // Install only after startup, so the day-refresh timer is scheduled with the
+  // real date and cannot fire from advancing this clock across midnight.
+  // Leave a test deadline of headroom so delayed pauseAt delivery stays valid.
+  // Control the rename's 600ms autosave and 2s Saved chip, and the phase shortcut.
+  // Timers created before installation remain native. Save recovery timers
+  // created after installation stay paused until time advances (1000ms, then
+  // 4000ms in src/components/save-state.tsx:106); this test covers successful
+  // autosave and shortcut saves, not recovery or every application timer.
+  await page.clock.install({ time: new Date(Date.now() - test.info().timeout) });
   await page.clock.pauseAt(new Date());
   await editProject.getByLabel("Name", { exact: true }).fill("Complete systems course");
   await expect(editProject.getByText("Unsaved changes", { exact: true })).toBeVisible();

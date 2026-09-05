@@ -388,6 +388,17 @@ function collectModuleReferences(sourceFile: ts.SourceFile): ModuleReference[] {
         typeOnly: node.isTypeOnly
       });
     } else if (
+      ts.isImportTypeNode(node) &&
+      ts.isLiteralTypeNode(node.argument) &&
+      ts.isStringLiteralLike(node.argument.literal)
+    ) {
+      references.push({
+        specifier: node.argument.literal.text,
+        node: node.argument.literal,
+        // Both import("pkg").Type and typeof import("pkg") are erased types.
+        typeOnly: true
+      });
+    } else if (
       ts.isCallExpression(node) &&
       node.arguments.length >= 1 &&
       ts.isStringLiteralLike(node.arguments[0]) &&
@@ -667,30 +678,44 @@ function findGlobalClientParameterFallbacks(
   globalBindings: ReadonlySet<string>,
   add: (node: ts.Node, detail: string) => void
 ) {
-  visit(record.sourceFile, (node) => {
-    if (!isFunctionLike(node) || !node.body) return;
-    const parameterNames = new Set<string>();
-    for (const parameter of node.parameters) {
-      collectBindingNames(parameter.name, parameterNames);
-      if (parameter.initializer && expressionContainsGlobal(parameter.initializer, globalBindings)) {
-        add(parameter, "function parameter defaults to the global Prisma client");
+  const inspect = (
+    node: ts.Node,
+    parameterNames: ReadonlySet<string>,
+    visibleGlobals: ReadonlySet<string>
+  ) => {
+    if (isFunctionLike(node)) {
+      if (!node.body) return;
+      const ownParameters = new Set<string>();
+      for (const parameter of node.parameters) {
+        collectBindingNames(parameter.name, ownParameters);
       }
+      // A shadowing parameter is still a parameter, but a shadowed imported
+      // client (including a namespace root) is no longer global in this scope.
+      const nestedParameters = new Set([...parameterNames, ...ownParameters]);
+      const nestedGlobals = new Set(
+        [...visibleGlobals].filter((binding) => !ownParameters.has(binding.split(".")[0]))
+      );
+      for (const parameter of node.parameters) {
+        if (
+          parameter.initializer &&
+          expressionContainsGlobal(parameter.initializer, nestedGlobals)
+        ) add(parameter, "function parameter defaults to the global Prisma client");
+      }
+      ts.forEachChild(node, (child) => inspect(child, nestedParameters, nestedGlobals));
+      return;
     }
-    const inspectBody = (child: ts.Node) => {
-      if (child !== node.body && isFunctionLike(child)) return;
-      if (
-        ts.isBinaryExpression(child) &&
-        (child.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken ||
-          child.operatorToken.kind === ts.SyntaxKind.BarBarToken ||
-          child.operatorToken.kind === ts.SyntaxKind.QuestionQuestionEqualsToken ||
-          child.operatorToken.kind === ts.SyntaxKind.BarBarEqualsToken) &&
-        expressionContainsGlobal(child.right, globalBindings) &&
-        expressionReferencesParameter(child.left, parameterNames)
-      ) add(child, "function parameter falls back to the global Prisma client");
-      ts.forEachChild(child, inspectBody);
-    };
-    inspectBody(node.body);
-  });
+    if (
+      ts.isBinaryExpression(node) &&
+      (node.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken ||
+        node.operatorToken.kind === ts.SyntaxKind.BarBarToken ||
+        node.operatorToken.kind === ts.SyntaxKind.QuestionQuestionEqualsToken ||
+        node.operatorToken.kind === ts.SyntaxKind.BarBarEqualsToken) &&
+      expressionContainsGlobal(node.right, visibleGlobals) &&
+      expressionReferencesParameter(node.left, parameterNames)
+    ) add(node, "function parameter falls back to the global Prisma client");
+    ts.forEachChild(node, (child) => inspect(child, parameterNames, visibleGlobals));
+  };
+  inspect(record.sourceFile, new Set(), globalBindings);
 }
 
 function isFunctionLike(node: ts.Node): node is ts.FunctionLikeDeclaration {
@@ -944,6 +969,63 @@ test("Rule 3: ui does not reach services, Prisma, or server", () => {
   );
 });
 
+for (const [layer, rule] of [["domain", 2], ["ui", 3]] as const) {
+  for (const source of [
+    'type DB = import("@prisma/client").PrismaClient;',
+    'type DB = typeof import("@prisma/client");',
+    'function nested() { return () => { type DB = { client: Promise<import("@prisma/client").PrismaClient> }; }; }'
+  ]) {
+    test(`Rule ${rule}: import type nodes in ${layer}: ${source}`, () => {
+      const file = `src/modules/planning/${layer}/types.ts`;
+      withFixture({ [file]: source }, (root) => {
+        assert.deepEqual(locations(root, rule), [`${file}:1`]);
+      });
+    });
+  }
+}
+
+test("Import type nodes preserve permitted type-only dependencies", () => {
+  withFixture(
+    {
+      "src/modules/planning/services/types.ts": [
+        'import type { Prisma } from "@prisma/client";',
+        'type Tx = import("@prisma/client").Prisma.TransactionClient;',
+        'type DB = typeof import("@prisma/client");',
+        'type Runtime = typeof import("@prisma/client/runtime/library");'
+      ].join("\n"),
+      "src/modules/planning/domain/types.ts": [
+        'type Task = import("./task").Task;',
+        'type Error = import("@/shared/kernel/errors").DomainError;'
+      ].join("\n"),
+      "src/modules/planning/ui/types.ts": 'type Task = import("../domain/task").Task;'
+    },
+    (root) => assert.deepEqual(checkArchitecture(root), [])
+  );
+});
+
+test("Import type nodes enforce module, singleton, server, and script boundaries", () => {
+  withFixture(
+    {
+      "src/modules/projects/application/types.ts": 'type T = import("@/modules/review/domain/types").T;',
+      "src/app/types.ts": 'type T = import("@/modules/planning/services/types").T;',
+      "src/modules/planning/services/client.ts": 'type T = typeof import("@/lib/prisma");',
+      "src/modules/planning/services/server.ts": 'type T = typeof import("@/server/http");',
+      "src/types.ts": 'type T = typeof import("../scripts/task");'
+    },
+    (root) => assert.deepEqual(
+      checkArchitecture(root).map(({ rule, file }) => ({ rule, file })),
+      [
+        { rule: 1, file: "src/app/types.ts" },
+        { rule: 1, file: "src/modules/planning/services/server.ts" },
+        { rule: 1, file: "src/modules/projects/application/types.ts" },
+        { rule: 4, file: "src/modules/planning/services/client.ts" },
+        { rule: 4, file: "src/modules/planning/services/server.ts" },
+        { rule: 8, file: "src/types.ts" }
+      ]
+    )
+  );
+});
+
 test("Rule 4: services neither import the singleton nor open transactions", () => {
   withFixture(
     {
@@ -1123,6 +1205,62 @@ test("Rule 5: parameters do not default or fall back to the singleton", () => {
       "src/fail-fallback.ts:1",
       "src/fail-or.ts:1"
     ])
+  );
+});
+
+for (const body of [
+  "return () => tx ?? prisma;",
+  "return function () { return tx || prisma; };",
+  "function inner() { return tx ?? prisma; } return inner;",
+  "return { inner() { return tx ?? prisma; } };",
+  "return () => function () { return { inner() { function deepest() { return tx ?? prisma; } return deepest; } }; };",
+  "return () => () => { tx ??= prisma; };",
+  "return () => () => { tx ||= prisma; };",
+  "return () => class { constructor() { tx ??= prisma; } };",
+  "return { get client() { return tx ?? prisma; } };",
+  "return { set client(value: Tx) { tx ||= prisma; } };"
+]) {
+  test(`Rule 5: nested closures retain outer parameters: ${body}`, () => {
+    withFixture(
+      { "src/nested.ts": `import { prisma } from "@/lib/prisma"; function run(tx?: Tx) { ${body} }` },
+      (root) => assert.deepEqual(locations(root, 5), ["src/nested.ts:1"])
+    );
+  });
+}
+
+test("Rule 5: nested parameter shadowing does not invent a global fallback", () => {
+  withFixture(
+    {
+      "src/shadow.ts": [
+        'import { prisma } from "@/lib/prisma";',
+        'function run(tx?: Tx) {',
+        '  const a = (prisma: Tx) => () => tx ?? prisma;',
+        '  const b = function (prisma: Tx) { return tx || prisma; };',
+        '  function c(prisma: Tx) { return { inner() { return tx ?? prisma; } }; }',
+        '  const d = { inner({ prisma }: { prisma: Tx }) { return tx ?? prisma; } };',
+        '  const e = (tx: Tx) => tx ?? localClient;',
+        '  return [a, b, c, d, e];',
+        '}'
+      ].join("\n"),
+      "src/shadow-namespace.ts": 'import * as db from "@/lib/prisma"; function run(tx?: Tx) { return (db: Local) => () => tx ?? db.prisma; }'
+    },
+    (root) => assert.deepEqual(checkArchitecture(root), [])
+  );
+});
+
+test("Rule 5: a shadowing inner transaction parameter is checked once in its own scope", () => {
+  withFixture(
+    {
+      "src/shadow.ts": [
+        'import { prisma } from "@/lib/prisma";',
+        'function run(tx?: Tx) {',
+        '  const safe = (prisma: Tx) => tx ?? prisma;',
+        '  const unsafe = (tx?: Tx) => () => tx ?? prisma;',
+        '  return [safe, unsafe];',
+        '}'
+      ].join("\n")
+    },
+    (root) => assert.deepEqual(locations(root, 5), ["src/shadow.ts:4"])
   );
 });
 

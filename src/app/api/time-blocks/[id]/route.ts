@@ -14,7 +14,6 @@ import {
 type Params = { params: Promise<{ id: string }> };
 
 export async function PUT(request: NextRequest, { params }: Params) {
-  const now = clock.now();
   const { id: rawId } = await params;
   try {
     const id = parseTimeBlockPathId(rawId);
@@ -22,7 +21,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
     // Replacement validates date transitions against the stored block inside
     // the persistence transaction, so unchanged past dates remain correctable.
     const input = parseTimeBlockDraftStructure(body);
-    return NextResponse.json(await replaceTimeBlock(id, input, now));
+    return NextResponse.json(await replaceTimeBlock(id, input, clock));
   } catch (error) {
     return timeBlockMutationErrorResponse(error, "save");
   }

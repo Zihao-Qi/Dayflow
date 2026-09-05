@@ -13,7 +13,6 @@ import {
 } from "@/lib/time-blocks";
 
 export async function POST(request: NextRequest) {
-  const now = clock.now();
   try {
     const body = await readTimeBlockMutationBody(request);
     const mutationId = parseMutationId(
@@ -25,7 +24,8 @@ export async function POST(request: NextRequest) {
       kind: "time-block.create",
       payload: body,
       create: (transaction) => {
-        assertTimeBlockIsNotPast(input, now);
+        // Read after body parsing and receipt lookup; replays skip this callback.
+        assertTimeBlockIsNotPast(input, clock.now());
         return createTimeBlock(input, transaction);
       }
     });

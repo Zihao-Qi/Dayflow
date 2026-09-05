@@ -96,7 +96,7 @@ const BASELINE: ReadonlyArray<Violation & { migration: string }> = [
   baseline(6, "src/lib/journal-history.ts", 140, "Phase 3: journal services"),
   baseline(6, "src/lib/projects.ts", 148, "Phase 3: projects services"),
   baseline(6, "src/lib/projects.ts", 158, "Phase 3: projects services"),
-  baseline(6, "src/lib/time-block-persistence.ts", 52, "Phase 2: planning"),
+  baseline(6, "src/lib/time-block-persistence.ts", 53, "Phase 2: planning"),
   baseline(6, "src/lib/workspace-readiness.ts", 4, "Phase 3: read models"),
   baseline(8, "src/lib/backup-management.ts", 42, "Phase 4: backup engine")
 ];

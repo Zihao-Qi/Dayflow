@@ -36,11 +36,35 @@ async function openPaletteWithShortcut(page: Page) {
   await expect(commandInput(page)).toBeFocused();
 }
 
-test("opens from Cmd/Ctrl+K and focuses the query", async ({ page }) => {
-  await openDashboard(page);
+for (const modifier of ["Meta", "Control"]) {
+  test(`${modifier}+K opens the palette and Escape restores its opener`, async ({ page }) => {
+    await openDashboard(page);
+    const opener = page.getByRole("button", { name: /Search or add/ });
+    await opener.focus();
+    await page.keyboard.press(`${modifier}+K`);
+    await expect(commandPalette(page)).toBeVisible();
+    await expect(commandInput(page)).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(commandPalette(page)).toHaveCount(0);
+    await expect(opener).toBeFocused();
+  });
 
-  await openPaletteWithShortcut(page);
-});
+  test(`${modifier}+Shift+F prefills and expands Focus outside Today`, async ({ page }) => {
+    await openDashboard(page);
+    await page.getByRole("button", { name: "Log", exact: true }).click();
+    const rail = page.getByRole("complementary", { name: "Focus rail" });
+    await expect(rail).toHaveCount(0);
+    await page.keyboard.press(`${modifier}+Shift+F`);
+    await expect(rail).toBeVisible();
+    await expect(rail.getByRole("button", { name: "25 minutes, 5 minute break", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await expect(rail.getByRole("button", { name: "Start 25m focus", exact: true })).toBeEnabled();
+    // A second shortcut must replace a changed draft, not just reveal the rail.
+    await rail.getByRole("button", { name: "50 minutes, 10 minute break", exact: true }).click();
+    await page.keyboard.press(`${modifier}+Shift+F`);
+    await expect(rail.getByRole("button", { name: "25 minutes, 5 minute break", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await expect(rail.getByRole("button", { name: "Start 25m focus", exact: true })).toBeEnabled();
+  });
+}
 
 test("does not stack over an existing modal dialog", async ({ page }) => {
   await openDashboard(page);

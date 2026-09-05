@@ -18,6 +18,8 @@ type Violation = {
   rule: Rule;
   file: string;
   line: number;
+  // Scanner results always set this; existing baseline entries omit it for zero.
+  occurrence?: number;
   detail: string;
   baselineGroup?: "legacy-global-client-call";
 };
@@ -62,6 +64,7 @@ const MODULE_EDGES: Readonly<Record<string, ReadonlySet<string>>> = {
 // Current production ActivityEntry writes. Rule 7 scans src/**, so prisma/seed.ts
 // and scripts/** are intentionally excluded instead of allowlisted.
 const ACTIVITY_WRITE_ALLOWLIST = new Set([
+  "src/app/api/activities/[id]/route.ts:62:activityEntry.deleteMany",
   "src/app/api/activities/route.ts:36:activityEntry.create",
   "src/lib/activity-persistence.ts:79:activityEntry.updateMany",
   "src/lib/focus-sessions.ts:268:activityEntry.upsert",
@@ -114,6 +117,7 @@ function scanArchitecture(
   const activityWriteAllowlist =
     options.activityWriteAllowlist ?? ACTIVITY_WRITE_ALLOWLIST;
   const violations: Violation[] = [];
+  const occurrences = new Map<string, number>();
   const activityWrites: string[] = [];
   const legacyGlobalClientCalls: Record<string, number> = {};
   const add = (
@@ -123,10 +127,16 @@ function scanArchitecture(
     detail: string,
     baselineGroup?: Violation["baselineGroup"]
   ) => {
+    const line = lineOf(record.sourceFile, node);
+    const group = `${rule}:${record.relativePath}:${line}`;
+    // Sorted files and deterministic AST traversal keep numbering stable per rule.
+    const occurrence = occurrences.get(group) ?? 0;
+    occurrences.set(group, occurrence + 1);
     violations.push({
       rule,
       file: record.relativePath,
-      line: lineOf(record.sourceFile, node),
+      line,
+      occurrence,
       detail,
       baselineGroup
     });
@@ -192,6 +202,8 @@ function scanArchitecture(
           importsModuleServices ||
           isPrismaPackage(reference.specifier) ||
           isSingletonReference(record, reference, singletonModules) ||
+          target === "src/shell" ||
+          target?.startsWith("src/shell/") ||
           target === "src/server" ||
           target?.startsWith("src/server/")
         ) {
@@ -228,6 +240,15 @@ function scanArchitecture(
 
     const globalBindings = findGlobalClientBindings(record, singletonModules);
     visit(record.sourceFile, (node) => {
+      // Discovery identifies clients for import checks; it does not authorize
+      // new client owners beyond the explicitly named singleton modules.
+      if (
+        record.relativePath.startsWith("src/") &&
+        isNewPrismaClient(node) &&
+        !EXPLICIT_SINGLETON_MODULES.has(record.moduleKey)
+      ) {
+        add(record, 4, node, "constructs PrismaClient outside an explicit singleton module");
+      }
       if (isService && ts.isCallExpression(node) && callMethod(node) === "$transaction") {
         add(record, 4, node, "service opens a transaction");
       }
@@ -272,14 +293,10 @@ function scanArchitecture(
       }
       if (
         record.relativePath.startsWith("src/") &&
-        isStringLike(node) &&
-        /\b(?:insert(?:\s+or\s+(?:ignore|replace))?\s+into|update)\s+(?:["'`\[]\s*)?ActivityEntry(?:["'`\]]|\b)/i.test(nodeText(node))
+        isStringLike(node)
       ) {
-        const operation = /\bupdate\s+(?:["'`\[]\s*)?ActivityEntry/i.test(
-          nodeText(node)
-        )
-          ? "UPDATE"
-          : "INSERT INTO";
+        const operation = activitySqlWriteOperation(nodeText(node));
+        if (!operation) return;
         const key = `${record.relativePath}:${lineOf(record.sourceFile, node)}:SQL ${operation} ActivityEntry`;
         activityWrites.push(key);
         if (!activityWriteAllowlist.has(key)) {
@@ -366,6 +383,17 @@ function collectModuleReferences(sourceFile: ts.SourceFile): ModuleReference[] {
         typeOnly: node.isTypeOnly
       });
     } else if (
+      ts.isImportTypeNode(node) &&
+      ts.isLiteralTypeNode(node.argument) &&
+      ts.isStringLiteralLike(node.argument.literal)
+    ) {
+      references.push({
+        specifier: node.argument.literal.text,
+        node: node.argument.literal,
+        // Both import("pkg").Type and typeof import("pkg") are erased types.
+        typeOnly: true
+      });
+    } else if (
       ts.isCallExpression(node) &&
       node.arguments.length >= 1 &&
       ts.isStringLiteralLike(node.arguments[0]) &&
@@ -449,14 +477,18 @@ function addSingletonModule(
   }
 }
 
+function isNewPrismaClient(node: ts.Node) {
+  return (
+    ts.isNewExpression(node) &&
+    ((ts.isIdentifier(node.expression) && node.expression.text === "PrismaClient") ||
+      (ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === "PrismaClient"))
+  );
+}
+
 function containsNewPrismaClient(node: ts.Node) {
   let found = false;
   visit(node, (child) => {
-    if (
-      ts.isNewExpression(child) &&
-      ((ts.isIdentifier(child.expression) && child.expression.text === "PrismaClient") ||
-        (ts.isPropertyAccessExpression(child.expression) && child.expression.name.text === "PrismaClient"))
-    ) found = true;
+    if (isNewPrismaClient(child)) found = true;
   });
   return found;
 }
@@ -641,30 +673,44 @@ function findGlobalClientParameterFallbacks(
   globalBindings: ReadonlySet<string>,
   add: (node: ts.Node, detail: string) => void
 ) {
-  visit(record.sourceFile, (node) => {
-    if (!isFunctionLike(node) || !node.body) return;
-    const parameterNames = new Set<string>();
-    for (const parameter of node.parameters) {
-      collectBindingNames(parameter.name, parameterNames);
-      if (parameter.initializer && expressionContainsGlobal(parameter.initializer, globalBindings)) {
-        add(parameter, "function parameter defaults to the global Prisma client");
+  const inspect = (
+    node: ts.Node,
+    parameterNames: ReadonlySet<string>,
+    visibleGlobals: ReadonlySet<string>
+  ) => {
+    if (isFunctionLike(node)) {
+      if (!node.body) return;
+      const ownParameters = new Set<string>();
+      for (const parameter of node.parameters) {
+        collectBindingNames(parameter.name, ownParameters);
       }
+      // A shadowing parameter is still a parameter, but a shadowed imported
+      // client (including a namespace root) is no longer global in this scope.
+      const nestedParameters = new Set([...parameterNames, ...ownParameters]);
+      const nestedGlobals = new Set(
+        [...visibleGlobals].filter((binding) => !ownParameters.has(binding.split(".")[0]))
+      );
+      for (const parameter of node.parameters) {
+        if (
+          parameter.initializer &&
+          expressionContainsGlobal(parameter.initializer, nestedGlobals)
+        ) add(parameter, "function parameter defaults to the global Prisma client");
+      }
+      ts.forEachChild(node, (child) => inspect(child, nestedParameters, nestedGlobals));
+      return;
     }
-    const inspectBody = (child: ts.Node) => {
-      if (child !== node.body && isFunctionLike(child)) return;
-      if (
-        ts.isBinaryExpression(child) &&
-        (child.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken ||
-          child.operatorToken.kind === ts.SyntaxKind.BarBarToken ||
-          child.operatorToken.kind === ts.SyntaxKind.QuestionQuestionEqualsToken ||
-          child.operatorToken.kind === ts.SyntaxKind.BarBarEqualsToken) &&
-        expressionContainsGlobal(child.right, globalBindings) &&
-        expressionReferencesParameter(child.left, parameterNames)
-      ) add(child, "function parameter falls back to the global Prisma client");
-      ts.forEachChild(child, inspectBody);
-    };
-    inspectBody(node.body);
-  });
+    if (
+      ts.isBinaryExpression(node) &&
+      (node.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken ||
+        node.operatorToken.kind === ts.SyntaxKind.BarBarToken ||
+        node.operatorToken.kind === ts.SyntaxKind.QuestionQuestionEqualsToken ||
+        node.operatorToken.kind === ts.SyntaxKind.BarBarEqualsToken) &&
+      expressionContainsGlobal(node.right, visibleGlobals) &&
+      expressionReferencesParameter(node.left, parameterNames)
+    ) add(node, "function parameter falls back to the global Prisma client");
+    ts.forEachChild(node, (child) => inspect(child, parameterNames, visibleGlobals));
+  };
+  inspect(record.sourceFile, new Set(), globalBindings);
 }
 
 function isFunctionLike(node: ts.Node): node is ts.FunctionLikeDeclaration {
@@ -737,7 +783,7 @@ function activityWriteMethod(call: ts.CallExpression): string | null {
   const method = callMethod(call);
   if (
     !method ||
-    !["create", "upsert", "createMany", "update", "updateMany"].includes(method)
+    !["create", "upsert", "createMany", "update", "updateMany", "delete", "deleteMany"].includes(method)
   ) return null;
   const callee = call.expression;
   if (!ts.isPropertyAccessExpression(callee) && !ts.isElementAccessExpression(callee)) return null;
@@ -768,6 +814,23 @@ function isStringLike(node: ts.Node): node is ts.StringLiteralLike | ts.Template
 
 function nodeText(node: ts.StringLiteralLike | ts.TemplateExpression) {
   return ts.isStringLiteralLike(node) ? node.text : node.getText();
+}
+
+function activitySqlWriteOperation(sql: string): "INSERT INTO" | "UPDATE" | "DELETE FROM" | null {
+  // A schema may be bare, double-quoted, bracketed, or backtick-quoted.
+  // Double quotes and backticks escape themselves by doubling.
+  const schema = /(?:[a-z_\u0080-\uffff][\w$\u0080-\uffff]*|"(?:[^"]|"")+"|\[[^\]]+\]|`(?:[^`]|``)+`)/.source;
+  // Retain single-quoted tables too, but require the whole identifier to match.
+  // The dot check prevents treating an ActivityEntry schema as the target table.
+  const table = /(?:"ActivityEntry"|\[ActivityEntry\]|`ActivityEntry`|'ActivityEntry'|ActivityEntry)(?![\w$\u0080-\uffff"'`\]])(?!\s*\.)/.source;
+  const match = new RegExp(
+    `\\b(insert(?:\\s+or\\s+(?:ignore|replace))?\\s+into|update|delete\\s+from)\\s+(?:${schema}\\s*\\.\\s*)?${table}`,
+    "i"
+  ).exec(sql);
+  if (!match) return null;
+  const operation = match[1].toUpperCase();
+  if (operation === "UPDATE") return "UPDATE";
+  return operation.startsWith("DELETE") ? "DELETE FROM" : "INSERT INTO";
 }
 
 function isPrismaPackage(specifier: string) {
@@ -815,12 +878,13 @@ function compareViolations(left: Violation, right: Violation) {
     left.rule - right.rule ||
     left.file.localeCompare(right.file) ||
     left.line - right.line ||
+    (left.occurrence ?? 0) - (right.occurrence ?? 0) ||
     left.detail.localeCompare(right.detail)
   );
 }
 
-function violationKey(violation: Pick<Violation, "rule" | "file" | "line">) {
-  return `${violation.rule}:${violation.file}:${violation.line}`;
+function violationKey(violation: Pick<Violation, "rule" | "file" | "line" | "occurrence">) {
+  return `${violation.rule}:${violation.file}:${violation.line}:${violation.occurrence ?? 0}`;
 }
 
 function withFixture(files: Record<string, string>, run: (root: string) => void) {
@@ -900,6 +964,83 @@ test("Rule 3: ui does not reach services, Prisma, or server", () => {
   );
 });
 
+test("Rule 3: module UI consumes callbacks without importing shell state or composition", () => {
+  withFixture(
+    {
+      "src/shell/use-shell-state.ts": "export type ShellState = { ready: boolean };\n",
+      "src/shell/index.ts": "export {};\n",
+      "src/modules/review/ui/pass.ts": "export function save(replace: (value: string) => void) { replace('saved'); }\n",
+      "src/modules/review/ui/fail-type.ts": 'import type { ShellState } from "@/shell/use-shell-state";\n',
+      "src/modules/review/ui/fail-relative.ts": 'export * from "../../../shell/use-shell-state";\n',
+      "src/modules/review/ui/fail-root.ts": 'import "@/shell";\n',
+      "src/modules/review/ui/fail-dynamic.ts": 'void import("@/shell/use-shell-state");\n'
+    },
+    (root) => assert.deepEqual(locations(root, 3), [
+      "src/modules/review/ui/fail-dynamic.ts:1",
+      "src/modules/review/ui/fail-relative.ts:1",
+      "src/modules/review/ui/fail-root.ts:1",
+      "src/modules/review/ui/fail-type.ts:1"
+    ])
+  );
+});
+
+for (const [layer, rule] of [["domain", 2], ["ui", 3]] as const) {
+  for (const source of [
+    'type DB = import("@prisma/client").PrismaClient;',
+    'type DB = typeof import("@prisma/client");',
+    'function nested() { return () => { type DB = { client: Promise<import("@prisma/client").PrismaClient> }; }; }'
+  ]) {
+    test(`Rule ${rule}: import type nodes in ${layer}: ${source}`, () => {
+      const file = `src/modules/planning/${layer}/types.ts`;
+      withFixture({ [file]: source }, (root) => {
+        assert.deepEqual(locations(root, rule), [`${file}:1`]);
+      });
+    });
+  }
+}
+
+test("Import type nodes preserve permitted type-only dependencies", () => {
+  withFixture(
+    {
+      "src/modules/planning/services/types.ts": [
+        'import type { Prisma } from "@prisma/client";',
+        'type Tx = import("@prisma/client").Prisma.TransactionClient;',
+        'type DB = typeof import("@prisma/client");',
+        'type Runtime = typeof import("@prisma/client/runtime/library");'
+      ].join("\n"),
+      "src/modules/planning/domain/types.ts": [
+        'type Task = import("./task").Task;',
+        'type Error = import("@/shared/kernel/errors").DomainError;'
+      ].join("\n"),
+      "src/modules/planning/ui/types.ts": 'type Task = import("../domain/task").Task;'
+    },
+    (root) => assert.deepEqual(checkArchitecture(root), [])
+  );
+});
+
+test("Import type nodes enforce module, singleton, server, and script boundaries", () => {
+  withFixture(
+    {
+      "src/modules/projects/application/types.ts": 'type T = import("@/modules/review/domain/types").T;',
+      "src/app/types.ts": 'type T = import("@/modules/planning/services/types").T;',
+      "src/modules/planning/services/client.ts": 'type T = typeof import("@/lib/prisma");',
+      "src/modules/planning/services/server.ts": 'type T = typeof import("@/server/http");',
+      "src/types.ts": 'type T = typeof import("../scripts/task");'
+    },
+    (root) => assert.deepEqual(
+      checkArchitecture(root).map(({ rule, file }) => ({ rule, file })),
+      [
+        { rule: 1, file: "src/app/types.ts" },
+        { rule: 1, file: "src/modules/planning/services/server.ts" },
+        { rule: 1, file: "src/modules/projects/application/types.ts" },
+        { rule: 4, file: "src/modules/planning/services/client.ts" },
+        { rule: 4, file: "src/modules/planning/services/server.ts" },
+        { rule: 8, file: "src/types.ts" }
+      ]
+    )
+  );
+});
+
 test("Rule 4: services neither import the singleton nor open transactions", () => {
   withFixture(
     {
@@ -914,6 +1055,53 @@ test("Rule 4: services neither import the singleton nor open transactions", () =
       "src/modules/planning/services/fail-prisma-subpath.ts:1",
       "src/modules/planning/services/fail-transaction.ts:1"
     ])
+  );
+});
+
+test("Rule 4: stray PrismaClient construction is actionable without legacy calls", () => {
+  withFixture(
+    {
+      "src/lib/stray.ts": [
+        'import { PrismaClient } from "@prisma/client";',
+        "const database = new PrismaClient();",
+        "export const list = () => database.task.findMany();"
+      ].join("\n"),
+      "src/lib/exported.ts": 'export const database = new PrismaClient();\n',
+      "src/lib/namespace.ts": 'import * as Prisma from "@prisma/client";\nconst database = new Prisma.PrismaClient();\n',
+      "src/app/stray.ts": "const database = new PrismaClient();\n",
+      "src/modules/planning/services/stray.ts": "const database = new PrismaClient();\n",
+      "src/server/stray.ts": "const database = new PrismaClient();\n"
+    },
+    (root) => {
+      const report = scanArchitecture(root);
+      assert.deepEqual(report.legacyGlobalClientCalls, {});
+      assert.deepEqual(
+        report.violations.map(({ rule, file, line, baselineGroup }) => ({ rule, file, line, baselineGroup })),
+        [
+          ["src/app/stray.ts", 1],
+          ["src/lib/exported.ts", 1],
+          ["src/lib/namespace.ts", 2],
+          ["src/lib/stray.ts", 2],
+          ["src/modules/planning/services/stray.ts", 1],
+          ["src/server/stray.ts", 1]
+        ].map(([file, line]) => ({ rule: 4, file, line, baselineGroup: undefined }))
+      );
+      assert.ok(report.violations.every(({ detail }) => detail.includes("constructs PrismaClient")));
+    }
+  );
+});
+
+test("Rule 4: canonical clients, scripts, and tests may construct PrismaClient", () => {
+  const source = 'import { PrismaClient } from "@prisma/client"; export const prisma = new PrismaClient();\n';
+  withFixture(
+    {
+      ...Object.fromEntries([...EXPLICIT_SINGLETON_MODULES].map((key) => [`${key}.ts`, source])),
+      "scripts/database.ts": source,
+      "tests/database.test.ts": source,
+      "src/lib/unrelated.ts": "const client = new OtherClient();\n",
+      "src/lib/prisma-barrel.ts": 'export { prisma } from "@/lib/prisma";\n'
+    },
+    (root) => assert.deepEqual(checkArchitecture(root), [])
   );
 });
 
@@ -1035,6 +1223,62 @@ test("Rule 5: parameters do not default or fall back to the singleton", () => {
   );
 });
 
+for (const body of [
+  "return () => tx ?? prisma;",
+  "return function () { return tx || prisma; };",
+  "function inner() { return tx ?? prisma; } return inner;",
+  "return { inner() { return tx ?? prisma; } };",
+  "return () => function () { return { inner() { function deepest() { return tx ?? prisma; } return deepest; } }; };",
+  "return () => () => { tx ??= prisma; };",
+  "return () => () => { tx ||= prisma; };",
+  "return () => class { constructor() { tx ??= prisma; } };",
+  "return { get client() { return tx ?? prisma; } };",
+  "return { set client(value: Tx) { tx ||= prisma; } };"
+]) {
+  test(`Rule 5: nested closures retain outer parameters: ${body}`, () => {
+    withFixture(
+      { "src/nested.ts": `import { prisma } from "@/lib/prisma"; function run(tx?: Tx) { ${body} }` },
+      (root) => assert.deepEqual(locations(root, 5), ["src/nested.ts:1"])
+    );
+  });
+}
+
+test("Rule 5: nested parameter shadowing does not invent a global fallback", () => {
+  withFixture(
+    {
+      "src/shadow.ts": [
+        'import { prisma } from "@/lib/prisma";',
+        'function run(tx?: Tx) {',
+        '  const a = (prisma: Tx) => () => tx ?? prisma;',
+        '  const b = function (prisma: Tx) { return tx || prisma; };',
+        '  function c(prisma: Tx) { return { inner() { return tx ?? prisma; } }; }',
+        '  const d = { inner({ prisma }: { prisma: Tx }) { return tx ?? prisma; } };',
+        '  const e = (tx: Tx) => tx ?? localClient;',
+        '  return [a, b, c, d, e];',
+        '}'
+      ].join("\n"),
+      "src/shadow-namespace.ts": 'import * as db from "@/lib/prisma"; function run(tx?: Tx) { return (db: Local) => () => tx ?? db.prisma; }'
+    },
+    (root) => assert.deepEqual(checkArchitecture(root), [])
+  );
+});
+
+test("Rule 5: a shadowing inner transaction parameter is checked once in its own scope", () => {
+  withFixture(
+    {
+      "src/shadow.ts": [
+        'import { prisma } from "@/lib/prisma";',
+        'function run(tx?: Tx) {',
+        '  const safe = (prisma: Tx) => tx ?? prisma;',
+        '  const unsafe = (tx?: Tx) => () => tx ?? prisma;',
+        '  return [safe, unsafe];',
+        '}'
+      ].join("\n")
+    },
+    (root) => assert.deepEqual(locations(root, 5), ["src/shadow.ts:4"])
+  );
+});
+
 test("Rule 6: transaction roots are confined to their allowlisted directories", () => {
   withFixture(
     {
@@ -1043,6 +1287,139 @@ test("Rule 6: transaction roots are confined to their allowlisted directories", 
     },
     (root) => assert.deepEqual(locations(root, 6), ["src/lib/fail.ts:1"])
   );
+});
+
+test("Baseline identity: a second same-line transaction remains actionable", () => {
+  const file = "src/lib/transactions.ts";
+  const known = baseline(6, file, 1, "fixture migration");
+  withFixture(
+    { [file]: "database.$transaction(() => null); database.$transaction(() => null);\n" },
+    (root) => {
+      const report = scanArchitecture(root);
+      const baselineByKey = new Map([[violationKey(known), known]]);
+      const actionable = report.violations.filter((entry) => !baselineByKey.has(violationKey(entry)));
+      assert.equal(report.violations.length, 2);
+      assert.equal(actionable.length, 1);
+      assert.deepEqual(report.violations.map(violationKey), [`6:${file}:1:0`, `6:${file}:1:1`]);
+      assert.equal(violationKey(known), `6:${file}:1:0`);
+      assert.equal(violationKey(actionable[0]), `6:${file}:1:1`);
+      assert.deepEqual(report.legacyGlobalClientCalls, {});
+      const secondKnown = { ...known, occurrence: 1 };
+      assert.equal(violationKey(secondKnown), violationKey(actionable[0]));
+    }
+  );
+});
+
+test("Baseline identity: another rule on the same line does not shift occurrences", () => {
+  const file = "src/lib/transactions.ts";
+  const source = "database.$transaction(() => null); database.$transaction(() => null);\n";
+  withFixture({ [file]: source }, (root) => {
+    const before = checkArchitecture(root).map(violationKey);
+    writeFileSync(join(root, file), 'import "../../scripts/helper"; ' + source);
+    const after = checkArchitecture(root);
+    assert.deepEqual(after.filter(({ rule }) => rule === 6).map(violationKey), before);
+    assert.deepEqual(after.filter(({ rule }) => rule === 8).map(violationKey), [`8:${file}:1:0`]);
+    assert.equal(before[0], violationKey(baseline(6, file, 1, "fixture migration")));
+  });
+});
+
+test("Baseline identity: removing a transaction makes its baseline stale", () => {
+  const file = "src/lib/transactions.ts";
+  const entries = [baseline(6, file, 1, "fixture migration")];
+  withFixture({ [file]: "database.$transaction(() => null);\n" }, (root) => {
+    const staleEntries = () => {
+      const actualByKey = new Map(checkArchitecture(root).map((entry) => [violationKey(entry), entry]));
+      return entries.filter((entry) => !actualByKey.has(violationKey(entry)));
+    };
+    assert.deepEqual(staleEntries(), []);
+    writeFileSync(join(root, file), "export const removed = true;\n");
+    assert.deepEqual(staleEntries(), entries);
+  });
+});
+
+for (const verb of ["UPDATE", "INSERT INTO", "INSERT OR IGNORE INTO", "INSERT OR REPLACE INTO", "DELETE FROM"]) {
+  test(`Rule 7: qualified ${verb} matches schema and table quoting variants`, () => {
+    const schemas = ["main", '"ma""in"', "[main schema]", "`ma``in`"];
+    const tables = ["ActivityEntry", '"ActivityEntry"', "[ActivityEntry]", "`ActivityEntry`", "'ActivityEntry'"];
+    const files: Record<string, string> = {};
+    for (const [schemaIndex, schema] of schemas.entries()) {
+      for (const [tableIndex, table] of tables.entries()) {
+        const tail = verb === "DELETE FROM" ? " WHERE id = 1" : verb === "UPDATE" ? " SET id = 1" : " (id) VALUES (1)";
+        const sql = `${verb.toLowerCase().replaceAll(" ", "\t")} ${schema} \n.\t ${table}${tail}`;
+        files[`src/write-${schemaIndex}-${tableIndex}.ts`] = `export const sql = ${JSON.stringify(sql)};\n`;
+      }
+    }
+    // Include the exact qualified spelling from the report and an unqualified control.
+    const tail = verb === "DELETE FROM" ? " WHERE id = 1" : verb === "UPDATE" ? " SET id = 1" : " (id) VALUES (1)";
+    files["src/exact.ts"] = `export const sql = ${JSON.stringify(`${verb} main."ActivityEntry"${tail}`)};\n`;
+    files["src/control.ts"] = `export const sql = ${JSON.stringify(`${verb} "ActivityEntry"${tail}`)};\n`;
+    withFixture(files, (root) => {
+      const report = scanArchitecture(root);
+      const operation = verb.startsWith("INSERT") ? "INSERT INTO" : verb;
+      assert.deepEqual(
+        report.activityWrites,
+        Object.keys(files).map((file) => `${file}:1:SQL ${operation} ActivityEntry`).sort()
+      );
+      assert.deepEqual(
+        report.violations.map(({ rule, file, detail }) => ({ rule, file, detail })),
+        Object.keys(files).sort().map((file) => ({
+          rule: 7, file, detail: `SQL ${operation} ActivityEntry is not allowlisted`
+        }))
+      );
+    });
+  });
+}
+
+test("Rule 7: qualified writes retain the existing allowlist key spelling", () => {
+  const activityWriteAllowlist = new Set([
+    "src/delete.ts:1:SQL DELETE FROM ActivityEntry",
+    "src/insert.ts:1:SQL INSERT INTO ActivityEntry",
+    "src/update.ts:1:SQL UPDATE ActivityEntry"
+  ]);
+  withFixture(
+    {
+      "src/delete.ts": 'export const sql = `DELETE FROM "main" . [ActivityEntry] WHERE id = 1`;\n',
+      "src/insert.ts": 'export const sql = `INSERT OR IGNORE INTO main."ActivityEntry" (id) VALUES (1)`;\n',
+      "src/update.ts": 'export const sql = `UPDATE "main" . [ActivityEntry] SET id = 1`;\n'
+    },
+    (root) => {
+      const report = scanArchitecture(root, { activityWriteAllowlist });
+      assert.deepEqual(report.violations, []);
+      assert.deepEqual(report.activityWrites, [...activityWriteAllowlist].sort());
+    }
+  );
+});
+
+test("Rule 7: SQL operation comes from the same Activity write match", () => {
+  withFixture(
+    {
+      "src/write.ts": 'export const sql = `INSERT INTO main."ActivityEntry" (id) VALUES (1); UPDATE "ActivityEntry" SET id = 2`;\n'
+    },
+    (root) => assert.deepEqual(scanArchitecture(root).activityWrites, [
+      "src/write.ts:1:SQL INSERT INTO ActivityEntry"
+    ])
+  );
+});
+
+test("Rule 7: unrelated and suffixed SQL table names do not match", () => {
+  const tables = [
+    "Task", "ActivityEntryArchive", "ActivityEntry_backup", "ActivityEntry$archive", "ActivityEntryé",
+    '"ActivityEntryArchive"', '"ActivityEntry archive"', '"ActivityEntry""archive"',
+    "[ActivityEntryArchive]", "`ActivityEntryArchive`", "`ActivityEntry``archive`", "'ActivityEntryArchive'"
+  ];
+  const files: Record<string, string> = {};
+  for (const [index, table] of tables.entries()) {
+    for (const [prefixIndex, prefix] of ["", "main.", '"main" . ', "[main] . ", "`main` . "].entries()) {
+      const sql = `UPDATE ${prefix}${table} SET id = 1; INSERT OR IGNORE INTO ${prefix}${table} (id) VALUES (1); DELETE FROM ${prefix}${table} WHERE id = 1`;
+      files[`src/negative-${index}-${prefixIndex}.ts`] = `export const sql = ${JSON.stringify(sql)};\n`;
+    }
+  }
+  files["src/schema-only.ts"] = 'export const sql = `UPDATE ActivityEntry.Task SET id = 1; INSERT INTO "ActivityEntry" . "Task" (id) VALUES (1); DELETE FROM "ActivityEntry" . "Task" WHERE id = 1`;\n';
+  withFixture(files, (root) => {
+    const report = scanArchitecture(root);
+    assert.deepEqual(report.activityWrites, []);
+    assert.deepEqual(report.violations, []);
+  });
 });
 
 test("Rule 7: every ActivityEntry write has a call-site allowlist entry", () => {
@@ -1090,6 +1467,35 @@ test("Rule 7: ActivityEntry updates and raw SQL updates require allowlisting", (
       }),
       ["src/fail-sql.ts:1", "src/fail-update-many.ts:1"]
     )
+  );
+});
+
+test("Rule 7: ActivityEntry deletions require exact call-site allowlisting", () => {
+  const activityWriteAllowlist = new Set(["src/allowed.ts:1:activityEntry.deleteMany"]);
+  withFixture(
+    {
+      "src/allowed.ts": "database.activityEntry.deleteMany({});\n",
+      "src/delete.ts": "database.activityEntry.delete({});\n",
+      "src/delete-many.ts": "database.activityEntry.deleteMany({});\n",
+      "src/unrelated.ts": "database.task.delete({}); database.task.deleteMany({});\n",
+      "scripts/delete.ts": "database.activityEntry.deleteMany({});\n",
+      "tests/delete.test.ts": "database.activityEntry.delete({});\n"
+    },
+    (root) => {
+      const report = scanArchitecture(root, { activityWriteAllowlist });
+      assert.deepEqual(report.activityWrites, [
+        "src/allowed.ts:1:activityEntry.deleteMany",
+        "src/delete-many.ts:1:activityEntry.deleteMany",
+        "src/delete.ts:1:activityEntry.delete"
+      ]);
+      assert.deepEqual(
+        report.violations.map(({ rule, file, line }) => ({ rule, file, line })),
+        [
+          { rule: 7, file: "src/delete-many.ts", line: 1 },
+          { rule: 7, file: "src/delete.ts", line: 1 }
+        ]
+      );
+    }
   );
 });
 

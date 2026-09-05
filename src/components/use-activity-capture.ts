@@ -1,22 +1,19 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
-import {
-  ACTIVITY_CATEGORY_MAX_LENGTH,
-  DEFAULT_ACTIVITY_CATEGORY
-} from "@/lib/activity-categories";
-import { localDateKey, parseLocalDate } from "@/lib/dates";
-import { formatLongLocalDateKey } from "@/components/dashboard-formatters";
+import { mutationIdFor, type PendingMutation } from "@/shared/client/mutation-ids";
+import { saveActivity as saveActivityRequest } from "@/modules/evidence/ui/api";
+import { ApiError } from "@/shared/client/api-client";
 import {
   ActivityDraft,
   ActivityEditor,
   ActivityEntry,
   ActivityTaskOption,
-  PendingMutation,
-  formatTimeInput,
-  isActivityResponse,
-  mutationIdFor
+  formatTimeInput
 } from "@/components/activity-records";
+import { formatLongLocalDateKey } from "@/components/dashboard-formatters";
+import { ACTIVITY_CATEGORY_MAX_LENGTH, DEFAULT_ACTIVITY_CATEGORY } from "@/lib/activity-categories";
+import { localDateKey, parseLocalDate } from "@/lib/dates";
+import { useMemo, useRef, useState } from "react";
 
 type TaskRecord = { id: string; title: string; projectId: string | null };
 
@@ -211,56 +208,8 @@ export function useActivityCapture({
       : mutationIdFor(createMutation, payload);
     setSaving(true);
     try {
-      const response = await fetch(
-        activeEditor
-          ? `/api/activities/${encodeURIComponent(activeEditor.original.id)}`
-          : "/api/activities",
-        {
-          method: activeEditor ? "PUT" : "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(mutationId ? { "X-Dayflow-Mutation-Id": mutationId } : {})
-          },
-          body: JSON.stringify(payload)
-        }
-      );
-      const result = await response.json().catch(() => null);
-      const expectedDate = activeEditor
-        ? localDateKey(new Date(activeEditor.original.startedAt))
-        : selectedDate;
-      if (
-        !response.ok ||
-        !isActivityResponse(result) ||
-        (activeEditor && result.id !== activeEditor.original.id) ||
-        (activeEditor && result.createdAt !== activeEditor.original.createdAt) ||
-        (activeEditor &&
-          Date.parse(result.updatedAt) <=
-            Date.parse(activeEditor.original.updatedAt)) ||
-        result.origin !== "MANUAL" ||
-        result.focusSessionId !== null ||
-        localDateKey(new Date(result.startedAt)) !== expectedDate ||
-        formatTimeInput(new Date(result.startedAt)) !== editable.startTime ||
-        result.note !== payload.note ||
-        result.durationMinutes !== payload.durationMinutes ||
-        result.category !== payload.category ||
-        result.taskId !== editable.taskId ||
-        result.projectId !== editable.projectId ||
-        result.attributedProjectId !== expectedAttributedProjectId
-      ) {
-        setError(
-          result && typeof result.error === "string"
-            ? result.error
-            : activeEditor
-              ? "Activity could not be updated. Your draft is still here."
-              : "Activity could not be saved. Your draft is still here."
-        );
-        if (activeEditor) {
-          editWasInError.current = true;
-        } else {
-          createWasInError.current = true;
-        }
-        return;
-      }
+      const result = await saveActivityRequest(activeEditor, editable, payload, selectedDate, expectedAttributedProjectId, mutationId);
+
       if (activeEditor) {
         replaceActivity(result);
         setEditor(null);
@@ -289,7 +238,19 @@ export function useActivityCapture({
         announce("Saved.");
       }
       await refreshAfterConfirmedMutation();
-    } catch {
+    } catch (failure) {
+      if (failure instanceof ApiError) {
+        setError(
+          failure.message
+        );
+        if (activeEditor) {
+          editWasInError.current = true;
+        } else {
+          createWasInError.current = true;
+        }
+        return;
+      }
+
       setError(
         activeEditor
           ? "Activity could not be updated. Your draft is still here."

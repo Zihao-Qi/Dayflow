@@ -72,12 +72,12 @@ export function useViewedDay(
     : Promise.resolve(true);
 
   function updatePayload(update: (payload: ViewedDayPayload) => ViewedDayPayload) {
-    // Local edits supersede older reads; a later read replaces the payload.
+    // Confirmed responses stay visible even if the following read fails.
     owner.invalidate();
     setState((current) => current.payload ? { ...current, payload: update(current.payload) } : current);
   }
   function patchTask(id: string, patch: Partial<Task>) {
-    // An unconfirmed edit outranks older reads but never fails a running refresh.
+    // An unconfirmed edit outranks older reads; an immediate successor supplies their outcome.
     owner.outrank();
     setState((current) => current.payload
       ? {

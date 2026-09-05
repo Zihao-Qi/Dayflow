@@ -57,6 +57,24 @@ test(
         "Dayflow's local database needs an update. Stop Dayflow, run `npm run db:migrate`, then start Dayflow again."
     });
 
+    // An unexpected failure must produce the generic 500 envelope. Corrupting the
+    // database file injects one below the Prisma client, so the check holds
+    // whether the route reads through the global client or a transaction.
+    await prisma.$disconnect();
+    writeFileSync(databasePath, "not a sqlite database");
+    const originalConsoleError = console.error;
+    console.error = () => undefined;
+    try {
+      const internal = await loadBootstrap();
+      assert.equal(internal.status, 500);
+      assert.deepEqual(await internal.json(), {
+        code: "INTERNAL_ERROR",
+        error: "Dayflow could not open its local data. Try again."
+      });
+    } finally {
+      console.error = originalConsoleError;
+    }
+
     await context.test("a missing table also keeps the migration-required envelope", async () => {
       await prisma.$disconnect();
       rmSync(databasePath);
@@ -75,23 +93,5 @@ test(
           "Dayflow's local database needs an update. Stop Dayflow, run `npm run db:migrate`, then start Dayflow again."
       });
     });
-
-    // An unexpected failure must produce the generic 500 envelope. Corrupting the
-    // database file injects one below the Prisma client, so the check holds
-    // whether the route reads through the global client or a transaction.
-    await prisma.$disconnect();
-    writeFileSync(databasePath, "not a sqlite database");
-    const originalConsoleError = console.error;
-    console.error = () => undefined;
-    try {
-      const internal = await loadBootstrap();
-      assert.equal(internal.status, 500);
-      assert.deepEqual(await internal.json(), {
-        code: "INTERNAL_ERROR",
-        error: "Dayflow could not open its local data. Try again."
-      });
-    } finally {
-      console.error = originalConsoleError;
-    }
   }
 );

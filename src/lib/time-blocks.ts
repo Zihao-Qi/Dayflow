@@ -1,15 +1,19 @@
 import {
-  requireObject as kernelRequireObject,
-  readJsonBody,
-  parseBoundedInteger,
-  parseRecordId,
-  parseBoundedString,
-  parseNullableLocalDate
-} from "@/shared/kernel/parsing";
-import {
   parseLocalDate,
   startOfLocalDay
 } from "@/lib/dates";
+import { appErrorConstructor } from "@/lib/error-compat";
+import { requestErrors } from "@/lib/request-errors";
+import { timeBlockErrors } from "@/lib/time-block-errors";
+import { AppError, validation } from "@/shared/kernel/errors";
+import {
+  requireObject as kernelRequireObject,
+  parseBoundedInteger,
+  parseBoundedString,
+  parseNullableLocalDate,
+  parseRecordId,
+  readJsonBody
+} from "@/shared/kernel/parsing";
 
 export const TIME_BLOCK_TITLE_MAX_LENGTH = 500;
 export const TIME_BLOCK_ID_MAX_LENGTH = 191;
@@ -62,17 +66,16 @@ export type TimeBlockErrorCode =
   | "RELATIONSHIP_CONFLICT"
   | "TIME_BLOCK_OVERLAP";
 
-export class TimeBlockError extends Error {
-  constructor(
+/** @deprecated Compatibility constructor for existing callers; returns AppError. */
+export const TimeBlockError = appErrorConstructor(
+  (
     message: string,
-    readonly code: TimeBlockErrorCode,
-    readonly status: 400 | 404 | 409,
-    readonly field?: string
-  ) {
-    super(message);
-    this.name = "TimeBlockError";
-  }
-}
+    code: TimeBlockErrorCode,
+    status: 400 | 404 | 409,
+    field?: string
+  ) => new AppError({ status, message, code, ...(field ? { field } : {}) })
+);
+export type TimeBlockError = AppError;
 
 export async function readTimeBlockMutationBody(request: {
   json(): Promise<unknown>;
@@ -80,9 +83,8 @@ export async function readTimeBlockMutationBody(request: {
   const body = await readJsonBody(
     request,
     "body",
-    "Request body must be valid JSON.",
-    (message, field) =>
-      new TimeBlockError(message, "INVALID_JSON", 400, field)
+    requestErrors.invalidJson.message,
+    () => new AppError(requestErrors.invalidJson)
   );
   return requireObject(body);
 }
@@ -105,12 +107,7 @@ export function parseTimeBlockDraftStructure(
   const endTime = parseTimeBlockTime(body.endTime, "endTime");
 
   if (timeBlockTimeToMinutes(startTime) >= timeBlockTimeToMinutes(endTime)) {
-    throw new TimeBlockError(
-      "Time Block end time must be later than its start time.",
-      "VALIDATION_ERROR",
-      400,
-      "endTime"
-    );
+    throw new AppError(timeBlockErrors.timeBlockEndTimeMustBeLaterThanItsStartTime);
   }
 
   return {
@@ -139,12 +136,7 @@ export function assertTimeBlockIsNotPast(
   now = new Date()
 ) {
   if (draft.date.getTime() < startOfLocalDay(now).getTime()) {
-    throw new TimeBlockError(
-      "Time Blocks cannot be planned for a day that has already ended.",
-      "VALIDATION_ERROR",
-      400,
-      "date"
-    );
+    throw new AppError(timeBlockErrors.timeBlocksCannotBePlannedForADayThatHasAlready);
   }
 }
 
@@ -152,7 +144,7 @@ export function parseTimeBlockPathId(value: unknown) {
   return parseRecordId(
     value,
     "id",
-    "Time Block identifier is invalid.",
+    timeBlockErrors.timeBlockIdentifierIsInvalid.message,
     validationError,
     {
       maximumLength: TIME_BLOCK_ID_MAX_LENGTH,
@@ -169,12 +161,7 @@ export function parseTimeBlockTime(
     typeof value !== "string" ||
     !/^([01]\d|2[0-3]):[0-5]\d$/.test(value)
   ) {
-    throw new TimeBlockError(
-      `Time Block ${field === "startTime" ? "start" : "end"} time must use HH:mm.`,
-      "VALIDATION_ERROR",
-      400,
-      field
-    );
+    throw validation(`Time Block ${field === "startTime" ? "start" : "end"} time must use HH:mm.`, field);
   }
   return value;
 }
@@ -188,7 +175,7 @@ export function timeBlockTimeToMinutes(value: string) {
 export function minutesToTimeBlockTime(value: number) {
   parseBoundedInteger(
     value, "time", 0, TIME_BLOCK_LAST_MINUTE,
-    "Time Block minutes must identify a time from 00:00 through 23:59.", validationError
+    timeBlockErrors.timeBlockMinutesMustIdentifyATimeFrom0000Through2359.message, validationError
   );
   const hours = Math.floor(value / 60);
   const minutes = value % 60;
@@ -205,12 +192,7 @@ export function timeBlockIntervalToMinutes(
     endMinutes: timeBlockTimeToMinutes(endTime)
   };
   if (result.startMinutes >= result.endMinutes) {
-    throw new TimeBlockError(
-      "Time Block end time must be later than its start time.",
-      "VALIDATION_ERROR",
-      400,
-      "endTime"
-    );
+    throw new AppError(timeBlockErrors.timeBlockEndTimeMustBeLaterThanItsStartTime);
   }
   return result;
 }
@@ -243,7 +225,7 @@ export function timeBlockIntervalsOverlap(
 
 function requireObject(value: unknown): JsonObject {
   return kernelRequireObject(
-    value, "body", "Request body must be a JSON object.", validationError
+    value, "body", requestErrors.objectRequired.message, validationError
   );
 }
 
@@ -251,7 +233,7 @@ function parseTimeBlockDate(value: unknown) {
   return parseNullableLocalDate(
     value,
     "date",
-    "Time Block date must be a valid local date in YYYY-MM-DD format.",
+    timeBlockErrors.timeBlockDateMustBeAValidLocalDateInYYYYMMDD.message,
     validationError,
     {
       nullValues: [],
@@ -266,12 +248,12 @@ function parseTimeBlockTitle(value: unknown) {
   return parseBoundedString(
     value,
     "title",
-    "Time Block title is required.",
+    timeBlockErrors.timeBlockTitleIsRequired.message,
     validationError,
     {
       maximumLength: TIME_BLOCK_TITLE_MAX_LENGTH,
       lengthMessage: `Time Block title must be ${TIME_BLOCK_TITLE_MAX_LENGTH} characters or fewer.`,
-      emptyMessage: "Time Block title is required.",
+      emptyMessage: timeBlockErrors.timeBlockTitleIsRequired.message,
       trim: true
     }
   );
@@ -286,7 +268,7 @@ export function parseTimeBlockTaskId(value: unknown) {
 }
 
 function validationError(message: string, field: string) {
-  return new TimeBlockError(message, "VALIDATION_ERROR", 400, field);
+  return validation(message, field);
 }
 
 export { isTimeBlockRecord } from "@/modules/planning/ui/time-block-model";

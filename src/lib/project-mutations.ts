@@ -1,14 +1,17 @@
-import {
-  requireObject as kernelRequireObject,
-  readJsonBody,
-  parseBoundedInteger as kernelParseBoundedInteger,
-  has,
-  parseEnum,
-  parseRecordId,
-  parseBoundedString,
-  parseNullableLocalDate
-} from "@/shared/kernel/parsing";
 import { parseLocalDate } from "@/lib/dates";
+import { projectErrors } from "@/lib/project-errors";
+import { requestErrors } from "@/lib/request-errors";
+import { AppError, validation } from "@/shared/kernel/errors";
+import {
+  has,
+  parseBoundedInteger as kernelParseBoundedInteger,
+  requireObject as kernelRequireObject,
+  parseBoundedString,
+  parseEnum,
+  parseNullableLocalDate,
+  parseRecordId,
+  readJsonBody
+} from "@/shared/kernel/parsing";
 
 export const PROJECT_NAME_MAX_LENGTH = 500;
 export const PROJECT_OUTCOME_MAX_LENGTH = 5_000;
@@ -68,17 +71,8 @@ export type PhasePatchMutation = {
   sortOrder?: number;
 };
 
-export class ProjectMutationRequestError extends Error {
-  constructor(
-    message: string,
-    readonly field: string,
-    readonly code: ProjectMutationErrorCode = "VALIDATION_ERROR",
-    readonly status: 400 | 404 | 409 = 400
-  ) {
-    super(message);
-    this.name = "ProjectMutationRequestError";
-  }
-}
+/** @deprecated Compatibility constructor for existing callers; returns AppError. */
+export { AppError as ProjectMutationRequestError };
 
 export async function readProjectMutationBody(request: {
   json(): Promise<unknown>;
@@ -86,9 +80,8 @@ export async function readProjectMutationBody(request: {
   const body = await readJsonBody(
     request,
     "body",
-    "Request body must be valid JSON.",
-    (message, field) =>
-      new ProjectMutationRequestError(message, field, "INVALID_JSON")
+    requestErrors.invalidJson.message,
+    () => new AppError(requestErrors.invalidJson)
   );
   return requireObject(body);
 }
@@ -133,7 +126,7 @@ export function parseProjectCreateMutation(
       body.weeklyMinutesBudget,
       "weeklyMinutesBudget",
       PROJECT_WEEKLY_BUDGET_MAX_MINUTES,
-      `Weekly effort budget must be a whole number from 1 to ${PROJECT_WEEKLY_BUDGET_MAX_MINUTES} minutes.`
+      projectErrors.weeklyEffortBudgetMustBeAWholeNumberFrom1To.message
     ),
     status: has(body, "status") ? parseProjectStatus(body.status) : "ACTIVE"
   };
@@ -169,7 +162,7 @@ export function parseProjectPatchMutation(
       body.weeklyMinutesBudget,
       "weeklyMinutesBudget",
       PROJECT_WEEKLY_BUDGET_MAX_MINUTES,
-      `Weekly effort budget must be a whole number from 1 to ${PROJECT_WEEKLY_BUDGET_MAX_MINUTES} minutes.`
+      projectErrors.weeklyEffortBudgetMustBeAWholeNumberFrom1To.message
     );
   }
   if (has(body, "targetDurationValue") || has(body, "targetDurationUnit")) {
@@ -187,10 +180,7 @@ export function parseProjectPatchMutation(
   let confirmCompletion = false;
   if (has(body, "confirm")) {
     if (typeof body.confirm !== "boolean") {
-      throw new ProjectMutationRequestError(
-        "Completion confirmation must be true or false.",
-        "confirm"
-      );
+      throw new AppError(projectErrors.completionConfirmationMustBeTrueOrFalse);
     }
     confirmCompletion = body.confirm;
   }
@@ -228,7 +218,7 @@ export function parsePhasePatchMutation(value: unknown): PhasePatchMutation {
       "sortOrder",
       0,
       PHASE_SORT_ORDER_MAX,
-      `Phase order must be a whole number from 0 to ${PHASE_SORT_ORDER_MAX}.`
+      projectErrors.phaseOrderMustBeAWholeNumberFrom0To2147483647.message
     );
   }
 
@@ -237,7 +227,7 @@ export function parsePhasePatchMutation(value: unknown): PhasePatchMutation {
 
 function requireObject(value: unknown): JsonObject {
   return kernelRequireObject(
-    value, "body", "Request body must be a JSON object.", validationError
+    value, "body", requestErrors.objectRequired.message, validationError
   );
 }
 
@@ -273,7 +263,7 @@ function parseOptionalDate(value: unknown) {
   return parseNullableLocalDate(
     value,
     "targetDate",
-    "Target date is invalid.",
+    projectErrors.targetDateIsInvalid.message,
     validationError,
     {
       nullValues: [null, undefined, ""],
@@ -293,13 +283,13 @@ function parseTargetDuration(value: unknown, unit: unknown) {
     "targetDurationValue",
     1,
     PROJECT_TARGET_DURATION_MAX,
-    `Target duration must be a whole number from 1 to ${PROJECT_TARGET_DURATION_MAX}.`
+    projectErrors.targetDurationMustBeAWholeNumberFrom1To10000.message
   );
   return {
     value: parsedValue,
     unit: parseEnum(
       unit, projectDurationUnits, "targetDurationUnit",
-      "Target duration unit must be DAYS or WEEKS.", validationError,
+      projectErrors.targetDurationUnitMustBeDAYSOrWEEKS.message, validationError,
       { normalize: (text) => text.trim().toUpperCase() }
     )
   };
@@ -332,7 +322,7 @@ function parseProjectStatus(value: unknown): ProjectStatusValue {
     value,
     projectStatuses,
     "status",
-    "Project status is invalid.",
+    projectErrors.projectStatusIsInvalid.message,
     validationError,
     {
       normalize: (text) => text.trim().toUpperCase()
@@ -341,5 +331,5 @@ function parseProjectStatus(value: unknown): ProjectStatusValue {
 }
 
 function validationError(message: string, field: string) {
-  return new ProjectMutationRequestError(message, field);
+  return validation(message, field);
 }

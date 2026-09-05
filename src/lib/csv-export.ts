@@ -1,11 +1,13 @@
-import type { Prisma } from "@prisma/client";
 import {
   csvExportFileName,
   isCsvExportKind,
   type CsvExportKind
 } from "@/lib/csv-export-contract";
+import { csvExportErrors } from "@/lib/csv-export-errors";
 import { localDateKey } from "@/lib/dates";
 import { prisma } from "@/lib/prisma";
+import { AppError } from "@/shared/kernel/errors";
+import type { Prisma } from "@prisma/client";
 
 export type CsvExportResult = {
   kind: CsvExportKind;
@@ -14,16 +16,8 @@ export type CsvExportResult = {
   recordCount: number;
 };
 
-export class CsvExportError extends Error {
-  constructor(
-    message: string,
-    readonly code: "EXPORT_NOT_FOUND",
-    readonly status: 404
-  ) {
-    super(message);
-    this.name = "CsvExportError";
-  }
-}
+/** @deprecated Compatibility constructor for existing callers; returns AppError. */
+export { AppError as CsvExportError };
 
 type CsvExportDatabase = Pick<typeof prisma, "task" | "activityEntry">;
 type CsvValue = string | number | null;
@@ -195,11 +189,7 @@ function activityColumns(
 
 export function parseCsvExportKind(value: unknown): CsvExportKind {
   if (!isCsvExportKind(value)) {
-    throw new CsvExportError(
-      "CSV export not found.",
-      "EXPORT_NOT_FOUND",
-      404
-    );
+    throw new AppError(csvExportErrors.exportNotFound);
   }
   return value;
 }

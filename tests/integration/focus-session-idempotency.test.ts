@@ -171,7 +171,56 @@ test("Focus Session start idempotency", async (context) => {
         statuses.filter((status) => status === 409).length,
         responseCount - 1
       );
+      const bodies = await Promise.all(
+        responses.map((response) => response.json())
+      );
+      const persisted = await prisma.focusSession.findFirstOrThrow();
+      const expectedSession = {
+        id: persisted.id,
+        activeKey: 1,
+        kind: "FOCUS",
+        plannedMinutes: 30,
+        actualMinutes: 0,
+        label: "One active focus",
+        startedAt: persisted.startedAt.toISOString(),
+        pausedAt: null,
+        accumulatedPauseSeconds: 0,
+        status: "RUNNING",
+        completedAt: null,
+        needsEnrichment: false,
+        enrichedAt: null,
+        completionNote: null,
+        completionCategory: null,
+        taskId: null,
+        projectId: null,
+        createdAt: persisted.createdAt.toISOString(),
+        updatedAt: persisted.updatedAt.toISOString(),
+        task: null,
+        project: null,
+        activity: null
+      };
+      assert.deepEqual(bodies[statuses.indexOf(201)], {
+        session: expectedSession,
+        snapshot: {
+          active: expectedSession,
+          pendingCompletion: null,
+          today: { completedSessions: 0, focusedMinutes: 0 }
+        }
+      });
+      for (const [index, status] of statuses.entries()) {
+        if (status !== 409) continue;
+        assert.deepEqual(bodies[index], {
+          error: "Finish or cancel the active timer first.",
+          code: "CONFLICT"
+        });
+      }
       assert.equal(await prisma.focusSession.count(), 1);
+      assert.equal(
+        await prisma.focusSession.count({
+          where: { status: { in: ["RUNNING", "PAUSED"] } }
+        }),
+        1
+      );
       assert.equal(await prisma.mutationReceipt.count(), 1);
     }
   );

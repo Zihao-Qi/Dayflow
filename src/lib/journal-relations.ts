@@ -1,9 +1,10 @@
-import type { Prisma } from "@prisma/client";
 import {
-  JournalRequestError,
   type MaterialCreateInput,
   type NoteCreateInput
 } from "@/lib/journal-domain";
+import { journalErrors } from "@/lib/journal-errors";
+import { AppError } from "@/shared/kernel/errors";
+import type { Prisma } from "@prisma/client";
 
 type JournalAttributionInput = Pick<NoteCreateInput, "taskId" | "projectId">;
 
@@ -19,30 +20,22 @@ export async function resolveJournalAttribution(
 ): Promise<JournalAttribution> {
   const task = input.taskId
     ? await transaction.task.findUnique({
-        where: { id: input.taskId },
-        select: { id: true, projectId: true }
-      })
+      where: { id: input.taskId },
+      select: { id: true, projectId: true }
+    })
     : null;
   if (input.taskId && !task) {
-    throw new JournalRequestError(
-      "RELATIONSHIP_NOT_FOUND",
-      "The linked task could not be found.",
-      404
-    );
+    throw new AppError(journalErrors.theLinkedTaskCouldNotBeFound);
   }
 
   const project = input.projectId
     ? await transaction.project.findUnique({
-        where: { id: input.projectId },
-        select: { id: true }
-      })
+      where: { id: input.projectId },
+      select: { id: true }
+    })
     : null;
   if (input.projectId && !project) {
-    throw new JournalRequestError(
-      "RELATIONSHIP_NOT_FOUND",
-      "The linked project could not be found.",
-      404
-    );
+    throw new AppError(journalErrors.theLinkedProjectCouldNotBeFound);
   }
 
   if (
@@ -50,11 +43,7 @@ export async function resolveJournalAttribution(
     input.projectId &&
     input.projectId !== task.projectId
   ) {
-    throw new JournalRequestError(
-      "ATTRIBUTION_CONFLICT",
-      "The selected task belongs to a different project.",
-      409
-    );
+    throw new AppError(journalErrors.theSelectedTaskBelongsToADifferentProject);
   }
 
   const projectId = task?.projectId ? null : input.projectId;
@@ -84,11 +73,7 @@ export async function resolveMaterialRelations(
     }
   });
   if (!note) {
-    throw new JournalRequestError(
-      "RELATIONSHIP_NOT_FOUND",
-      "The linked note could not be found.",
-      404
-    );
+    throw new AppError(journalErrors.theLinkedNoteCouldNotBeFound);
   }
 
   const noteProjectId = note.task?.projectId ?? note.projectId;
@@ -97,11 +82,7 @@ export async function resolveMaterialRelations(
     attribution.effectiveProjectId &&
     noteProjectId !== attribution.effectiveProjectId
   ) {
-    throw new JournalRequestError(
-      "ATTRIBUTION_CONFLICT",
-      "The selected note belongs to a different project.",
-      409
-    );
+    throw new AppError(journalErrors.theSelectedNoteBelongsToADifferentProject);
   }
 
   return { ...attribution, noteId: note.id };

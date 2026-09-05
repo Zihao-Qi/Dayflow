@@ -1,10 +1,13 @@
+import { requestErrors } from "@/lib/request-errors";
+import { workflowErrors } from "@/lib/workflow-errors";
+import { AppError, validation } from "@/shared/kernel/errors";
 import {
-  requireObject as kernelRequireObject,
-  readJsonBody,
   parseBoundedInteger as kernelParseBoundedInteger,
   parseEnum as kernelParseEnum,
+  requireObject as kernelRequireObject,
+  parseBoundedString,
   parseRecordId,
-  parseBoundedString
+  readJsonBody
 } from "@/shared/kernel/parsing";
 
 export const WORKFLOW_ID_MAX_LENGTH = 191;
@@ -30,16 +33,8 @@ export type FocusAction = (typeof focusActions)[number];
 export type QueuePlacementMutation = (typeof queuePlacements)[number];
 export type WorkflowMutationErrorCode = "INVALID_JSON" | "VALIDATION_ERROR";
 
-export class WorkflowMutationRequestError extends Error {
-  constructor(
-    message: string,
-    readonly field: string,
-    readonly code: WorkflowMutationErrorCode = "VALIDATION_ERROR"
-  ) {
-    super(message);
-    this.name = "WorkflowMutationRequestError";
-  }
-}
+/** @deprecated Compatibility constructor for existing callers; returns AppError. */
+export { AppError as WorkflowMutationRequestError };
 
 export async function readWorkflowMutationBody(request: {
   json(): Promise<unknown>;
@@ -47,9 +42,8 @@ export async function readWorkflowMutationBody(request: {
   const body = await readJsonBody(
     request,
     "body",
-    "Request body must be valid JSON.",
-    (message, field) =>
-      new WorkflowMutationRequestError(message, field, "INVALID_JSON")
+    requestErrors.invalidJson.message,
+    () => new AppError(requestErrors.invalidJson)
   );
   return requireObject(body);
 }
@@ -60,13 +54,13 @@ export function parseFocusQueueAddMutation(value: unknown) {
     taskId: parseWorkflowId(
       body.taskId,
       "taskId",
-      "Task identifier is invalid."
+      workflowErrors.taskIdentifierIsInvalid.message
     ),
     placement: parseEnum(
       body.placement,
       queuePlacements,
       "placement",
-      "Queue placement must be next or end."
+      workflowErrors.queuePlacementMustBeNextOrEnd.message
     )
   };
 }
@@ -85,7 +79,7 @@ export function parseFocusQueueRemoveMutation(value: unknown) {
     taskId: parseWorkflowId(
       body.taskId,
       "taskId",
-      "Task identifier is invalid."
+      workflowErrors.taskIdentifierIsInvalid.message
     )
   };
 }
@@ -102,13 +96,13 @@ export function parseFocusSessionStartMutation(value: unknown): {
     body.kind === undefined || body.kind === null || body.kind === ""
       ? "FOCUS"
       : parseEnum(
-          typeof body.kind === "string"
-            ? body.kind.trim().toUpperCase()
-            : body.kind,
-          focusKinds,
-          "kind",
-          "Timer kind must be FOCUS or BREAK."
-        );
+        typeof body.kind === "string"
+          ? body.kind.trim().toUpperCase()
+          : body.kind,
+        focusKinds,
+        "kind",
+        workflowErrors.timerKindMustBeFOCUSOrBREAK.message
+      );
   const label = parseOptionalText(
     body.label,
     "label",
@@ -123,13 +117,13 @@ export function parseFocusSessionStartMutation(value: unknown): {
       "plannedMinutes",
       1,
       240,
-      "Timer duration must be between 1 and 240 minutes."
+      workflowErrors.timerDurationMustBeBetween1And240Minutes.message
     ),
     label: label || undefined,
     taskId: parseOptionalWorkflowId(
       body.taskId,
       "taskId",
-      "Task identifier is invalid."
+      workflowErrors.taskIdentifierIsInvalid.message
     ),
     projectId: parseOptionalWorkflowId(
       body.projectId,
@@ -152,7 +146,7 @@ export function parseFocusSessionTransitionMutation(value: unknown): {
       : body.action,
     focusActions,
     "action",
-    "Unknown timer action."
+    workflowErrors.unknownTimerAction.message
   );
 
   return {
@@ -191,7 +185,7 @@ export function parseWorkflowId(
 
 function requireObject(value: unknown): JsonObject {
   return kernelRequireObject(
-    value, "body", "Request body must be a JSON object.", validationError
+    value, "body", requestErrors.objectRequired.message, validationError
   );
 }
 
@@ -209,25 +203,16 @@ function parseOptionalWorkflowId(
 
 function parseIdArray(value: unknown, field: "ids" | "expectedIds") {
   if (!Array.isArray(value)) {
-    throw new WorkflowMutationRequestError(
-      `${field === "ids" ? "Task identifiers" : "Expected task identifiers"} must be an array.`,
-      field
-    );
+    throw validation(`${field === "ids" ? "Task identifiers" : "Expected task identifiers"} must be an array.`, field);
   }
   if (value.length > WORKFLOW_ID_ARRAY_MAX_ITEMS) {
-    throw new WorkflowMutationRequestError(
-      `No more than ${WORKFLOW_ID_ARRAY_MAX_ITEMS.toLocaleString("en-US")} task identifiers can be reordered at once.`,
-      field
-    );
+    throw validation(`No more than ${WORKFLOW_ID_ARRAY_MAX_ITEMS.toLocaleString("en-US")} task identifiers can be reordered at once.`, field);
   }
   const ids = value.map((id) =>
-    parseWorkflowId(id, field, "Task identifier is invalid.")
+    parseWorkflowId(id, field, workflowErrors.taskIdentifierIsInvalid.message)
   );
   if (new Set(ids).size !== ids.length) {
-    throw new WorkflowMutationRequestError(
-      "Task identifiers must not contain duplicates.",
-      field
-    );
+    throw validation("Task identifiers must not contain duplicates.", field);
   }
   return ids;
 }
@@ -249,10 +234,7 @@ function parseOptionalText(
 function parseOptionalBoolean(value: unknown, field: string) {
   if (value === undefined || value === null) return undefined;
   if (typeof value !== "boolean") {
-    throw new WorkflowMutationRequestError(
-      "Task completion must be true or false.",
-      field
-    );
+    throw validation("Task completion must be true or false.", field);
   }
   return value;
 }
@@ -279,5 +261,5 @@ function parseEnum<const Values extends readonly string[]>(
 }
 
 function validationError(message: string, field: string) {
-  return new WorkflowMutationRequestError(message, field);
+  return validation(message, field);
 }

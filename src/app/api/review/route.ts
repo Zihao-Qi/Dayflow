@@ -1,11 +1,13 @@
-import { NextRequest, NextResponse } from "next/server";
+import { appErrorResponse } from "@/lib/http-errors";
 import { prisma } from "@/lib/prisma";
 import {
-  ReviewMutationRequestError,
   assertCurrentReviewPeriod,
   parseReviewMutation,
   readReviewMutationBody
 } from "@/lib/review-domain";
+import { reviewErrors } from "@/lib/review-errors";
+import { AppError } from "@/shared/kernel/errors";
+import { NextRequest, NextResponse } from "next/server";
 
 export async function PUT(request: NextRequest) {
   try {
@@ -29,17 +31,9 @@ export async function PUT(request: NextRequest) {
 
     return NextResponse.json({ ...review, persisted: true });
   } catch (error) {
-    if (error instanceof ReviewMutationRequestError) {
-      return NextResponse.json(
-        { error: error.message, code: error.code, field: error.field },
-        { status: error.status }
-      );
-    }
+    if (error instanceof AppError) return appErrorResponse(error);
 
     console.error("Review save failed.", error);
-    return NextResponse.json(
-      { error: "Review could not be saved.", code: "INTERNAL_ERROR" },
-      { status: 500 }
-    );
+    return appErrorResponse(new AppError(reviewErrors.reviewCouldNotBeSaved));
   }
 }

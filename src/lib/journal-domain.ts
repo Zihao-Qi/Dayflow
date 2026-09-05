@@ -1,3 +1,10 @@
+import {
+  requireObject,
+  parseEnum,
+  parseRecordId,
+  parseBoundedString,
+  parseNullableLocalDate
+} from "@/shared/kernel/parsing";
 import { parseLocalDate, startOfLocalDay } from "@/lib/dates";
 
 export const JOURNAL_PAGE_DEFAULT_LIMIT = 50;
@@ -69,6 +76,7 @@ export function parseNoteCreateInput(
   const body = parseBodyObject(value);
   const content = parseRequiredString(
     body.content,
+    "content",
     "Write something before saving this note.",
     "Note content",
     NOTE_CONTENT_MAX_LENGTH
@@ -79,8 +87,8 @@ export function parseNoteCreateInput(
     content,
     tags: normalizeNoteTags(body.tags),
     date,
-    taskId: parseOptionalRelationshipId(body.taskId, "Task"),
-    projectId: parseOptionalRelationshipId(body.projectId, "Project")
+    taskId: parseOptionalRelationshipId(body.taskId, "taskId", "Task"),
+    projectId: parseOptionalRelationshipId(body.projectId, "projectId", "Project")
   };
 }
 
@@ -90,6 +98,7 @@ export function parseMaterialCreateInput(value: unknown): MaterialCreateInput {
   const type = parseMaterialType(body.type, url);
   const suppliedTitle = parseOptionalString(
     body.title,
+    "title",
     "Material title",
     MATERIAL_TITLE_MAX_LENGTH
   );
@@ -100,12 +109,13 @@ export function parseMaterialCreateInput(value: unknown): MaterialCreateInput {
     type,
     notes: parseOptionalString(
       body.notes,
+      "notes",
       "Material notes",
       MATERIAL_NOTES_MAX_LENGTH
     ),
-    taskId: parseOptionalRelationshipId(body.taskId, "Task"),
-    noteId: parseOptionalRelationshipId(body.noteId, "Note"),
-    projectId: parseOptionalRelationshipId(body.projectId, "Project")
+    taskId: parseOptionalRelationshipId(body.taskId, "taskId", "Task"),
+    noteId: parseOptionalRelationshipId(body.noteId, "noteId", "Note"),
+    projectId: parseOptionalRelationshipId(body.projectId, "projectId", "Project")
   };
 }
 
@@ -236,89 +246,58 @@ export function parseStoredTags(value: string) {
 }
 
 function parseBodyObject(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new JournalRequestError(
-      "VALIDATION_ERROR",
-      "The request body must be a JSON object."
-    );
-  }
-  return value as Record<string, unknown>;
+  return requireObject(
+    value,
+    "body",
+    "The request body must be a JSON object.",
+    validationError
+  );
 }
 
 function parseRequiredString(
   value: unknown,
+  field: string,
   emptyMessage: string,
   label: string,
   maxLength: number
 ) {
-  if (typeof value !== "string") {
-    throw new JournalRequestError("VALIDATION_ERROR", emptyMessage);
-  }
-  const text = value.trim();
-  if (!text) {
-    throw new JournalRequestError("VALIDATION_ERROR", emptyMessage);
-  }
-  if (text.length > maxLength) {
-    throw new JournalRequestError(
-      "VALIDATION_ERROR",
-      `${label} must be ${maxLength.toLocaleString("en-US")} characters or fewer.`
-    );
-  }
-  return text;
+  return parseBoundedString(value, field, emptyMessage, validationError, {
+    maximumLength: maxLength,
+    lengthMessage: `${label} must be ${maxLength.toLocaleString("en-US")} characters or fewer.`,
+    emptyMessage,
+    trim: true
+  });
 }
 
 function parseOptionalString(
   value: unknown,
+  field: string,
   label: string,
   maxLength: number
 ) {
   if (value === undefined || value === null) return "";
-  if (typeof value !== "string") {
-    throw new JournalRequestError(
-      "VALIDATION_ERROR",
-      `${label} must be text.`
-    );
-  }
-  const text = value.trim();
-  if (text.length > maxLength) {
-    throw new JournalRequestError(
-      "VALIDATION_ERROR",
-      `${label} must be ${maxLength.toLocaleString("en-US")} characters or fewer.`
-    );
-  }
-  return text;
+  return parseBoundedString(value, field, `${label} must be text.`, validationError, {
+    maximumLength: maxLength,
+    lengthMessage: `${label} must be ${maxLength.toLocaleString("en-US")} characters or fewer.`,
+    trim: true
+  });
 }
 
-function parseOptionalRelationshipId(value: unknown, label: string) {
-  if (value === undefined || value === null || value === "") return null;
-  if (typeof value !== "string") {
-    throw new JournalRequestError(
-      "VALIDATION_ERROR",
-      `${label} identifier must be text.`
-    );
-  }
-  const id = value.trim();
-  if (!id || id.length > 191) {
-    throw new JournalRequestError(
-      "VALIDATION_ERROR",
-      `${label} identifier is invalid.`
-    );
-  }
-  return id;
+function parseOptionalRelationshipId(value: unknown, field: string, label: string) {
+  return parseRecordId(value, field, `${label} identifier is invalid.`, validationError, {
+    maximumLength: 191,
+    rejectControlCharacters: false,
+    nullValues: [undefined, null, ""],
+    typeMessage: `${label} identifier must be text.`
+  });
 }
 
 function parseJournalDate(value: unknown, now: Date, errorMessage: string) {
-  if (value === undefined || value === null || value === "") {
-    return startOfLocalDay(now);
-  }
-  if (typeof value !== "string") {
-    throw new JournalRequestError("VALIDATION_ERROR", errorMessage);
-  }
-  const date = parseLocalDate(value);
-  if (!date) {
-    throw new JournalRequestError("VALIDATION_ERROR", errorMessage);
-  }
-  return date;
+  return parseNullableLocalDate(value, "date", errorMessage, validationError, {
+    nullValues: [undefined, null, ""],
+    trim: false,
+    parseDate: parseLocalDate
+  }) ?? startOfLocalDay(now);
 }
 
 export function normalizeNoteTags(value: unknown) {
@@ -371,19 +350,13 @@ export function normalizeNoteTags(value: unknown) {
 }
 
 function parseMaterialUrl(value: unknown) {
-  if (typeof value !== "string" || !value.trim()) {
-    throw new JournalRequestError(
-      "VALIDATION_ERROR",
-      "Add a URL before saving this reference."
-    );
-  }
-  const url = value.trim();
-  if (url.length > MATERIAL_URL_MAX_LENGTH) {
-    throw new JournalRequestError(
-      "VALIDATION_ERROR",
-      `Material URL must be ${MATERIAL_URL_MAX_LENGTH.toLocaleString("en-US")} characters or fewer.`
-    );
-  }
+  const url = parseRequiredString(
+    value,
+    "url",
+    "Add a URL before saving this reference.",
+    "Material URL",
+    MATERIAL_URL_MAX_LENGTH
+  );
 
   try {
     const parsed = new URL(url);
@@ -409,20 +382,14 @@ function parseMaterialType(
   if (value === undefined || value === null || value === "") {
     return inferMaterialType(url);
   }
-  if (typeof value !== "string") {
-    throw new JournalRequestError(
-      "VALIDATION_ERROR",
-      "Material type is invalid."
-    );
-  }
-  const type = value.trim().toLowerCase();
-  if (!materialTypes.includes(type as MaterialType)) {
-    throw new JournalRequestError(
-      "VALIDATION_ERROR",
-      `Material type must be one of: ${materialTypes.join(", ")}.`
-    );
-  }
-  return type as MaterialType;
+  return parseEnum(
+    value, materialTypes, "type",
+    `Material type must be one of: ${materialTypes.join(", ")}.`, validationError,
+    {
+      normalize: (text) => text.trim().toLowerCase(),
+      typeMessage: "Material type is invalid."
+    }
+  );
 }
 
 export function inferMaterialType(url: string): MaterialType {
@@ -441,4 +408,8 @@ export function inferMaterialType(url: string): MaterialType {
 
 export function inferMaterialTitle(type: MaterialType) {
   return type === "youtube" ? "YouTube material" : "Saved material";
+}
+
+function validationError(message: string) {
+  return new JournalRequestError("VALIDATION_ERROR", message);
 }

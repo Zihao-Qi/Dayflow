@@ -3139,6 +3139,7 @@ test("uses five mobile tabs, keeps touch targets large, and puts secondary place
   await expect(more.getByRole("menuitem", { name: /Backlog/ })).toBeVisible();
   await expect(more.getByRole("menuitem", { name: "Journal" })).toBeVisible();
   await more.getByRole("menuitem", { name: /Backlog/ }).click();
+  await expect(more).toHaveCount(0);
   await expect(page.getByRole("radio", { name: "Quadrant", exact: true })).toBeChecked();
   await expect(page.getByRole("radio", { name: "Priority", exact: true })).toHaveCount(0);
   await expect(page.getByRole("radio", { name: "Figure", exact: true })).toHaveCount(0);
@@ -3151,6 +3152,7 @@ test("uses five mobile tabs, keeps touch targets large, and puts secondary place
   await page.getByRole("button", { name: "More", exact: true }).click();
   const reopenedMore = page.getByRole("menu", { name: "More destinations" });
   await reopenedMore.getByRole("menuitem", { name: "Journal" }).click();
+  await expect(reopenedMore).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Journal", exact: true })).toBeVisible();
 });
 

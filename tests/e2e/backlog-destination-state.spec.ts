@@ -1,3 +1,4 @@
+import { tourDestinationsAndReturn } from "./destination-tour";
 import { expect, test, type Page } from "@playwright/test";
 import { resetTestDatabase } from "./database";
 
@@ -70,9 +71,7 @@ for (const arrangement of ["Quadrant", "Project", "Due", "Figure"]) {
     await selected.click();
     await expect(selected).toBeChecked();
 
-    await page.getByRole("button", { name: /^Today/ }).click();
-    await expect(page.locator(".backlog-page")).toHaveCount(0);
-    await openBacklog(page);
+    await tourDestinationsAndReturn(page, "backlog");
 
     await expect(selected).toBeChecked();
     await expect(page.locator(".backlog-scope-bar")).toContainText("Zebra project first");

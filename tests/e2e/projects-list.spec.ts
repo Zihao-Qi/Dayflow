@@ -1,3 +1,4 @@
+import { tourDestinationsAndReturn } from "./destination-tour";
 import { expect, test, type Page } from "@playwright/test";
 import {
   resetTestDatabase,
@@ -90,6 +91,9 @@ test("defaults to Cards and persists List without a Cards flash", async ({
   ).toBeChecked();
 
   await projectView.getByRole("radio", { name: "List", exact: true }).click();
+  await expect(page.locator(".project-row")).toHaveCount(1);
+  await tourDestinationsAndReturn(page, "projects");
+  await expect(projectView.getByRole("radio", { name: "List", exact: true })).toBeChecked();
   await expect(page.locator(".project-row")).toHaveCount(1);
   await page.reload();
   await expect(page.getByRole("heading", { name: /(tasks? left|Nothing scheduled yet|All done for today)$/ })).toBeVisible();

@@ -26,8 +26,6 @@ async function withDatabase(
     patchFocus: typeof import("../../src/app/api/focus-session/[id]/route").PATCH;
     putActivity: typeof import("../../src/app/api/activities/[id]/route").PUT;
     deleteActivity: typeof import("../../src/app/api/activities/[id]/route").DELETE;
-    replaceManualActivityInTransaction: typeof import("../../src/lib/activity-persistence").replaceManualActivityInTransaction;
-    ActivityPersistenceError: typeof import("../../src/lib/activity-persistence").ActivityPersistenceError;
   }) => Promise<void>
 ) {
   const directory = mkdtempSync(
@@ -61,13 +59,12 @@ async function withDatabase(
     { cwd: repositoryRoot, stdio: "pipe" }
   );
 
-  const [taskRoute, projectRoute, focusRoute, activityRoute, persistence, { prisma }] =
+  const [taskRoute, projectRoute, focusRoute, activityRoute, { prisma }] =
     await Promise.all([
       import("../../src/app/api/tasks/[id]/route"),
       import("../../src/app/api/projects/[id]/route"),
       import("../../src/app/api/focus-session/[id]/route"),
       import("../../src/app/api/activities/[id]/route"),
-      import("../../src/lib/activity-persistence"),
       import("../../src/lib/prisma")
     ]);
   disconnectPrisma = () => prisma.$disconnect();
@@ -79,10 +76,7 @@ async function withDatabase(
     deleteProject: projectRoute.DELETE,
     patchFocus: focusRoute.PATCH,
     putActivity: activityRoute.PUT,
-    deleteActivity: activityRoute.DELETE,
-    replaceManualActivityInTransaction:
-      persistence.replaceManualActivityInTransaction,
-    ActivityPersistenceError: persistence.ActivityPersistenceError
+    deleteActivity: activityRoute.DELETE
   });
 }
 
@@ -96,9 +90,7 @@ test("seeded transactional workflow conflicts preserve their invariants", async 
       deleteProject,
       patchFocus,
       putActivity,
-      deleteActivity,
-      replaceManualActivityInTransaction,
-      ActivityPersistenceError
+      deleteActivity
     } = deps;
 
     await context.test(
@@ -570,49 +562,59 @@ test("seeded transactional workflow conflicts preserve their invariants", async 
           }
         });
 
-        await assert.rejects(
-          () =>
-            prisma.$transaction(async (transaction) => {
-              let firstRead = true;
-              const instrumented = {
-                ...transaction,
-                activityEntry: {
-                  ...transaction.activityEntry,
-                  findUnique: async (args: Parameters<typeof transaction.activityEntry.findUnique>[0]) => {
-                    const value = await transaction.activityEntry.findUnique(args);
-                    if (firstRead && value) {
-                      firstRead = false;
-                      await transaction.activityEntry.update({
+        const originalTransaction = prisma.$transaction;
+        let injectionFired = false;
+        // Instrument only the callback supplied by production. The real Prisma
+        // transaction must own both writes and roll them back on the route error.
+        prisma.$transaction = (async (
+          callback: (transaction: Prisma.TransactionClient) => Promise<unknown>,
+          options?: Parameters<typeof prisma.$transaction>[1]
+        ) => originalTransaction.call(prisma, async (transaction) => {
+          const instrumented = new Proxy(transaction, {
+            get(target, property) {
+              if (property !== "activityEntry") return Reflect.get(target, property);
+              return new Proxy(target.activityEntry, {
+                get(delegate, method) {
+                  if (method !== "findUnique") return Reflect.get(delegate, method);
+                  return async (args: Parameters<typeof delegate.findUnique>[0]) => {
+                    const stale = await delegate.findUnique(args);
+                    if (!injectionFired && stale) {
+                      injectionFired = true;
+                      await delegate.update({
                         where: { id: activity.id },
-                        data: { note: "Competing write" }
+                        data: {
+                          note: "Competing write",
+                          updatedAt: new Date(activity.updatedAt.getTime() + 1)
+                        }
                       });
                     }
-                    return value;
-                  },
-                  updateMany: (args: Parameters<typeof transaction.activityEntry.updateMany>[0]) =>
-                    transaction.activityEntry.updateMany(args)
+                    return stale;
+                  };
                 }
-              } as unknown as Prisma.TransactionClient;
-              return replaceManualActivityInTransaction(
-                instrumented,
-                activity.id,
-                activityDraft()
-              );
-            }),
-          (error: unknown) =>
-            error instanceof ActivityPersistenceError &&
-            error.status === 409 &&
-            error.code === "CONFLICT" &&
-            error.message === "The Activity changed before it could be updated."
-        );
-        assert.deepEqual(
-          await prisma.activityEntry.findUniqueOrThrow({
-            where: { id: activity.id },
-            select: { note: true, durationMinutes: true, category: true }
-          }),
-          { note: "Original", durationMinutes: 15, category: "Admin" },
-          "both the replacement and the planted competing write must roll back"
-        );
+              });
+            }
+          });
+          return callback(instrumented);
+        }, options)) as typeof prisma.$transaction;
+        try {
+          const response = await putActivity(
+            jsonRequest(`/api/activities/${activity.id}`, "PUT", activityDraft()),
+            params(activity.id)
+          );
+          assert.equal(injectionFired, true, "the route must use the production transaction wrapper");
+          assert.equal(response.status, 409);
+          assert.deepEqual(await response.json(), {
+            code: "CONFLICT",
+            error: "The Activity changed before it could be updated."
+          });
+          assert.deepEqual(
+            await prisma.activityEntry.findUniqueOrThrow({ where: { id: activity.id } }),
+            activity,
+            "all original fields, including updatedAt, must survive both rolled-back writes"
+          );
+        } finally {
+          prisma.$transaction = originalTransaction;
+        }
       }
     );
   });

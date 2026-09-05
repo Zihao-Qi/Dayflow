@@ -66,16 +66,12 @@ const ACTIVITY_WRITE_ALLOWLIST = new Set([
   "src/modules/evidence/services/activities.ts:74:activityEntry.updateMany",
   "src/modules/evidence/services/focus-activity.ts:17:activityEntry.upsert",
   "src/modules/evidence/services/focus-activity.ts:40:activityEntry.upsert",
-  "src/lib/focus-sessions.ts:268:activityEntry.upsert",
-  "src/lib/focus-sessions.ts:373:activityEntry.upsert",
   "src/server/workflows/delete-project.ts:16:activityEntry.updateMany"
 ]);
 
 // Legacy src/lib call counts are ratcheted per file so line movement is harmless,
 // while any increase (or stale decrease) fails the real-tree assertion.
-const LEGACY_GLOBAL_CLIENT_CALL_BASELINE = [
-  legacyClientCalls("src/lib/focus-sessions.ts", 7, "Phase 3: focus services"),
-] as const;
+const LEGACY_GLOBAL_CLIENT_CALL_BASELINE: ReadonlyArray<ReturnType<typeof legacyClientCalls>> = [];
 
 function legacyClientCalls(file: string, count: number, migration: string) {
   return { file, count, migration };
@@ -84,9 +80,6 @@ function legacyClientCalls(file: string, count: number, migration: string) {
 // Call-site-specific entries ensure that a second violation in the same file fails.
 // Remove each entry with its named migration phase.
 const BASELINE: ReadonlyArray<Violation & { migration: string }> = [
-  baseline(6, "src/lib/focus-sessions.ts", 181, "Phase 3: focus services"),
-  baseline(6, "src/lib/focus-sessions.ts", 265, "Phase 3: focus services"),
-  baseline(6, "src/lib/focus-sessions.ts", 348, "Phase 3: focus services"),
   baseline(6, "src/lib/workspace-readiness.ts", 4, "Phase 3: read models"),
   baseline(8, "src/lib/backup-management.ts", 42, "Phase 4: backup engine")
 ];

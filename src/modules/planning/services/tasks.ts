@@ -147,3 +147,13 @@ export async function detachPhaseTasks(tx: Prisma.TransactionClient, phaseId: st
 export function readTaskAttribution(database: TaskReadDatabase, id: string) {
   return database.task.findUnique({ where: { id }, select: { id: true, projectId: true } });
 }
+
+/** Focus snapshots only the Task identity, title and current Project attribution. */
+export function readFocusTask(database: TaskReadDatabase, id: string) {
+  return database.task.findUnique({ where: { id }, select: { id: true, title: true, projectId: true } });
+}
+
+/** Explicit completion handoff; preserve an already completed Task's timestamp. */
+export function completeFocusTask(tx: Prisma.TransactionClient, id: string, now: Date) {
+  return tx.task.updateMany({ where: { id, status: { not: "DONE" } }, data: { status: "DONE", completedAt: now } });
+}

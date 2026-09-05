@@ -1,3 +1,4 @@
+import { readProjectActivities } from "@/modules/evidence/services/activities";
 import type { Prisma } from "@prisma/client";
 import { summarizeProject } from "@/modules/projects/domain/project";
 import { readProject } from "@/modules/projects/services/projects";
@@ -19,7 +20,7 @@ export async function getProjectDetail(database: DetailDatabase, id: string, rev
   const taskIds = tasks.map(task => task.id);
   const where = { OR: [{ projectId: id }, { taskId: { in: taskIds } }] };
   const [activities, notes, materials] = await Promise.all([
-    database.activityEntry.findMany({ where: { attributedProjectId: id }, orderBy: { startedAt: "desc" } }),
+    readProjectActivities(database, id),
     database.note.findMany({ where, orderBy: { createdAt: "desc" } }),
     database.material.findMany({ where, orderBy: { createdAt: "desc" } })
   ]);

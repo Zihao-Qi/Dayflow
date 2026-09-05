@@ -10,8 +10,8 @@ import {
 import { PUT as saveDiary } from "../../src/app/api/diary/route";
 import { POST as createMaterial } from "../../src/app/api/materials/route";
 import { POST as createNote } from "../../src/app/api/notes/route";
-import { activityMutationErrorResponse } from "../../src/lib/activity-http";
-import { ActivityPersistenceError } from "../../src/lib/activity-persistence";
+import { activityMutationErrorResponse } from "../../src/server/evidence";
+import { ActivityPersistenceError } from "../../src/server/evidence";
 import { addDays, localDateKey } from "../../src/lib/dates";
 import { EvidenceAttributionError } from "../../src/lib/evidence-attribution";
 import { EvidenceMutationRequestError } from "../../src/lib/evidence-mutations";
@@ -399,8 +399,8 @@ test("Activity delete pins its code-less and conflict envelopes", async () => {
       ["missing", 404, { error: "Activity not found." }],
       ["protected", 409, { error: "Focus evidence cannot be deleted." }]
     ] as const) {
-      (prisma as unknown as { $transaction: unknown }).$transaction = async () =>
-        result;
+      (prisma as unknown as { $transaction: unknown }).$transaction = async (run: (tx: unknown) => Promise<unknown>) =>
+        run({ activityEntry: { findUnique: async () => result === "missing" ? null : { origin: "FOCUS", focusSessionId: null } } });
       const response = await deleteActivity(
         new NextRequest("http://localhost/api/activities/activity-1", {
           method: "DELETE"

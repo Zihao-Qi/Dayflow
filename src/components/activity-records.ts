@@ -8,20 +8,8 @@ import type { MutableRefObject } from "react";
 
 export type PendingMutation = { id: string; fingerprint: string };
 
-export type ActivityEntry = {
-  id: string;
-  startedAt: string;
-  durationMinutes: number;
-  category: string;
-  note: string;
-  origin: "MANUAL" | "FOCUS";
-  taskId: string | null;
-  projectId: string | null;
-  attributedProjectId: string | null;
-  focusSessionId: string | null;
-  createdAt: string;
-  updatedAt: string;
-};
+export { type ActivityEntry, isActivityResponse } from "@/modules/evidence/domain/activity";
+import type { ActivityEntry } from "@/modules/evidence/domain/activity";
 
 export type ActivityDraft = {
   date: string;
@@ -43,29 +31,6 @@ export type ActivityTaskOption = {
   title: string;
   projectId: string | null;
 };
-
-export function isActivityResponse(value: unknown): value is ActivityEntry {
-  if (!value || typeof value !== "object") return false;
-  const activity = value as Partial<ActivityEntry>;
-  return (
-    typeof activity.id === "string" &&
-    typeof activity.startedAt === "string" &&
-    Number.isInteger(activity.durationMinutes) &&
-    typeof activity.category === "string" &&
-    typeof activity.note === "string" &&
-    ["MANUAL", "FOCUS"].includes(String(activity.origin)) &&
-    (activity.taskId === null || typeof activity.taskId === "string") &&
-    (activity.projectId === null || typeof activity.projectId === "string") &&
-    (activity.attributedProjectId === null ||
-      typeof activity.attributedProjectId === "string") &&
-    (activity.focusSessionId === null ||
-      typeof activity.focusSessionId === "string") &&
-    typeof activity.createdAt === "string" &&
-    Number.isFinite(Date.parse(activity.createdAt)) &&
-    typeof activity.updatedAt === "string" &&
-    Number.isFinite(Date.parse(activity.updatedAt))
-  );
-}
 
 /**
  * A stable mutation id per distinct payload, so a retry of the same create is

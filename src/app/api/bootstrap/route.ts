@@ -1,3 +1,4 @@
+import { readDayActivities, readDiary, readActivityCategories } from "@/server/evidence";
 import { clock, calendar } from "@/lib/time";
 import { buildActivityCategorySuggestions } from "@/lib/activity-categories";
 import { bootstrapErrors } from "@/lib/bootstrap-errors";
@@ -91,13 +92,10 @@ async function loadBootstrap(now: Date) {
         where: { date: { gte: start, lt: end } },
         orderBy: { createdAt: "desc" }
       }),
-      tx.diaryEntry.findUnique({ where: { date: start } }),
+      readDiary(tx, start),
       tx.material.findMany({ orderBy: { createdAt: "desc" }, take: 12 }),
       readTimeBlocks(tx, { start: today, end: weekEnd }, "range"),
-      tx.activityEntry.findMany({
-        where: { startedAt: { gte: start, lt: end } },
-        orderBy: [{ startedAt: "desc" }, { createdAt: "desc" }]
-      }),
+      readDayActivities(tx, { start, end }),
       tx.task.findMany({
         where: { date: { gte: weekStart, lt: reviewEnd } },
         orderBy: { date: "asc" }
@@ -111,10 +109,7 @@ async function loadBootstrap(now: Date) {
           }
         }
       }),
-      tx.activityEntry.findMany({
-        select: { category: true },
-        distinct: ["category"]
-      }),
+      readActivityCategories(tx),
       isWorkspaceEmpty(tx),
       earliestRecordedDay(tx)
     ]));

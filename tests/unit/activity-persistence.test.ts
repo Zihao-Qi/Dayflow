@@ -4,7 +4,7 @@ import type { Prisma } from "@prisma/client";
 import {
   ActivityPersistenceError,
   replaceManualActivityInTransaction
-} from "../../src/lib/activity-persistence";
+} from "../../src/server/evidence";
 
 test("Activity replacement returns a typed conflict when its optimistic write loses", async () => {
   const updatedAt = new Date("2026-07-28T15:00:00-05:00");

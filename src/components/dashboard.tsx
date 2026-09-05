@@ -1,5 +1,7 @@
 "use client";
 
+import { type Diary, isPersistedDiaryResponse } from "@/modules/evidence/domain/diary";
+
 import { isTaskRecord as isTaskResponse, type TaskRecord } from "@/modules/planning/domain/task";
 
 import {
@@ -155,16 +157,6 @@ type PaletteTaskRecord = Pick<
 type JournalTaskOption = Pick<Task, "id" | "title" | "projectId">;
 
 type Note = JournalNoteRecord;
-
-type Diary = {
-  id: string | null;
-  date: string;
-  content: string;
-  reflection: string;
-  mood: number;
-  energy: number;
-  persisted: boolean;
-};
 
 type Review = {
   id: string | null;
@@ -352,23 +344,6 @@ function timeBlockErrorFieldFrom(
   )
     ? (field as TimeBlockErrorField)
     : null;
-}
-
-function isPersistedDiaryResponse(value: unknown): value is Diary & {
-  id: string;
-  persisted: true;
-} {
-  if (!value || typeof value !== "object") return false;
-  const diary = value as Partial<Diary>;
-  return (
-    typeof diary.id === "string" &&
-    typeof diary.date === "string" &&
-    typeof diary.content === "string" &&
-    typeof diary.reflection === "string" &&
-    Number.isInteger(diary.mood) &&
-    Number.isInteger(diary.energy) &&
-    diary.persisted === true
-  );
 }
 
 function isPersistedReviewResponse(value: unknown): value is Review & {

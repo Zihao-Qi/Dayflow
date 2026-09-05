@@ -1,3 +1,4 @@
+import { readDayActivities, readEarliestActivity } from "@/server/evidence";
 import { addDays, localDateKey, parseLocalDate, sameDayRange, startOfLocalDay } from "@/lib/dates";
 import { dayErrors } from "@/lib/day-errors";
 import { readDayTasks } from "@/server/tasks";
@@ -105,10 +106,7 @@ export async function readViewedDay(
     readTimeBlocks(database, { start, end }, "day"),
     kind === "future"
       ? Promise.resolve([])
-      : database.activityEntry.findMany({
-        where: { startedAt: { gte: start, lt: end } },
-        orderBy: [{ startedAt: "desc" }, { createdAt: "desc" }]
-      })
+      : readDayActivities(database, { start, end })
   ]);
 
   return {
@@ -130,10 +128,7 @@ export async function earliestRecordedDay(database: Prisma.TransactionClient) {
       orderBy: { date: "asc" },
       select: { date: true }
     }),
-    database.activityEntry.findFirst({
-      orderBy: { startedAt: "asc" },
-      select: { startedAt: true }
-    }),
+    readEarliestActivity(database),
     database.timeBlock.findFirst({
       orderBy: { date: "asc" },
       select: { date: true }

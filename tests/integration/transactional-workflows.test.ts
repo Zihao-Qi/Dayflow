@@ -26,8 +26,8 @@ async function withDatabase(
     patchFocus: typeof import("../../src/app/api/focus-session/[id]/route").PATCH;
     putActivity: typeof import("../../src/app/api/activities/[id]/route").PUT;
     deleteActivity: typeof import("../../src/app/api/activities/[id]/route").DELETE;
-    replaceManualActivityInTransaction: typeof import("../../src/lib/activity-persistence").replaceManualActivityInTransaction;
-    ActivityPersistenceError: typeof import("../../src/lib/activity-persistence").ActivityPersistenceError;
+    replaceManualActivityInTransaction: typeof import("../../src/server/evidence").replaceManualActivityInTransaction;
+    ActivityPersistenceError: typeof import("../../src/server/evidence").ActivityPersistenceError;
   }) => Promise<void>
 ) {
   const directory = mkdtempSync(
@@ -67,7 +67,7 @@ async function withDatabase(
       import("../../src/app/api/projects/[id]/route"),
       import("../../src/app/api/focus-session/[id]/route"),
       import("../../src/app/api/activities/[id]/route"),
-      import("../../src/lib/activity-persistence"),
+      import("../../src/server/evidence"),
       import("../../src/lib/prisma")
     ]);
   disconnectPrisma = () => prisma.$disconnect();

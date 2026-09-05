@@ -27,7 +27,7 @@ const focusSessionInclude = {
 };
 
 export async function getFocusSnapshot(
-  database: Prisma.TransactionClient | typeof prisma = prisma
+  database: Prisma.TransactionClient | typeof prisma
 ) {
   const { start, end } = sameDayRange();
   const [active, pendingCompletion, completed, focused] = await Promise.all([
@@ -80,7 +80,7 @@ export async function startFocusSession(
     taskId?: string | null;
     projectId?: string | null;
   },
-  transaction?: Prisma.TransactionClient
+  transaction: Prisma.TransactionClient
 ) {
   const kind = parseKind(input.kind);
   const plannedMinutes = Number(input.plannedMinutes);
@@ -92,7 +92,7 @@ export async function startFocusSession(
     throw new FocusSessionError("Timer duration must be between 1 and 240 minutes.");
   }
 
-  const database = transaction ?? prisma;
+  const database = transaction;
   const active = await database.focusSession.findFirst({
     where: { status: { in: ["RUNNING", "PAUSED"] } },
     select: { id: true }

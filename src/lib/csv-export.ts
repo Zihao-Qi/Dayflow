@@ -207,7 +207,7 @@ export function parseCsvExportKind(value: unknown): CsvExportKind {
 export async function createCsvExport(
   kind: CsvExportKind,
   now = new Date(),
-  database: CsvExportDatabase = prisma
+  database: CsvExportDatabase
 ): Promise<CsvExportResult> {
   const fileDate = localDateKey(now);
   if (kind === "tasks") {

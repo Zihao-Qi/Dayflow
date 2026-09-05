@@ -5,7 +5,7 @@ import { useFocusSession } from "@/components/focus-session-provider";
 import { useActivityCapture } from "@/components/use-activity-capture";
 import { useLayoutMode } from "@/components/use-layout-mode";
 import { useViewedDay } from "@/components/use-viewed-day";
-import { localDateKey, parseLocalDate } from "@/lib/dates";
+import { localDateKey } from "@/lib/dates";
 import { DEFAULT_FOCUS_MINUTES } from "@/lib/focus-domain";
 import { useBacklogPage, useTodayPage, type Task } from "@/modules/planning/ui";
 import { safeTimeBlockDurationMinutes } from "@/modules/planning/ui/log/day-workspace-helpers";
@@ -50,7 +50,8 @@ export function useShellModel() {
     ...state,
     focus,
     // Bootstrap effects run after the activity hook below has initialized.
-    initializeActivityClock: () => activity.initializeClock()
+    initializeActivityClock: () => activity.initializeClock(),
+    refreshDestination: (todayKey) => viewedDay.refresh(todayKey)
   });
   useEffect(() => {
     if (focus.retryNext) setRailExpanded(true);
@@ -78,28 +79,29 @@ export function useShellModel() {
     return () => window.removeEventListener("keydown", onShortcut);
   }, [focus.active, paletteOpen, screen]);
 
-  const todayTasks = useMemo(() => {
-    if (!data) return [];
-    const key = data.todayKey;
-    return data.tasks
-      .filter(
-        (task) =>
-          taskDateLocalKey(task.date) === key
-      )
-      .sort((a, b) => a.sortOrder - b.sortOrder);
-  }, [data]);
-
+  const onDay = screen.startsWith("day-");
+  const viewedDay = useViewedDay(
+    data?.todayKey ?? "",
+    data?.earliestDayKey ?? null,
+    data?.dayViewForwardWeeks ?? null,
+    screen === "today" ? "today" : onDay ? "log" : null
+  );
+  const todayTasks = viewedDay.dayKey === data?.todayKey
+    ? (viewedDay.payload?.tasks ?? []) as Task[]
+    : [];
   const openTodayTasks = todayTasks.filter((task) => task.status !== "DONE");
-  const doneTodayTasks = todayTasks.filter((task) => task.status === "DONE");
   const activityKnownTasks = useMemo(
     () => [...(data?.tasks ?? []), ...(data?.paletteTasks ?? [])],
     [data?.paletteTasks, data?.tasks]
   );
   const activity = useActivityCapture({
     todayKey: data?.todayKey ?? null,
-    todayTasks,
+    todayTasks: screen === "today" || (onDay && viewedDay.dayKey === data?.todayKey)
+      ? todayTasks
+      : (data?.tasks ?? []).filter((task) => task.date && localDateKey(new Date(task.date)) === data?.todayKey),
     knownTasks: activityKnownTasks,
-    replaceActivity: (saved) =>
+    replaceActivity: (saved) => {
+      viewedDay.acceptActivity(saved);
       setData((current) =>
         current
           ? {
@@ -113,7 +115,8 @@ export function useShellModel() {
                 )
             }
           : current
-      ),
+      );
+    },
     announce: setAppAnnouncement,
     refreshAfterConfirmedMutation
   });
@@ -147,14 +150,14 @@ export function useShellModel() {
     [data]
   );
   const today = useTodayPage(
-    data && {
+    data && viewedDay.payload && {
       today: data.today,
       tasks: todayTasks,
       backlogTasks,
       unfinishedTasks: data.unfinishedTasks,
       projects: data.projects,
       projectById,
-      activities: data.activities
+      activities: (viewedDay.payload.activities ?? []) as ActivityEntry[]
     },
     {
       layoutMode,
@@ -165,31 +168,10 @@ export function useShellModel() {
     },
     dismissedUnfinished
   );
-  const viewedDay = useViewedDay(
-    data?.todayKey ?? "",
-    data?.earliestDayKey ?? null,
-    data?.dayViewForwardWeeks ?? null
-  );
-  const onDay = screen.startsWith("day-");
-
-  // Leaving Log resets the day: one that persists across a detour through
-  // Projects or Journal invites acting on the wrong day without noticing.
-  useEffect(() => {
-    if (!onDay) viewedDay.goToToday();
-  }, [onDay, viewedDay.goToToday]);
-
   const dayIsToday = viewedDay.dayKey === (data?.todayKey ?? "");
-  const dayTasks = dayIsToday
-    ? openTodayTasks
-    : ((viewedDay.payload?.tasks ?? []) as unknown as Task[]).filter(
-        (task) => task.status !== "DONE"
-      );
-  const dayActivities = dayIsToday
-    ? data?.activities ?? []
-    : ((viewedDay.payload?.activities ?? []) as unknown as ActivityEntry[]);
-  const dayTimeBlocks = dayIsToday
-    ? data?.timeBlocks ?? []
-    : ((viewedDay.payload?.timeBlocks ?? []) as unknown as TimeBlock[]);
+  const dayTasks = ((viewedDay.payload?.tasks ?? []) as Task[]).filter((task) => task.status !== "DONE");
+  const dayActivities = (viewedDay.payload?.activities ?? []) as ActivityEntry[];
+  const dayTimeBlocks = (viewedDay.payload?.timeBlocks ?? []) as TimeBlock[];
   const dayBlockedMinutes = dayTimeBlocks
     .filter((block) => block.date === viewedDay.dayKey)
     .reduce((sum, block) => sum + safeTimeBlockDurationMinutes(block), 0);
@@ -198,18 +180,6 @@ export function useShellModel() {
     0
   );
 
-  const blockedMinutes = (data?.timeBlocks ?? [])
-    .filter(
-      (block) => block.date === data?.todayKey
-    )
-    .reduce(
-      (sum, block) => sum + safeTimeBlockDurationMinutes(block),
-      0
-    );
-  const activityMinutes = (data?.activities ?? []).reduce(
-    (sum, activity) => sum + activity.durationMinutes,
-    0
-  );
   const {
     paletteResolution,
     openCommandPalette,
@@ -241,6 +211,8 @@ export function useShellModel() {
   } = useTaskActions({
     ...state,
     openTodayTasks,
+    acceptTask: viewedDay.acceptTask,
+    removeTask: viewedDay.removeTask,
     refresh,
     refreshAfterConfirmedMutation,
     openFocus
@@ -355,10 +327,4 @@ export function useShellModel() {
     saveTimeBlock,
     deleteTimeBlock
   };
-}
-
-function taskDateLocalKey(value: string | null) {
-  if (!value) return null;
-  const date = parseLocalDate(value);
-  return date ? localDateKey(date) : null;
 }

@@ -1,3 +1,5 @@
+"use client";
+
 import { request } from "@/shared/client/api-client";
 import {
   isBootstrapResponse,
@@ -57,7 +59,7 @@ export function loadReviewWindow(query: URLSearchParams) {
 export function loadViewedDay(dayKey: string) {
   return request(`/api/day?date=${encodeURIComponent(dayKey)}`, {
     cache: "no-store",
-    decode: (body): body is ViewedDayPayload => isViewedDayPayload(body),
+    decode: (body): body is ViewedDayPayload => isViewedDayPayload(body) && body.dateKey === dayKey,
     fallback: LOAD_FAILURE,
   });
 }

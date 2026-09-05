@@ -28,6 +28,8 @@ export function useTaskActions({
   taskCreateWasInError,
   taskCreateMutation,
   openTodayTasks,
+  acceptTask,
+  removeTask,
   refresh,
   refreshAfterConfirmedMutation,
   openFocus
@@ -47,6 +49,8 @@ export function useTaskActions({
   | "taskCreateMutation"
 > & {
   openTodayTasks: Task[];
+  acceptTask: (task: Task) => void;
+  removeTask: (id: string) => void;
   refresh: () => Promise<void>;
   refreshAfterConfirmedMutation: () => Promise<boolean>;
   openFocus: (target: FocusTarget) => void;
@@ -59,6 +63,7 @@ export function useTaskActions({
     setTaskCreatePending(true);
     try {
       const result = await createTaskRequest(payload, mutationId);
+      acceptTask(result);
 
       setNewTask((current) => (current.trim() === title ? "" : current));
       taskCreateMutation.current = null;
@@ -100,6 +105,7 @@ export function useTaskActions({
     setTaskCreatePending(true);
     try {
       const result = await createFirstTaskRequest(payload, mutationId);
+      acceptTask(result);
 
       window.localStorage.setItem("dayflow-first-run-seen", "1");
       taskCreateMutation.current = null;
@@ -151,6 +157,8 @@ export function useTaskActions({
     );
     try {
       const result = await updateTaskRequest(id, patch);
+      acceptTask(result);
+      setAppError("");
 
       await refreshAfterConfirmedMutation();
       return true;
@@ -178,7 +186,6 @@ export function useTaskActions({
   ) {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       if (await saveTaskAttempt(id, patch)) {
-        setAppError("");
         reportTaskSaveRecovery();
         return true;
       }
@@ -195,6 +202,7 @@ export function useTaskActions({
   async function deleteTask(id: string) {
     try {
       const result = await deleteTaskRequest(id);
+      removeTask(id);
 
       setAppError("");
       await refreshAfterConfirmedMutation();
@@ -235,6 +243,7 @@ export function useTaskActions({
     );
     try {
       const result = await reorderTasksRequest(reordered);
+      result.tasks.forEach(acceptTask);
 
       setAppError("");
       if (announce) {

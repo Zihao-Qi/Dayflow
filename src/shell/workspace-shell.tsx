@@ -215,6 +215,15 @@ export function WorkspaceShell() {
             onOpenCapture={openCommandPalette}
           />
         )}
+        {screen === "today" && !firstRun && !today.page && !viewedDay.error && (
+          <p role="status">Loading today…</p>
+        )}
+        {screen === "today" && !firstRun && viewedDay.error && (
+          <div role="alert">
+            {viewedDay.error}
+            <button className="secondary-button" onClick={() => void refresh().catch(() => {})}>Retry day</button>
+          </div>
+        )}
         {screen === "today" && !firstRun && today.page && (
           <TodayPage
             {...today.page}
@@ -252,7 +261,9 @@ export function WorkspaceShell() {
               viewedDay.forwardWeeks ?? data.dayViewForwardWeeks
             }
             dayLoading={viewedDay.loading}
+            dayReady={Boolean(viewedDay.payload)}
             dayError={viewedDay.error}
+            onRetry={() => void refresh().catch(() => {})}
             onChangeDay={(next) => {
               void viewedDay.setDay(next);
               // A future day opens on Timeline: Stream is built around

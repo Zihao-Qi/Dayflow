@@ -49,7 +49,7 @@ for (const failure of [false, true]) {
     await page.keyboard.press("Control+K");
     const palette = page.getByRole("dialog", { name: "Search or add", exact: true });
     await palette.getByRole("combobox").fill("Saved after held bootstrap");
-    await expect(palette.getByRole("option").filter({ hasText: "Saved after held bootstrap" }).first()).toBeVisible();
+    await expect(palette.getByRole("option", { name: /Saved after held bootstrap.*Focus on/ })).toBeVisible();
     expect(requests).toBe(2);
   });
 }

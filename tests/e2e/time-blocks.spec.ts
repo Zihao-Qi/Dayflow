@@ -855,12 +855,19 @@ test("keeps the original payload and mutation ID when a UI retry crosses midnigh
       response,
       json: {
         ...payload,
+        today: new Date(`${tomorrow}T00:00:00`).toISOString(),
         todayKey: tomorrow,
         tasks: [],
         paletteTasks: [],
         timeBlocks: []
       }
     });
+  });
+  // The browser clock does not move server time; keep the new day read coherent.
+  await page.route("**/api/day?*", async (route) => {
+    const response = await route.fetch();
+    const payload = await response.json();
+    await route.fulfill({ response, json: payload.dateKey === tomorrow ? { ...payload, kind: "today" } : payload });
   });
   await page.clock.pauseAt(new Date(`${today}T23:59:58`));
   await page.clock.fastForward(3_000);

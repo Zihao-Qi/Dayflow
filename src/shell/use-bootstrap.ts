@@ -36,7 +36,8 @@ export function useBootstrap({
   setAppAnnouncement,
   setAppError,
   focus,
-  initializeActivityClock
+  initializeActivityClock,
+  refreshDestination
 }: Pick<
   ShellState,
   | "data"
@@ -48,8 +49,12 @@ export function useBootstrap({
 > & {
   focus: ReturnType<typeof useFocusSession>;
   initializeActivityClock: () => void;
+  refreshDestination: (todayKey?: string) => Promise<boolean>;
 }) {
   const owner = useRef(createReadGeneration()).current;
+  const operation = useRef(createReadGeneration()).current;
+  const destination = useRef(refreshDestination);
+  destination.current = refreshDestination;
   const calendarKey = useRef(data?.todayKey);
   if (calendarKey.current !== data?.todayKey) {
     calendarKey.current = data?.todayKey;
@@ -83,20 +88,38 @@ export function useBootstrap({
 
     return () => {
       disposed = true;
+      operation.invalidate();
       owner.invalidate();
       if (dayRefreshTimer !== null) window.clearTimeout(dayRefreshTimer);
     };
   }, []);
 
   useEffect(() => {
-    if (focus.activityRevision > 0) void refresh().catch(() => {});
+    if (focus.activityRevision > 0) void refreshAfterConfirmedMutation();
   }, [focus.activityRevision]);
 
   async function refresh() {
-    await owner.run(loadBootstrap, (result) => {
+    await operation.run(refreshReads, () => {});
+  }
+
+  async function refreshReads() {
+    const startingKey = calendarKey.current;
+    // Start both reads synchronously: a failed bootstrap cannot suppress the day.
+    const bootstrap = owner.run(loadBootstrap, (result) => {
+      calendarKey.current = result.todayKey;
       setData(result as Bootstrap);
       setBootstrapFailure(null);
     }, (error) => setBootstrapFailure(describeBootstrapFailure(error)));
+    const active = destination.current();
+    const outcomes = await Promise.allSettled([bootstrap, active]);
+    // The server may select a new calendar day. Await that destination as well.
+    const calendarChanged = startingKey && calendarKey.current !== startingKey;
+    const currentDayLoaded = calendarChanged
+      ? await destination.current(calendarKey.current)
+      : true;
+    if (outcomes.some((outcome) => outcome.status === "rejected" || !outcome.value) || !currentDayLoaded) {
+      throw new Error("The latest view could not be refreshed.");
+    }
   }
 
   async function retryBootstrap() {

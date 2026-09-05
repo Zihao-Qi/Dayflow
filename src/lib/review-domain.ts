@@ -1,3 +1,8 @@
+import {
+  requireObject as kernelRequireObject,
+  readJsonBody,
+  parseBoundedString
+} from "@/shared/kernel/parsing";
 import type { ActivityOrigin } from "@prisma/client";
 import {
   addDays,
@@ -75,16 +80,13 @@ type JsonObject = Record<string, unknown>;
 export async function readReviewMutationBody(request: {
   json(): Promise<unknown>;
 }): Promise<JsonObject> {
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    throw new ReviewMutationRequestError(
-      "Request body must be valid JSON.",
-      "body",
-      "INVALID_JSON"
-    );
-  }
+  const body = await readJsonBody(
+    request,
+    "body",
+    "Request body must be valid JSON.",
+    (message, field) =>
+      new ReviewMutationRequestError(message, field, "INVALID_JSON")
+  );
   return requireObject(body);
 }
 
@@ -214,13 +216,9 @@ export function buildReviewSummary({
 }
 
 function requireObject(value: unknown): JsonObject {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new ReviewMutationRequestError(
-      "Request body must be a JSON object.",
-      "body"
-    );
-  }
-  return value as JsonObject;
+  return kernelRequireObject(
+    value, "body", "Request body must be a JSON object.", validationError
+  );
 }
 
 function parseReviewBoundary(
@@ -251,17 +249,11 @@ function parseReviewText(
   maxLength: number
 ) {
   if (value === undefined) return "";
-  if (typeof value !== "string") {
-    throw new ReviewMutationRequestError(`${label} must be text.`, field);
-  }
-  const text = value.trim();
-  if (text.length > maxLength) {
-    throw new ReviewMutationRequestError(
-      `${label} must be ${maxLength} characters or fewer.`,
-      field
-    );
-  }
-  return text;
+  return parseBoundedString(value, field, `${label} must be text.`, validationError, {
+    maximumLength: maxLength,
+    lengthMessage: `${label} must be ${maxLength} characters or fewer.`,
+    trim: true
+  });
 }
 
 function average(values: number[]) {
@@ -273,4 +265,8 @@ function average(values: number[]) {
 function compareText(left: string, right: string) {
   if (left === right) return 0;
   return left < right ? -1 : 1;
+}
+
+function validationError(message: string, field: string) {
+  return new ReviewMutationRequestError(message, field);
 }

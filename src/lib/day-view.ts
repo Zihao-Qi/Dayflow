@@ -1,4 +1,4 @@
-import type { PrismaClient } from "@prisma/client";
+import type { Prisma, PrismaClient } from "@prisma/client";
 import { addDays, localDateKey, parseLocalDate, sameDayRange, startOfLocalDay } from "@/lib/dates";
 import { serializeTimeBlock } from "@/lib/time-block-persistence";
 import { isTimeBlockRecord } from "@/lib/time-blocks";
@@ -164,7 +164,7 @@ export async function readViewedDay(
 /**
  * The earliest day worth navigating back to. Null when nothing is persisted.
  */
-export async function earliestRecordedDay(database: PrismaClient) {
+export async function earliestRecordedDay(database: Prisma.TransactionClient) {
   const [task, activity, block] = await Promise.all([
     database.task.findFirst({
       where: { date: { not: null } },

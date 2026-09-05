@@ -14,19 +14,19 @@ export async function GET() {
     materials,
     timeBlocks,
     activities
-  ] = await Promise.all([
-    prisma.project.findMany({ orderBy: { updatedAt: "desc" } }),
-    prisma.projectPhase.findMany({ orderBy: [{ projectId: "asc" }, { sortOrder: "asc" }] }),
-    prisma.focusSession.findMany({ orderBy: { startedAt: "desc" } }),
-    prisma.task.findMany({ orderBy: [{ date: "asc" }, { sortOrder: "asc" }] }),
-    prisma.taskScheduleChange.findMany({ orderBy: { createdAt: "desc" } }),
-    prisma.note.findMany({ orderBy: { createdAt: "desc" } }),
-    prisma.diaryEntry.findMany({ orderBy: { date: "desc" } }),
-    prisma.review.findMany({ orderBy: { periodStart: "desc" } }),
-    prisma.material.findMany({ orderBy: { createdAt: "desc" } }),
-    prisma.timeBlock.findMany({ orderBy: { date: "asc" } }),
-    prisma.activityEntry.findMany({ orderBy: { startedAt: "asc" } })
-  ]);
+  ] = await prisma.$transaction(async (tx) => Promise.all([
+    tx.project.findMany({ orderBy: { updatedAt: "desc" } }),
+    tx.projectPhase.findMany({ orderBy: [{ projectId: "asc" }, { sortOrder: "asc" }] }),
+    tx.focusSession.findMany({ orderBy: { startedAt: "desc" } }),
+    tx.task.findMany({ orderBy: [{ date: "asc" }, { sortOrder: "asc" }] }),
+    tx.taskScheduleChange.findMany({ orderBy: { createdAt: "desc" } }),
+    tx.note.findMany({ orderBy: { createdAt: "desc" } }),
+    tx.diaryEntry.findMany({ orderBy: { date: "desc" } }),
+    tx.review.findMany({ orderBy: { periodStart: "desc" } }),
+    tx.material.findMany({ orderBy: { createdAt: "desc" } }),
+    tx.timeBlock.findMany({ orderBy: { date: "asc" } }),
+    tx.activityEntry.findMany({ orderBy: { startedAt: "asc" } })
+  ]), { timeout: 60000 });
 
   return NextResponse.json({
     app: "Dayflow",

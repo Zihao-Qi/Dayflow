@@ -78,7 +78,7 @@ const LEGACY_GLOBAL_CLIENT_CALL_BASELINE = [
   legacyClientCalls("src/lib/activity-persistence.ts", 1, "Phase 3: evidence services"),
   legacyClientCalls("src/lib/focus-queue.ts", 3, "Phase 2: planning"),
   legacyClientCalls("src/lib/focus-sessions.ts", 7, "Phase 3: focus services"),
-  legacyClientCalls("src/lib/projects.ts", 3, "Phase 3: projects services"),
+  legacyClientCalls("src/lib/projects.ts", 2, "Phase 3: projects services"),
   legacyClientCalls("src/lib/time-block-persistence.ts", 2, "Phase 2: planning")
 ] as const;
 

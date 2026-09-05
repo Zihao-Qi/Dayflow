@@ -1,4 +1,4 @@
-import type { PrismaClient } from "@prisma/client";
+import type { Prisma, PrismaClient } from "@prisma/client";
 import { listProjectSummaries } from "@/lib/projects";
 import { buildReviewSummary } from "@/lib/review-domain";
 import {
@@ -51,7 +51,7 @@ export type ReviewWindowRequest = ReviewPeriodInterval & {
  * anchor-day window all produce their summaries through one code path.
  */
 export async function readReviewPeriodEvidence(
-  database: PrismaClient,
+  database: Prisma.TransactionClient,
   period: ReviewPeriodInterval
 ) {
   const window = { gte: period.start, lt: period.end };
@@ -83,7 +83,7 @@ export async function readReviewPeriodEvidence(
         where: { createdAt: window },
         select: { id: true }
       }),
-      listProjectSummaries(period)
+      listProjectSummaries(database, period)
     ]);
 
   const summary = {

@@ -57,6 +57,25 @@ test(
         "Dayflow's local database needs an update. Stop Dayflow, run `npm run db:migrate`, then start Dayflow again."
     });
 
+    await context.test("a missing table also keeps the migration-required envelope", async () => {
+      await prisma.$disconnect();
+      rmSync(databasePath);
+      execFileSync("sqlite3", ["-batch", "-bail", databasePath], {
+        cwd: repositoryRoot,
+        input: readFileSync(join(repositoryRoot, "prisma/init.sql"), "utf8") +
+          '\nDROP TABLE "Task";',
+        stdio: ["pipe", "pipe", "pipe"]
+      });
+
+      const missingTableResponse = await loadBootstrap();
+      assert.equal(missingTableResponse.status, 503);
+      assert.deepEqual(await missingTableResponse.json(), {
+        code: "DATABASE_MIGRATION_REQUIRED",
+        error:
+          "Dayflow's local database needs an update. Stop Dayflow, run `npm run db:migrate`, then start Dayflow again."
+      });
+    });
+
     // An unexpected failure must produce the generic 500 envelope. Corrupting the
     // database file injects one below the Prisma client, so the check holds
     // whether the route reads through the global client or a transaction.

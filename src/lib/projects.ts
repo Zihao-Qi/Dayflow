@@ -46,9 +46,10 @@ const projectRead = {
 };
 
 export async function listProjectSummaries(
+  client: Pick<Prisma.TransactionClient, "project">,
   reviewPeriod = reviewPeriodRange()
 ) {
-  const projects = await prisma.project.findMany({
+  const projects = await client.project.findMany({
     orderBy: [{ status: "asc" }, { updatedAt: "desc" }],
     include: {
       phases: {
@@ -67,7 +68,6 @@ export async function listProjectSummaries(
       }
     }
   });
-
   return projects.map((project) => summarizeProject(project, reviewPeriod));
 }
 

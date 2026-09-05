@@ -9,7 +9,7 @@ import { parseActivityCreateMutation, parseActivityReplaceMutation, evidenceErro
 import { parseDiaryUpsertMutation } from "../../src/modules/evidence/domain/diary";
 import { createActivity, replaceActivity, deleteActivity, readDayActivities, readActivityCategories, readReviewActivities, readEarliestActivity, readProjectActivities, readProjectActivitySummaries } from "../../src/modules/evidence/services/activities";
 import { upsertDiary, readDiary, readReviewDiaries } from "../../src/modules/evidence/services/diary";
-import { recordFocusActivity, enrichFocusActivity } from "../../src/modules/evidence/services/focus-activity";
+import { recordFocusActivity } from "../../src/modules/evidence/services/focus-activity";
 import { AppError } from "../../src/shared/kernel/errors";
 
 async function withDatabase(
@@ -63,7 +63,11 @@ test("evidence services run headlessly on SQLite", async context => {
     const create = (changes: Record<string, unknown> = {}) => prisma.$transaction(tx => createActivity(tx, createInput(changes)));
 
     await context.test("create attributes through a Task or directly to a Project and ignores forged origin", async () => {
-      const linked = await create({ taskId: task.id, projectId: project.id, origin: "FOCUS", focusSessionId: "forged" });
+      const session = await prisma.focusSession.create({ data: { kind: "FOCUS", plannedMinutes: 25, startedAt: now } });
+      // Add forged fields after parsing so they reach the service. A real session
+      // makes accidental persistence fail these assertions, not a foreign-key check.
+      const forgedInput = { ...createInput({ taskId: task.id, projectId: project.id }), origin: "FOCUS", focusSessionId: session.id };
+      const linked = await prisma.$transaction(tx => createActivity(tx, forgedInput));
       assert.equal(linked.taskId, task.id);
       assert.equal(linked.projectId, null);
       assert.equal(linked.attributedProjectId, project.id);
@@ -78,7 +82,7 @@ test("evidence services run headlessly on SQLite", async context => {
       await assert.rejects(() => create({ projectId: "missing" }), hasSpec(evidenceErrors.theLinkedProjectCouldNotBeFound));
     });
 
-    await context.test("future date rejection leaves no Activity", async () => {
+    await context.test("parser rejects a future date before the Activity service runs", async () => {
       const count = await prisma.activityEntry.count();
       await assert.rejects(async () => create({ date: "2026-09-05" }), hasSpec(evidenceErrors.activityDateCannotBeInTheFuture));
       assert.equal(await prisma.activityEntry.count(), count);

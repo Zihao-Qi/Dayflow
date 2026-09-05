@@ -13,43 +13,25 @@ export type FocusActivityEvidence = {
   label: string | null;
 };
 
-export function recordFocusActivity(tx: Prisma.TransactionClient, evidence: FocusActivityEvidence) {
+/** Completion preserves existing evidence; enrichment changes only category/note. */
+export function recordFocusActivity(
+  tx: Prisma.TransactionClient,
+  evidence: FocusActivityEvidence,
+  enrichment?: { category: string; note: string }
+) {
   return tx.activityEntry.upsert({
     where: { focusSessionId: evidence.id },
     create: {
       startedAt: evidence.startedAt,
       durationMinutes: evidence.actualMinutes,
-      category: "Deep Work",
-      note: evidence.task?.title || evidence.label || "Focus session",
+      category: enrichment ? enrichment.category : "Deep Work",
+      note: enrichment ? enrichment.note : evidence.task?.title || evidence.label || "Focus session",
       origin: "FOCUS",
       taskId: evidence.taskId,
       projectId: evidence.task?.projectId ? null : evidence.projectId,
       attributedProjectId: evidence.task?.projectId ?? evidence.projectId,
       focusSessionId: evidence.id
     },
-    update: {}
-  });
-}
-
-/** Enrichment can create missing evidence; existing rows change only category/note. */
-export function enrichFocusActivity(
-  tx: Prisma.TransactionClient,
-  sessionId: string,
-  details: Omit<FocusActivityEvidence, "id" | "label"> & { category: string; note: string }
-) {
-  return tx.activityEntry.upsert({
-    where: { focusSessionId: sessionId },
-    create: {
-      startedAt: details.startedAt,
-      durationMinutes: details.actualMinutes,
-      category: details.category,
-      note: details.note,
-      origin: "FOCUS",
-      taskId: details.taskId,
-      projectId: details.task?.projectId ? null : details.projectId,
-      attributedProjectId: details.task?.projectId ?? details.projectId,
-      focusSessionId: sessionId
-    },
-    update: { category: details.category, note: details.note }
+    update: enrichment ? { category: enrichment.category, note: enrichment.note } : {}
   });
 }

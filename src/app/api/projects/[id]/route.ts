@@ -16,7 +16,7 @@ type Params = { params: Promise<{ id: string }> };
 
 export async function GET(_request: NextRequest, { params }: Params) {
   const { id } = await params;
-  const project = await getProjectDetail(id);
+  const project = await getProjectDetail(id, prisma);
   if (!project) {
     return NextResponse.json({ error: "Project not found." }, { status: 404 });
   }

@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
 import {
   FocusSessionConflictError,
   FocusSessionError,
@@ -29,7 +30,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     const result = await transitionFocusSession(id, input.action, input);
     return NextResponse.json({
       ...result,
-      snapshot: await getFocusSnapshot()
+      snapshot: await getFocusSnapshot(prisma)
     });
   } catch (error) {
     if (error instanceof WorkflowMutationRequestError) {

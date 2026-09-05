@@ -1,5 +1,4 @@
 import type { Prisma } from "@prisma/client";
-import { prisma } from "@/lib/prisma";
 
 export type EvidenceAttributionErrorCode =
   | "RELATIONSHIP_NOT_FOUND"
@@ -25,7 +24,7 @@ type EvidenceAttributionClient = Pick<
 export async function resolveTaskProjectAttribution(
   taskValue: unknown,
   projectValue: unknown,
-  database: EvidenceAttributionClient = prisma
+  database: EvidenceAttributionClient
 ) {
   const taskId = String(taskValue ?? "").trim() || null;
   let projectId = String(projectValue ?? "").trim() || null;

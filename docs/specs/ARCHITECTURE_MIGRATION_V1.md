@@ -193,10 +193,10 @@ architecture test reports the baseline and passes.
 
 ## Phase 1: Kernel and Spine
 
-1. Make the transaction parameter required on the phase 1 escape sites
-   (the six Rule 5 defaults and `listProjectSummaries`) and forward it from
-   every caller. Behavior-preserving; removes those Rule 5 entries and the
-   first Rule 4 entry. The csv-export default stays until phase 3.
+1. Make the transaction parameter required on the seven rule 5 sites and
+   forward it from every caller. Behavior-preserving; empties the rule 5
+   baseline. The sixteen rule 4 call-through sites, `listProjectSummaries`
+   among them, leave with their files in phases 2 and 3.
 2. Extract `src/shared/kernel/parsing.ts` from the six copies of
    `requireObject`, `parseBoundedInteger` and the body readers. Messages stay
    identical; each `*-mutations.ts` becomes a thin wrapper.
@@ -210,8 +210,8 @@ architecture test reports the baseline and passes.
 5. Run bootstrap and agent export inside one read transaction. No envelope
    change.
 
-Exit: Rule 5 baseline contains only `csv-export.ts`; one serializer; no
-Prisma error code interpreted outside the service that knows its meaning.
+Exit: rule 5 baseline empty; one serializer; no Prisma error code
+interpreted outside the service that knows its meaning.
 
 ## Phase 2: Prove the Service Pattern on Planning
 

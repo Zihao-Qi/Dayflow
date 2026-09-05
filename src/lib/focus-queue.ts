@@ -9,7 +9,7 @@ const queueOrder = [
   { createdAt: "asc" as const }
 ];
 
-export async function listFocusQueue(transaction: QueueTransaction = prisma) {
+export async function listFocusQueue(transaction: QueueTransaction) {
   return transaction.task.findMany({
     where: {
       focusQueuePosition: { not: null },

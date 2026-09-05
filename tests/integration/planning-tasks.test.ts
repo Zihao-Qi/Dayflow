@@ -272,6 +272,35 @@ test("planning Task and focus-queue services run headlessly on SQLite", async (c
       await reset();
     });
 
+    await context.test("runOnce replays the stored receipt DTO after the source Task is changed and deleted", async () => {
+      let calls = 0;
+      const payload = { title: "Original receipt Task" };
+      const options = {
+        mutationId: "task-replay-after-source-change", kind: "task.create", payload,
+        create: (tx: import("@prisma/client").Prisma.TransactionClient) => {
+          calls++;
+          return createTask(tx, draft(payload));
+        }
+      };
+      const first = await runOnce(options);
+      const receipt = await prisma.mutationReceipt.findUniqueOrThrow({ where: { id: options.mutationId } });
+      assert.deepEqual(JSON.parse(receipt.responseJson), first);
+
+      await prisma.task.update({ where: { id: first.id }, data: { title: "Changed source Task" } });
+      assert.equal((await readTask(prisma, first.id))?.title, "Changed source Task");
+      assert.deepEqual(await runOnce(options), first);
+      assert.equal(calls, 1);
+      assert.equal((await readTask(prisma, first.id))?.title, "Changed source Task");
+
+      await prisma.task.delete({ where: { id: first.id } });
+      assert.deepEqual(await runOnce(options), first);
+      assert.equal(calls, 1);
+      assert.equal(await prisma.task.count(), 0);
+      assert.equal(await prisma.mutationReceipt.count(), 1);
+      assert.deepEqual(await prisma.mutationReceipt.findUniqueOrThrow({ where: { id: options.mutationId } }), receipt);
+      await reset();
+    });
+
     await context.test("runOnce replays its DTO, rejects receipt mismatch and rolls back receipt failure", async () => {
       let calls = 0;
       const options = { mutationId: "task-replay", kind: "task.create", payload: { title: "Task" },

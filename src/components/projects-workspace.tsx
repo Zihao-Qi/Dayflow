@@ -75,6 +75,8 @@ type ProjectsWorkspaceProps = {
 type ProjectView = "cards" | "list";
 
 const PROJECTS_VIEW_STORAGE_KEY = "dayflow-projects-view";
+const PROJECT_PLAN_READ_ONLY_MESSAGE =
+  "Reopen this Project before editing tasks or adding unfinished work.";
 const PROJECT_VIEW_OPTIONS: Array<[ProjectView, string]> = [
   ["cards", "Cards"],
   ["list", "List"]
@@ -246,7 +248,6 @@ export function ProjectsWorkspace({
 
   const visibleProjects = projects.filter((project) => project.status === filter);
   const showList = view === "list" && visibleProjects.length > 0;
-  const ProjectOverviewItem = showList ? ProjectRow : ProjectCard;
 
   return (
     <div className="projects-page">
@@ -317,14 +318,25 @@ export function ProjectsWorkspace({
         }
         aria-label={`${projectStatusLabel(filter)} projects`}
       >
-        {visibleProjects.map((project) => (
-          <ProjectOverviewItem
-            key={project.id}
-            project={project}
-            onOpen={() => onSelectedProjectChange(project.id)}
-            onStartFocus={onStartFocus}
-          />
-        ))}
+        {visibleProjects.map((project) =>
+          showList ? (
+            <ProjectRow
+              key={project.id}
+              project={project}
+              today={today}
+              onOpen={() => onSelectedProjectChange(project.id)}
+              onStartFocus={onStartFocus}
+              onDataChanged={onDataChanged}
+            />
+          ) : (
+            <ProjectCard
+              key={project.id}
+              project={project}
+              onOpen={() => onSelectedProjectChange(project.id)}
+              onStartFocus={onStartFocus}
+            />
+          )
+        )}
         {showList ? (
           <button
             type="button"
@@ -553,17 +565,22 @@ function ProjectCreateForm({
  */
 function ProjectRow({
   project,
+  today,
   onOpen,
-  onStartFocus
+  onStartFocus,
+  onDataChanged
 }: {
   project: ProjectSummary;
+  today: string;
   onOpen: () => void;
   onStartFocus: ProjectsWorkspaceProps["onStartFocus"];
+  onDataChanged: () => Promise<void>;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [plan, setPlan] = useState<ProjectRowPlan | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
+  const [editError, setEditError] = useState("");
   // The overview payload refreshes whenever Project data changes, so its own
   // counts stand in for "the plan moved". Without this, completing a Focus
   // Session started from this row updates the summary beside a drawer still
@@ -576,6 +593,7 @@ function ProjectRow({
   ].join(":");
   const loadedKey = useRef(planKey);
   const requestToken = useRef(0);
+  const taskCreateMutation = useRef<PendingMutation | null>(null);
   const statusLabel = projectStatusLabel(project.status);
   const plannedMinutes = project.nextTaskEstimateMinutes ?? 30;
   const nextTaskTitle = project.nextTaskTitle ?? "Add a first task";
@@ -604,17 +622,20 @@ function ProjectRow({
     try {
       const result = await loadProjectPlanRequest(project.id);
 
-      if (token !== requestToken.current) return;
+      if (token !== requestToken.current) return null;
       loadedKey.current = requestedKey;
-      setPlan({
+      const nextPlan = {
         tasks: result.tasks as ProjectTaskRecord[],
         phases: Array.isArray(result.phases)
           ? (result.phases as ProjectPhaseRecord[])
           : []
-      });
+      };
+      setPlan(nextPlan);
+      return nextPlan;
     } catch {
-      if (token !== requestToken.current) return;
+      if (token !== requestToken.current) return null;
       setLoadError("These tasks could not be loaded. Try again.");
+      return null;
     } finally {
       if (token === requestToken.current) setLoading(false);
     }
@@ -626,11 +647,94 @@ function ProjectRow({
     if (next && !plan) void loadPlan();
   }
 
+  /**
+   * Mirrors the Project page's own request helper. A rename leaves the
+   * summary counts untouched, so the drawer is reloaded explicitly rather
+   * than waiting for the cache key to move.
+   */
+  async function mutate(operation: () => Promise<unknown>) {
+    setEditError("");
+    try {
+      await operation();
+    } catch (error) {
+      setEditError(
+        error instanceof ApiError
+          ? error.message
+          : "The change could not be saved. Your draft is still here."
+      );
+      return false;
+    }
+    await loadPlan();
+    try {
+      await onDataChanged();
+    } catch {
+      setEditError(
+        "Your change was saved, but the Project list could not be refreshed."
+      );
+    }
+    return true;
+  }
+
+  function updateTask(
+    id: string,
+    patch: Partial<ProjectTaskRecord> & { scheduleSource?: string }
+  ) {
+    return mutate(() => updateProjectTask(id, patch)).then(() => undefined);
+  }
+
+  async function deleteTask(id: string) {
+    const deleted = await mutate(() => deleteProjectTask(id));
+    if (deleted) return true;
+
+    // DELETE may have committed even when its response was lost. Reconcile
+    // before inviting a retry: a second DELETE would receive 404 and could
+    // otherwise leave the already-removed Task stuck in this drawer forever.
+    const reconciledPlan = await loadPlan();
+    let overviewRefreshed = true;
+    try {
+      await onDataChanged();
+    } catch {
+      overviewRefreshed = false;
+      setEditError(
+        "The task may have been deleted, but the Project list could not be refreshed."
+      );
+    }
+    if (reconciledPlan && !reconciledPlan.tasks.some((task) => task.id === id)) {
+      if (overviewRefreshed) setEditError("");
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Carries a mutation id that survives a retry, so a create whose response
+   * was lost is recognised by the server as a replay rather than committed a
+   * second time. The id is held until the create is confirmed, which is
+   * exactly the window in which the drawer keeps the title and invites one.
+   */
+  async function addTask(title: string, phaseId: string | null) {
+    const payload = {
+      title,
+      projectId: project.id,
+      phaseId,
+      date: null as null,
+      estimateMinutes: 30
+    };
+    const mutationId = mutationIdFor(taskCreateMutation, payload);
+    const saved = await mutate(() => createProjectTask(payload, mutationId));
+    if (saved) taskCreateMutation.current = null;
+    return saved;
+  }
+
   useEffect(() => {
     if (loadedKey.current === planKey) return;
     loadedKey.current = planKey;
-    setPlan(null);
+    // Keep an open drawer mounted while its data refreshes. In particular,
+    // ProjectRowAddTask owns an unsubmitted draft that must survive edits to
+    // neighbouring Tasks. A closed drawer can discard its cache and load on
+    // the next expansion.
     if (expanded) void loadPlan();
+    else setPlan(null);
   }, [planKey, expanded]);
 
   return (
@@ -702,8 +806,16 @@ function ProjectRow({
             plan={plan}
             loading={loading}
             error={loadError}
-            onOpen={onOpen}
+            editError={editError}
+            today={today}
+            canManagePlan={
+              project.status !== "COMPLETED" && project.status !== "ARCHIVED"
+            }
             onRetry={() => void loadPlan()}
+            onUpdateTask={updateTask}
+            onDeleteTask={deleteTask}
+            onAddTask={addTask}
+            onStartFocus={onStartFocus}
           />
         </div>
       )}
@@ -717,23 +829,38 @@ type ProjectRowPlan = {
 };
 
 /**
- * Read-only on purpose. Editing, scheduling and phase management all live on
- * the Project page; repeating them here would mean two places to keep in step.
+ * Uses the Project page's own task row so both surfaces expose the same task
+ * editing, scheduling, focusing and deletion behavior.
  */
 function ProjectRowTasks({
   plan,
   loading,
   error,
-  onOpen,
-  onRetry
+  editError,
+  today,
+  canManagePlan,
+  onRetry,
+  onUpdateTask,
+  onDeleteTask,
+  onAddTask,
+  onStartFocus
 }: {
   plan: ProjectRowPlan | null;
   loading: boolean;
   error: string;
-  onOpen: () => void;
+  editError: string;
+  today: string;
+  canManagePlan: boolean;
   onRetry: () => void;
+  onUpdateTask: (
+    id: string,
+    patch: Partial<ProjectTaskRecord> & { scheduleSource?: string }
+  ) => Promise<void>;
+  onDeleteTask: (id: string) => Promise<boolean>;
+  onAddTask: (title: string, phaseId: string | null) => Promise<boolean>;
+  onStartFocus: ProjectsWorkspaceProps["onStartFocus"];
 }) {
-  if (loading) {
+  if (loading && !plan) {
     return (
       <p className="project-row-drawer-state" role="status">
         Loading tasks…
@@ -741,7 +868,7 @@ function ProjectRowTasks({
     );
   }
 
-  if (error) {
+  if (error && !plan) {
     return (
       <p className="project-row-drawer-state" role="alert">
         {error}{" "}
@@ -754,16 +881,9 @@ function ProjectRowTasks({
 
   if (!plan) return null;
 
-  if (!plan.tasks.length) {
-    return (
-      <p className="project-row-drawer-state">
-        No tasks yet.{" "}
-        <button type="button" className="text-button" onClick={onOpen}>
-          Add the first one
-        </button>
-      </p>
-    );
-  }
+  // Falls through rather than returning: an empty Project is exactly when the
+  // add control is most useful, and it is now right here in the drawer.
+  const emptyPlan = plan.tasks.length === 0;
 
   // Seeded from `plan.phases`, which the API returns in the Project's own
   // sortOrder, so the drawer keeps the configured sequence. Deriving the order
@@ -799,45 +919,123 @@ function ProjectRowTasks({
 
   return (
     <>
+      {loading && (
+        <p className="project-row-drawer-state" role="status">
+          Refreshing tasks…
+        </p>
+      )}
+      {error && (
+        <p className="project-row-drawer-state" role="alert">
+          {error}{" "}
+          <button type="button" className="text-button" onClick={onRetry}>
+            Try again
+          </button>
+        </p>
+      )}
+      {editError && (
+        <p className="project-row-edit-error" role="alert">
+          {editError}
+        </p>
+      )}
+      {emptyPlan && (
+        <p className="project-row-drawer-state">No tasks yet.</p>
+      )}
+      {!canManagePlan && (
+        <p className="project-row-drawer-state">{PROJECT_PLAN_READ_ONLY_MESSAGE}</p>
+      )}
       {filledGroups.map((group) => (
         <div key={group.key} className="project-row-task-group">
           {group.label && (
             <span className="project-row-phase">{group.label}</span>
           )}
-          <ul className="project-row-task-list">
+          <div className="project-task-list">
             {group.tasks.map((task) => (
-              <li
+              <ProjectTaskItem
                 key={task.id}
-                className={task.status === "DONE" ? "is-done" : undefined}
-              >
-                <span className="project-row-task-mark" aria-hidden="true">
-                  {task.status === "DONE" ? <Check size={11} /> : null}
-                </span>
-                <span className="project-row-task-title">
-                  {task.status === "DONE" && <span className="sr-only">Done: </span>}
-                  {task.title}
-                </span>
-                {/*
-                  Only the exception is labelled. Nearly every Project task is
-                  unscheduled, so "Backlog" on every row separated nothing; the
-                  fact worth surfacing is which few tasks are on a day, and
-                  when. Completion is already carried by the filled mark and
-                  the muted title.
-                */}
-                <span className="project-row-task-meta">
-                  {task.status !== "DONE" && task.date
-                    ? formatShortDate(task.date)
-                    : ""}
-                </span>
-                <span className="project-row-task-estimate">
-                  {task.estimateMinutes}m
-                </span>
-              </li>
+                task={task}
+                phases={plan.phases}
+                today={today}
+                canManagePlan={canManagePlan}
+                onUpdate={onUpdateTask}
+                onDelete={onDeleteTask}
+                onStartFocus={onStartFocus}
+              />
             ))}
-          </ul>
+          </div>
         </div>
       ))}
+      {canManagePlan && (
+        <ProjectRowAddTask phases={plan.phases} onAdd={onAddTask} />
+      )}
     </>
+  );
+}
+
+function ProjectRowAddTask({
+  phases,
+  onAdd
+}: {
+  phases: ProjectPhaseRecord[];
+  onAdd: (title: string, phaseId: string | null) => Promise<boolean>;
+}) {
+  const [title, setTitle] = useState("");
+  const [phaseId, setPhaseId] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    // Refreshes keep this composer mounted so its title draft survives.
+    // Drop only a selection that no longer exists in the refreshed plan.
+    if (phaseId && !phases.some((phase) => phase.id === phaseId)) {
+      setPhaseId("");
+    }
+  }, [phases, phaseId]);
+
+  async function submit() {
+    const trimmed = title.trim();
+    if (!trimmed || saving) return;
+    setSaving(true);
+    const added = await onAdd(trimmed, phaseId || null);
+    setSaving(false);
+    if (added) setTitle("");
+  }
+
+  return (
+    <div className="project-row-add-task">
+      <input
+        value={title}
+        disabled={saving}
+        placeholder="Add a task"
+        aria-label="New Project task"
+        onChange={(event) => setTitle(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") void submit();
+        }}
+      />
+      {phases.length > 0 && (
+        <select
+          value={phaseId}
+          disabled={saving}
+          aria-label="Phase for the new task"
+          onChange={(event) => setPhaseId(event.target.value)}
+        >
+          <option value="">No phase</option>
+          {phases.map((phase) => (
+            <option key={phase.id} value={phase.id}>
+              {phase.name}
+            </option>
+          ))}
+        </select>
+      )}
+      <button
+        type="button"
+        className="secondary-button"
+        disabled={saving || !title.trim()}
+        onClick={() => void submit()}
+      >
+        <Plus size={14} />
+        {saving ? "Adding…" : "Add"}
+      </button>
+    </div>
   );
 }
 
@@ -977,6 +1175,17 @@ function ProjectDetailWorkspace({
     phaseCreateMutation.current = null;
     taskCreateMutation.current = null;
   }, [detail?.id]);
+
+  useEffect(() => {
+    // A phase can also be deleted elsewhere, bypassing deletePhase below.
+    if (
+      detail &&
+      newTaskPhase &&
+      !detail.phases.some((phase) => phase.id === newTaskPhase)
+    ) {
+      setNewTaskPhase("");
+    }
+  }, [detail, newTaskPhase]);
 
   if (loading || !detail) {
     return (
@@ -1346,7 +1555,7 @@ function ProjectDetailWorkspace({
               </button>
             </div>
           ) : (
-            <p>Reopen this Project before adding unfinished work.</p>
+            <p>{PROJECT_PLAN_READ_ONLY_MESSAGE}</p>
           )}
         </div>
 
@@ -2067,6 +2276,7 @@ function ProjectTaskItem({
     >
       <button
         className="check-button"
+        disabled={!canManagePlan}
         aria-label={done ? `Reopen ${task.title}` : `Complete ${task.title}`}
         onClick={() =>
           void onUpdate(task.id, { status: done ? "TODO" : "DONE" })
@@ -2077,9 +2287,12 @@ function ProjectTaskItem({
       <input
         className="project-task-title"
         value={title}
+        disabled={!canManagePlan}
         onChange={(event) => setTitle(event.target.value)}
         onBlur={() => {
-          if (title.trim() && title !== task.title) void onUpdate(task.id, { title: title.trim() });
+          if (canManagePlan && title.trim() && title !== task.title) {
+            void onUpdate(task.id, { title: title.trim() });
+          }
         }}
         aria-label={`Task title: ${task.title}`}
       />
@@ -2108,6 +2321,7 @@ function ProjectTaskItem({
       ) : (
         <button
           className="project-task-focus"
+          disabled={!canManagePlan}
           onClick={() =>
             onStartFocus({
               taskId: task.id,
@@ -2126,6 +2340,7 @@ function ProjectTaskItem({
           Schedule
           <input
             type="date"
+            disabled={!canManagePlan}
             aria-label={`Schedule ${task.title}`}
             onChange={(event) => {
               if (event.target.value) {
@@ -2164,7 +2379,7 @@ function ProjectTaskItem({
           <Trash2 size={14} />
         </button>
       )}
-      {deleteConfirmOpen && (
+      {canManagePlan && deleteConfirmOpen && (
         <div
           className="project-delete-confirm-overlay"
           role="presentation"

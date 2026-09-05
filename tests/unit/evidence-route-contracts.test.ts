@@ -1,12 +1,25 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { Prisma } from "@prisma/client";
 import { NextRequest } from "next/server";
 import { POST as createActivity } from "../../src/app/api/activities/route";
-import { PUT as updateActivity } from "../../src/app/api/activities/[id]/route";
+import {
+  DELETE as deleteActivity,
+  PUT as updateActivity
+} from "../../src/app/api/activities/[id]/route";
 import { PUT as saveDiary } from "../../src/app/api/diary/route";
 import { POST as createMaterial } from "../../src/app/api/materials/route";
 import { POST as createNote } from "../../src/app/api/notes/route";
+import { activityMutationErrorResponse } from "../../src/lib/activity-http";
+import { ActivityPersistenceError } from "../../src/lib/activity-persistence";
 import { addDays, localDateKey } from "../../src/lib/dates";
+import { EvidenceAttributionError } from "../../src/lib/evidence-attribution";
+import { EvidenceMutationRequestError } from "../../src/lib/evidence-mutations";
+import {
+  IdempotentMutationError,
+  mutationRequestHash
+} from "../../src/lib/idempotent-mutations";
+import { prisma } from "../../src/lib/prisma";
 
 test("evidence routes return typed malformed-JSON responses", async () => {
   const activityResponse = await createActivity(
@@ -191,6 +204,434 @@ test("Note and Material routes validate mutation identifiers before writing", as
   }
 });
 
+const activityCreateBody = {
+  startTime: "09:30",
+  durationMinutes: 30,
+  category: "Deep Work",
+  note: "Contract",
+  taskId: null,
+  projectId: null
+};
+
+type ActivityCreateGuardCase = {
+  name: string;
+  body?: Record<string, unknown>;
+  mutationId?: string;
+  receipt?: { kind: string; requestHash: string; responseJson: string };
+  task?: { id: string; projectId: string | null };
+  status: number;
+  envelope: Record<string, unknown>;
+  lookups: string[];
+};
+
+const activityCreateGuardCases: ActivityCreateGuardCase[] = [
+  {
+    name: "invalid mutation id",
+    mutationId: "x".repeat(129),
+    status: 400,
+    envelope: {
+      error: "X-Dayflow-Mutation-Id must contain 1 to 128 characters.",
+      code: "INVALID_MUTATION_ID"
+    },
+    lookups: []
+  },
+  {
+    name: "receipt mismatch",
+    mutationId: "activity-receipt",
+    receipt: {
+      kind: "activity.create",
+      requestHash: mutationRequestHash("activity.create", { ...activityCreateBody, note: "Earlier request" }),
+      responseJson: JSON.stringify({ id: "earlier-activity" })
+    },
+    status: 409,
+    envelope: {
+      error: "This mutation identifier was already used for a different request.",
+      code: "MUTATION_ID_CONFLICT"
+    },
+    lookups: ["receipt:activity-receipt"]
+  },
+  {
+    name: "invalid stored receipt",
+    mutationId: "activity-receipt",
+    receipt: {
+      kind: "activity.create",
+      requestHash: mutationRequestHash("activity.create", activityCreateBody),
+      responseJson: "{"
+    },
+    status: 500,
+    envelope: {
+      error: "The saved mutation receipt could not be read.",
+      code: "INVALID_MUTATION_RECEIPT"
+    },
+    lookups: ["receipt:activity-receipt"]
+  },
+  {
+    name: "linked Task missing",
+    body: { ...activityCreateBody, taskId: "missing-task" },
+    status: 404,
+    envelope: {
+      error: "The linked task could not be found.",
+      code: "RELATIONSHIP_NOT_FOUND",
+      field: "taskId"
+    },
+    lookups: ["task:missing-task"]
+  },
+  {
+    name: "linked Project missing",
+    body: { ...activityCreateBody, projectId: "missing-project" },
+    status: 404,
+    envelope: {
+      error: "The linked project could not be found.",
+      code: "RELATIONSHIP_NOT_FOUND",
+      field: "projectId"
+    },
+    lookups: ["project:missing-project"]
+  },
+  {
+    name: "attribution conflict",
+    body: { ...activityCreateBody, taskId: "task", projectId: "selected-project" },
+    task: { id: "task", projectId: "task-project" },
+    status: 409,
+    envelope: {
+      error: "The selected task belongs to a different project.",
+      code: "ATTRIBUTION_CONFLICT",
+      field: "projectId"
+    },
+    lookups: ["task:task"]
+  }
+];
+
+for (const fixture of activityCreateGuardCases) {
+  test(`Activity POST reaches ${fixture.name} through its own guards`, async () => {
+    const originalTransaction = prisma.$transaction;
+    const lookups: string[] = [];
+    let transactions = 0;
+    let writes = 0;
+    const transaction = {
+      mutationReceipt: {
+        findUnique: async ({ where }: { where: { id: string } }) => {
+          lookups.push(`receipt:${where.id}`);
+          return fixture.receipt ?? null;
+        },
+        create: async () => { writes += 1; }
+      },
+      task: {
+        findUnique: async ({ where }: { where: { id: string } }) => {
+          lookups.push(`task:${where.id}`);
+          return fixture.task ?? null;
+        }
+      },
+      project: {
+        findUnique: async ({ where }: { where: { id: string } }) => {
+          lookups.push(`project:${where.id}`);
+          return null;
+        }
+      },
+      // Allow success when a guard is removed, so missing guards fail the envelope assertion.
+      activityEntry: {
+        create: async () => { writes += 1; return { id: "created-activity" }; }
+      }
+    };
+    try {
+      (prisma as unknown as { $transaction: unknown }).$transaction = async (
+        callback: (client: typeof transaction) => Promise<unknown>
+      ) => {
+        transactions += 1;
+        return callback(transaction);
+      };
+      const response = await createActivity(jsonRequest(
+        "http://localhost/api/activities",
+        "POST",
+        fixture.body ?? activityCreateBody,
+        fixture.mutationId ? { "X-Dayflow-Mutation-Id": fixture.mutationId } : {}
+      ));
+      assert.equal(response.status, fixture.status);
+      assert.deepEqual(await response.json(), fixture.envelope);
+      assert.deepEqual(lookups, fixture.lookups);
+      assert.equal(transactions, fixture.name === "invalid mutation id" ? 0 : 1);
+      assert.equal(writes, 0);
+    } finally {
+      (prisma as unknown as { $transaction: unknown }).$transaction = originalTransaction;
+    }
+  });
+}
+
+test("Activity error mapping pins every typed and Prisma branch", async () => {
+  const cases: Array<[unknown, number, Record<string, unknown>]> = [
+    [
+      new IdempotentMutationError(
+        "INVALID_MUTATION_ID",
+        "X-Dayflow-Mutation-Id must contain 1 to 128 characters.",
+        400
+      ),
+      400,
+      {
+        error: "X-Dayflow-Mutation-Id must contain 1 to 128 characters.",
+        code: "INVALID_MUTATION_ID"
+      }
+    ],
+    [
+      new IdempotentMutationError(
+        "MUTATION_ID_CONFLICT",
+        "This mutation identifier was already used for a different request.",
+        409
+      ),
+      409,
+      {
+        error: "This mutation identifier was already used for a different request.",
+        code: "MUTATION_ID_CONFLICT"
+      }
+    ],
+    [
+      new IdempotentMutationError(
+        "INVALID_MUTATION_RECEIPT",
+        "The saved mutation receipt could not be read.",
+        500
+      ),
+      500,
+      {
+        error: "The saved mutation receipt could not be read.",
+        code: "INVALID_MUTATION_RECEIPT"
+      }
+    ],
+    [
+      new EvidenceMutationRequestError(
+        "Duration must be between 1 and 1440 minutes.",
+        "durationMinutes"
+      ),
+      400,
+      {
+        error: "Duration must be between 1 and 1440 minutes.",
+        code: "VALIDATION_ERROR",
+        field: "durationMinutes"
+      }
+    ],
+    [
+      new EvidenceAttributionError(
+        "The linked task could not be found.",
+        "RELATIONSHIP_NOT_FOUND",
+        "taskId",
+        404
+      ),
+      404,
+      {
+        error: "The linked task could not be found.",
+        code: "RELATIONSHIP_NOT_FOUND",
+        field: "taskId"
+      }
+    ],
+    [
+      new EvidenceAttributionError(
+        "The linked project could not be found.",
+        "RELATIONSHIP_NOT_FOUND",
+        "projectId",
+        404
+      ),
+      404,
+      {
+        error: "The linked project could not be found.",
+        code: "RELATIONSHIP_NOT_FOUND",
+        field: "projectId"
+      }
+    ],
+    [
+      new EvidenceAttributionError(
+        "The selected task belongs to a different project.",
+        "ATTRIBUTION_CONFLICT",
+        "projectId",
+        409
+      ),
+      409,
+      {
+        error: "The selected task belongs to a different project.",
+        code: "ATTRIBUTION_CONFLICT",
+        field: "projectId"
+      }
+    ],
+    [
+      new ActivityPersistenceError(
+        "Activity not found.",
+        "ACTIVITY_NOT_FOUND",
+        404
+      ),
+      404,
+      { error: "Activity not found.", code: "ACTIVITY_NOT_FOUND" }
+    ],
+    [
+      new ActivityPersistenceError(
+        "Focus evidence cannot be edited here.",
+        "FOCUS_ACTIVITY_PROTECTED",
+        409
+      ),
+      409,
+      {
+        error: "Focus evidence cannot be edited here.",
+        code: "FOCUS_ACTIVITY_PROTECTED"
+      }
+    ],
+    [
+      new ActivityPersistenceError(
+        "The Activity changed before it could be updated.",
+        "CONFLICT",
+        409
+      ),
+      409,
+      {
+        error: "The Activity changed before it could be updated.",
+        code: "CONFLICT"
+      }
+    ]
+  ];
+
+  for (const code of ["P2003", "P2025"]) {
+    cases.push([
+      prismaError(code),
+      409,
+      {
+        error: "The linked Activity relationship is no longer available.",
+        code: "RELATIONSHIP_CONFLICT"
+      }
+    ]);
+  }
+  cases.push([
+    new Error("unexpected"),
+    500,
+    { error: "Activity could not be updated.", code: "INTERNAL_ERROR" }
+  ]);
+
+  const originalTransaction = prisma.$transaction;
+  const originalConsoleError = console.error;
+  console.error = () => undefined;
+  try {
+    for (const [error, status, body] of cases) {
+      const response = activityMutationErrorResponse(
+        error,
+        "Activity update failed.",
+        "Activity could not be updated."
+      );
+      assert.equal(response.status, status);
+      assert.deepEqual(await response.json(), body);
+      (prisma as unknown as { $transaction: unknown }).$transaction = async () => { throw error; };
+      // POST mutation-id, receipt, and attribution reachability is covered above.
+      // These remaining injected failures characterize mapping at the transaction seam.
+      const methods = error instanceof IdempotentMutationError ? [] as const
+        : error instanceof EvidenceAttributionError ? ["PUT"] as const
+        : error instanceof ActivityPersistenceError || status === 500 ? ["PUT"] as const
+          : ["POST", "PUT"] as const;
+      for (const method of methods) {
+        const request = jsonRequest(`http://localhost/api/activities${method === "PUT" ? "/activity" : ""}`, method, {
+          startTime: "09:30", durationMinutes: 30, category: "Deep Work", note: "Contract", taskId: null, projectId: null
+        });
+        const routed = method === "POST" ? await createActivity(request)
+          : await updateActivity(request, { params: Promise.resolve({ id: "activity" }) });
+        assert.equal(routed.status, status);
+        assert.deepEqual(await routed.json(), body);
+      }
+    }
+    const createFallback = activityMutationErrorResponse(
+      new Error("unexpected"),
+      "Activity creation failed."
+    );
+    assert.equal(createFallback.status, 500);
+    assert.deepEqual(await createFallback.json(), {
+      error: "Activity could not be saved.",
+      code: "INTERNAL_ERROR"
+    });
+    const routedFallback = await createActivity(jsonRequest("http://localhost/api/activities", "POST", {
+      durationMinutes: 30, category: "Deep Work", note: "Contract"
+    }));
+    assert.equal(routedFallback.status, 500);
+    assert.deepEqual(await routedFallback.json(), { error: "Activity could not be saved.", code: "INTERNAL_ERROR" });
+  } finally {
+    (prisma as unknown as { $transaction: unknown }).$transaction = originalTransaction;
+    console.error = originalConsoleError;
+  }
+});
+
+test("Activity delete pins its code-less and conflict envelopes", async () => {
+  const transaction = prisma.$transaction;
+  const originalConsoleError = console.error;
+  console.error = () => undefined;
+  try {
+    for (const [result, status, body] of [
+      ["missing", 404, { error: "Activity not found." }],
+      ["protected", 409, { error: "Focus evidence cannot be deleted." }]
+    ] as const) {
+      (prisma as unknown as { $transaction: unknown }).$transaction = async () =>
+        result;
+      const response = await deleteActivity(
+        new NextRequest("http://localhost/api/activities/activity-1", {
+          method: "DELETE"
+        }),
+        { params: Promise.resolve({ id: "activity-1" }) }
+      );
+      assert.equal(response.status, status);
+      assert.deepEqual(await response.json(), body);
+    }
+
+    for (const code of ["P2003", "P2025"]) {
+      (prisma as unknown as { $transaction: unknown }).$transaction = async () => {
+        throw prismaError(code);
+      };
+      const response = await deleteActivity(
+        new NextRequest("http://localhost/api/activities/activity-1", {
+          method: "DELETE"
+        }),
+        { params: Promise.resolve({ id: "activity-1" }) }
+      );
+      assert.equal(response.status, 409);
+      assert.deepEqual(await response.json(), {
+        error: "The Activity changed before it could be deleted.",
+        code: "CONFLICT"
+      });
+    }
+
+    (prisma as unknown as { $transaction: unknown }).$transaction = async () => {
+      throw new Error("unexpected");
+    };
+    const response = await deleteActivity(
+      new NextRequest("http://localhost/api/activities/activity-1", {
+        method: "DELETE"
+      }),
+      { params: Promise.resolve({ id: "activity-1" }) }
+    );
+    assert.equal(response.status, 500);
+    assert.deepEqual(await response.json(), {
+      error: "Activity could not be deleted.",
+      code: "INTERNAL_ERROR"
+    });
+  } finally {
+    (prisma as unknown as { $transaction: unknown }).$transaction = transaction;
+    console.error = originalConsoleError;
+  }
+});
+
+test("Diary route pins its internal envelope", async () => {
+  const originalTransaction = prisma.$transaction;
+  const originalConsoleError = console.error;
+  console.error = () => undefined;
+  try {
+    (prisma as unknown as { $transaction: unknown }).$transaction = async () => {
+      throw new Error("unexpected");
+    };
+    const response = await saveDiary(
+      jsonRequest("http://localhost/api/diary", "PUT", {
+        date: localDateKey(new Date()),
+        content: "Diary"
+      })
+    );
+    assert.equal(response.status, 500);
+    assert.deepEqual(await response.json(), {
+      error: "Diary could not be saved.",
+      code: "INTERNAL_ERROR"
+    });
+  } finally {
+    (prisma as unknown as { $transaction: unknown }).$transaction =
+      originalTransaction;
+    console.error = originalConsoleError;
+  }
+});
+
 function invalidJsonRequest(url: string, method: "POST" | "PUT") {
   return new NextRequest(url, {
     method,
@@ -209,5 +650,12 @@ function jsonRequest(
     method,
     headers: { "Content-Type": "application/json", ...headers },
     body: JSON.stringify(body)
+  });
+}
+
+function prismaError(code: string) {
+  return new Prisma.PrismaClientKnownRequestError("Planted Prisma error", {
+    code,
+    clientVersion: "test"
   });
 }

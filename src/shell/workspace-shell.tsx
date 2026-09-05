@@ -77,6 +77,7 @@ export function WorkspaceShell() {
     timeBlockTaskCandidates,
     refresh,
     retryBootstrap,
+    registerReviewRefresh,
     paletteResolution,
     openCommandPalette,
     dismissCommandPalette,
@@ -343,9 +344,9 @@ export function WorkspaceShell() {
 
         {screen === "review" && (
           <ReviewPage
-            projects={data.projects}
-            review={data.review}
-            summary={data.reviewSummary}
+            todayKey={data.todayKey}
+            registerRefresh={registerReviewRefresh}
+            onRetry={() => void refresh().catch(() => {})}
             onSaveReview={saveReview}
             onSaveError={reportReviewSaveFailure}
             onSaveRecovered={reportReviewSaveRecovery}

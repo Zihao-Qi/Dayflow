@@ -9,7 +9,7 @@ import { localDateKey } from "@/lib/dates";
 import { DEFAULT_FOCUS_MINUTES } from "@/lib/focus-domain";
 import { useBacklogPage, useTodayPage, type Task } from "@/modules/planning/ui";
 import { safeTimeBlockDurationMinutes } from "@/modules/planning/ui/log/day-workspace-helpers";
-import { useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 
 import { useCommandPaletteHost } from "./command-palette-host";
 import { useBootstrap } from "./use-bootstrap";
@@ -42,6 +42,10 @@ export function useShellModel() {
     dismissedUnfinished,
     setAppAnnouncement
   } = state;
+  const reviewRefresh = useRef<(() => Promise<boolean>) | null>(null);
+  const registerReviewRefresh = useCallback((callback: (() => Promise<boolean>) | null) => {
+    reviewRefresh.current = callback;
+  }, []);
   const {
     refresh,
     retryBootstrap,
@@ -51,7 +55,11 @@ export function useShellModel() {
     focus,
     // Bootstrap effects run after the activity hook below has initialized.
     initializeActivityClock: () => activity.initializeClock(),
-    refreshDestination: (todayKey) => viewedDay.refresh(todayKey)
+    refreshDestination: (todayKey) => {
+      if (screen === "today" || screen.startsWith("day-")) return viewedDay.refresh(todayKey);
+      if (screen === "review") return reviewRefresh.current?.() ?? Promise.resolve(true);
+      return Promise.resolve(true);
+    }
   });
   useEffect(() => {
     if (focus.retryNext) setRailExpanded(true);
@@ -271,6 +279,7 @@ export function useShellModel() {
 
   return {
     ...state,
+    registerReviewRefresh,
     focus,
     compactLayout,
     phoneLayout,

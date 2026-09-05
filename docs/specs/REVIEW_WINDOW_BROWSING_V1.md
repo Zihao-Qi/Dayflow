@@ -125,3 +125,35 @@ database internals.
 - Browser coverage for opening an unsaved window, reading a matching saved
   Review, returning to the current editor, stale-response rejection, failure
   recovery, and phone-width layout.
+
+## Additive current-period read (Client Track item 4)
+
+`GET /api/review/window?current=1` selects the server's current seven-day
+period. It returns the same top-level window keys: `ending`, `periodStart`,
+`periodEnd`, `review`, `reviewSummary`, and `projects`. For this mode alone,
+an absent saved review becomes `{id: null, periodStart, periodEnd,
+narrative: "", nextPeriodIntention: "", persisted: false}`; saved writing
+has `persisted: true`. Reading never persists an empty editor. Projects and
+summary are derived for the selected period, as in historical mode.
+
+The `ending=` parser and historical success/error envelopes remain unchanged,
+including rejection of today. Current mode requires one `current=1` and no
+`ending` parameter. Bootstrap retains its entire compatibility payload.
+
+Current-mode route inventory (pinned by
+`tests/unit/current-review-window-contract.test.ts`):
+
+| Input or trigger | Status | Contract |
+| --- | --- | --- |
+| `current=1`, absent or saved writing | 200 | Server-selected bounds, normalized editor, summary and projects; no write |
+| Invalid/duplicate `current`, or `current` together with `ending` | 400 | `{error: "Use current=1 without a Review Window ending day.", code: "VALIDATION_ERROR"}` |
+| Current read/evidence failure | 500 | `{error: "Review Window could not be read.", code: "INTERNAL_ERROR"}` |
+| Historical `ending=<today>` (preserved) | 400 | `{error: "Review Windows must end before today.", code: "VALIDATION_ERROR"}` |
+
+Review loads its current window on entry. Confirmed mutations, midnight,
+focus activity revisions and explicit retry attempt bootstrap, the current
+window, and any open history list and selected historical detail/window.
+Each owner uses latest-started read ordering. A refresh preserves the editor
+and historical selection; a new server-selected period resets the editor by
+its exact period key. A confirmed save remains visible if a required refresh
+fails, with the existing saved-but-refresh-failed feedback.

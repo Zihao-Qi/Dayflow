@@ -1,3 +1,5 @@
+"use client";
+
 import type { ActivityEntry } from "@/components/activity-records";
 import type { JournalMaterialRecord, JournalNoteRecord } from "@/lib/journal-records";
 import type {
@@ -385,6 +387,21 @@ export function isReviewWindowDetail(
     isPastReviewRecord(detail.review) &&
     detail.review.periodStart === detail.periodStart &&
     detail.review.periodEnd === detail.periodEnd
+  );
+}
+
+export type CurrentReviewWindow = Omit<ReviewWindowDetail, "review"> & { review: Review };
+
+export function isCurrentReviewWindow(value: unknown): value is CurrentReviewWindow {
+  if (!value || typeof value !== "object") return false;
+  const detail = value as CurrentReviewWindow;
+  // Reuse the evidence/bounds contract without widening historical review:null.
+  if (!isReviewWindowDetail({ ...detail, review: null })) return false;
+  const review = detail.review;
+  if (!review || review.periodStart !== detail.periodStart || review.periodEnd !== detail.periodEnd) return false;
+  return isPersistedReviewResponse(review) || (
+    review.id === null && review.persisted === false &&
+    review.narrative === "" && review.nextPeriodIntention === ""
   );
 }
 

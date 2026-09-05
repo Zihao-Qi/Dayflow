@@ -150,6 +150,9 @@ export async function readReviewWindow(
   searchParams: URLSearchParams,
   now = new Date()
 ) {
+  if (searchParams.has("current")) {
+    return readCurrentReviewWindow(database, searchParams, now);
+  }
   const window = parseReviewWindowRequest(searchParams, now);
   const period = { start: window.start, end: window.end };
   const [{ summary, projects }, review] = await Promise.all([
@@ -169,6 +172,43 @@ export async function readReviewWindow(
     periodStart: period.start,
     periodEnd: period.end,
     review: review ? { ...review, persisted: true } : null,
+    reviewSummary: summary,
+    projects
+  };
+}
+
+/** Additive current mode; the historical ending parser above remains unchanged. */
+export async function readCurrentReviewWindow(
+  database: PrismaClient,
+  searchParams: URLSearchParams,
+  now = new Date()
+) {
+  const values = searchParams.getAll("current");
+  if (values.length !== 1 || values[0] !== "1" || searchParams.has("ending")) {
+    throw new ReviewHistoryRequestError(
+      "VALIDATION_ERROR",
+      "Use current=1 without a Review Window ending day."
+    );
+  }
+  const period = reviewPeriodRange(now);
+  const [{ summary, projects }, saved] = await Promise.all([
+    readReviewPeriodEvidence(database, period),
+    database.review.findUnique({
+      where: { periodStart_periodEnd: { periodStart: period.start, periodEnd: period.end } }
+    })
+  ]);
+  return {
+    ending: localDateKey(addDays(period.end, -1)),
+    periodStart: period.start,
+    periodEnd: period.end,
+    review: saved ? { ...saved, persisted: true } : {
+      id: null,
+      periodStart: period.start,
+      periodEnd: period.end,
+      narrative: "",
+      nextPeriodIntention: "",
+      persisted: false
+    },
     reviewSummary: summary,
     projects
   };

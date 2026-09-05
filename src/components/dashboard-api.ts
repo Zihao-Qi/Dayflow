@@ -3,6 +3,7 @@
 import { request } from "@/shared/client/api-client";
 import {
   isBootstrapResponse,
+  isCurrentReviewWindow,
   isPastReviewDetail,
   isPersistedReviewResponse,
   isReviewHistoryPage,
@@ -53,6 +54,14 @@ export function loadReviewWindow(query: URLSearchParams) {
   return request(`/api/review/window?${query}`, {
     decode: (payload): payload is ReviewWindowDetail => isReviewWindowDetail(payload),
     fallback: WINDOW_FAILURE,
+  });
+}
+
+export function loadCurrentReviewWindow() {
+  return request("/api/review/window?current=1", {
+    cache: "no-store",
+    decode: isCurrentReviewWindow,
+    fallback: "The current Review could not be loaded. Try again."
   });
 }
 

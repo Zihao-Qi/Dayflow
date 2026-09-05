@@ -11,6 +11,7 @@ import {
 } from "@/modules/planning/ui/api";
 import { ApiError } from "@/shared/client/api-client";
 import { mutationIdFor } from "@/shared/client/mutation-ids";
+import { useRef } from "react";
 
 import { type ShellState } from "./use-shell-state";
 
@@ -55,6 +56,8 @@ export function useTaskActions({
   refreshAfterConfirmedMutation: () => Promise<boolean>;
   openFocus: (target: FocusTarget) => void;
 }) {
+  const refreshSucceeded = useRef(true);
+
   async function addTask(date: string | null = data?.todayKey ?? null) {
     const title = newTask.trim();
     if (!title || taskCreatePending) return false;
@@ -160,7 +163,7 @@ export function useTaskActions({
       acceptTask(result);
       setAppError("");
 
-      await refreshAfterConfirmedMutation();
+      refreshSucceeded.current = await refreshAfterConfirmedMutation();
       return true;
     } catch {
       return false;
@@ -176,6 +179,7 @@ export function useTaskActions({
   function reportTaskSaveRecovery() {
     if (!taskSaveWasInError.current) return;
     taskSaveWasInError.current = false;
+    if (!refreshSucceeded.current) return;
     setAppError("");
     setAppAnnouncement("Saved.");
   }

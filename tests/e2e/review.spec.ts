@@ -378,6 +378,7 @@ async function controlBootstrapPeriodShift(page: Page) {
     bootstrapLoads += 1;
     if (shouldShift) {
       payload.today = shiftLocalDay(payload.today as string);
+      payload.todayKey = new Date(payload.today as string).toLocaleDateString("en-CA");
       payload.review = {
         id: null,
         periodStart: shiftLocalDay(payload.review.periodStart),
@@ -385,6 +386,25 @@ async function controlBootstrapPeriodShift(page: Page) {
         narrative: "",
         nextPeriodIntention: "",
         persisted: false
+      };
+    }
+    await route.fulfill({ response, json: payload });
+  });
+  // Current writing/evidence now comes from its own read. The server clock
+  // stays real, so shift that response together with bootstrap's calendar.
+  await page.route("**/api/review/window?current=1", async (route) => {
+    const shouldShift = shiftPeriod;
+    const response = await route.fetch();
+    const payload = await response.json();
+    if (shouldShift) {
+      payload.periodStart = shiftLocalDay(payload.periodStart);
+      payload.periodEnd = shiftLocalDay(payload.periodEnd);
+      const ending = new Date(payload.periodEnd);
+      ending.setDate(ending.getDate() - 1);
+      payload.ending = ending.toLocaleDateString("en-CA");
+      payload.review = {
+        id: null, periodStart: payload.periodStart, periodEnd: payload.periodEnd,
+        narrative: "", nextPeriodIntention: "", persisted: false
       };
     }
     await route.fulfill({ response, json: payload });

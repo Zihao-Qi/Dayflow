@@ -1,5 +1,5 @@
-import type { FocusDraft } from "@/lib/focus-draft";
 import { formatShortDate } from "@/components/dashboard-formatters";
+import type { FocusDraft } from "@/lib/focus-draft";
 import type { ProjectSummary } from "@/lib/project-domain";
 
 export type TaskStatus = "TODO" | "IN_PROGRESS" | "DONE";
@@ -272,4 +272,46 @@ export function formatBacklogDue(value: string | null, today: string) {
   );
   if (days <= 0) return "Today";
   return formatShortDate(value);
+}
+
+export function isTaskResponse(value: unknown): value is Task {
+  if (!value || typeof value !== "object") return false;
+  const task = value as Partial<Task>;
+  return (
+    typeof task.id === "string" &&
+    typeof task.title === "string" &&
+    (task.date === null || typeof task.date === "string") &&
+    ["TODO", "IN_PROGRESS", "DONE"].includes(String(task.status)) &&
+    ["LOW", "MEDIUM", "HIGH"].includes(String(task.priority)) &&
+    Number.isInteger(task.urgentScore) &&
+    Number.isInteger(task.importanceScore) &&
+    (task.deadline === null || typeof task.deadline === "string") &&
+    Number.isInteger(task.estimateMinutes) &&
+    Number.isInteger(task.actualMinutes) &&
+    Number.isInteger(task.sortOrder) &&
+    (task.focusQueuePosition === null ||
+      Number.isInteger(task.focusQueuePosition)) &&
+    (task.completedAt === null || typeof task.completedAt === "string") &&
+    (task.projectId === null || typeof task.projectId === "string") &&
+    (task.phaseId === null || typeof task.phaseId === "string")
+  );
+}
+
+export function isFocusQueueResponse(
+  value: unknown
+): value is { tasks: Task[] } {
+  if (!value || typeof value !== "object") return false;
+  const result = value as { tasks?: unknown };
+  return Array.isArray(result.tasks) && result.tasks.every(isTaskResponse);
+}
+
+export function isTaskReorderResponse(
+  value: unknown
+): value is { ok: true; tasks: Task[] } {
+  return (
+    Boolean(value) &&
+    typeof value === "object" &&
+    (value as { ok?: unknown }).ok === true &&
+    isFocusQueueResponse(value)
+  );
 }

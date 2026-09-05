@@ -1,6 +1,35 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import {
+  createPhase,
+  createProjectTask,
+  deletePhase as deletePhaseRequest,
+  deleteProjectTask,
+  loadProjectDetail,
+  updateProjectTask,
+  createProject as createProjectRequest,
+  deleteProject as deleteProjectRequest,
+  loadProjectPlan as loadProjectPlanRequest,
+  renamePhase as renamePhaseRequest,
+  updateProject as updateProjectRequest
+} from "@/modules/projects/ui/api";
+import { type ProjectPatch } from "@/shared/client/decoders";
+import { mutationIdFor, type PendingMutation } from "@/shared/client/mutation-ids";
+import { ApiError } from "@/shared/client/api-client";
+import { SaveStateChip, useSaveState } from "@/components/save-state";
+import { SegmentedControl } from "@/components/workspace-ui";
+import {
+  calculateProjectMetrics,
+  formatInvestedMinutes,
+  formatProjectDuration,
+  ProjectDetail,
+  ProjectDurationUnit,
+  ProjectPhaseRecord,
+  ProjectStatus,
+  projectStatusLabel,
+  ProjectSummary,
+  ProjectTaskRecord
+} from "@/lib/project-domain";
 import {
   Archive,
   ArrowLeft,
@@ -24,20 +53,7 @@ import {
   RotateCcw,
   Trash2
 } from "lucide-react";
-import {
-  calculateProjectMetrics,
-  formatInvestedMinutes,
-  formatProjectDuration,
-  ProjectDetail,
-  ProjectDurationUnit,
-  ProjectPhaseRecord,
-  ProjectStatus,
-  ProjectSummary,
-  ProjectTaskRecord,
-  projectStatusLabel
-} from "@/lib/project-domain";
-import { SaveStateChip, useSaveState } from "@/components/save-state";
-import { SegmentedControl } from "@/components/workspace-ui";
+import { useEffect, useRef, useState } from "react";
 
 type ProjectsWorkspaceProps = {
   projects: ProjectSummary[];
@@ -83,103 +99,6 @@ function readStoredProjectView(): ProjectView {
   }
 }
 
-type ProjectPatch = Partial<{
-  name: string;
-  desiredOutcome: string;
-  targetDate: string | null;
-  targetDurationValue: number | null;
-  targetDurationUnit: ProjectDurationUnit | null;
-  weeklyMinutesBudget: number | null;
-  status: ProjectStatus;
-  confirm: boolean;
-}>;
-
-type PendingMutation = { id: string; fingerprint: string };
-
-function mutationIdFor(
-  reference: React.MutableRefObject<PendingMutation | null>,
-  payload: unknown
-) {
-  const fingerprint = JSON.stringify(payload);
-  if (reference.current?.fingerprint === fingerprint) {
-    return reference.current.id;
-  }
-  const id =
-    typeof crypto.randomUUID === "function"
-      ? crypto.randomUUID()
-      : `dayflow-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  reference.current = { id, fingerprint };
-  return id;
-}
-
-function isProjectDetailResponse(value: unknown): value is ProjectDetail {
-  if (!value || typeof value !== "object") return false;
-  const project = value as Partial<ProjectDetail>;
-  return (
-    typeof project.id === "string" &&
-    typeof project.name === "string" &&
-    typeof project.desiredOutcome === "string" &&
-    ["ACTIVE", "PAUSED", "COMPLETED", "ARCHIVED"].includes(
-      String(project.status)
-    ) &&
-    Number.isInteger(project.completedTaskCount) &&
-    Number.isInteger(project.taskCount) &&
-    Number.isInteger(project.phaseCount) &&
-    Number.isInteger(project.backlogCount) &&
-    Number.isInteger(project.investedMinutes) &&
-    Number.isInteger(project.reviewPeriodInvestedMinutes) &&
-    typeof project.createdAt === "string" &&
-    typeof project.updatedAt === "string" &&
-    Array.isArray(project.phases) &&
-    Array.isArray(project.tasks) &&
-    Array.isArray(project.activities) &&
-    Array.isArray(project.notes) &&
-    Array.isArray(project.materials)
-  );
-}
-
-function isProjectPhaseResponse(value: unknown): value is ProjectPhaseRecord {
-  if (!value || typeof value !== "object") return false;
-  const phase = value as Partial<ProjectPhaseRecord>;
-  return (
-    typeof phase.id === "string" &&
-    typeof phase.projectId === "string" &&
-    typeof phase.name === "string" &&
-    Number.isInteger(phase.sortOrder) &&
-    typeof phase.createdAt === "string" &&
-    typeof phase.updatedAt === "string"
-  );
-}
-
-function isProjectTaskResponse(value: unknown): value is ProjectTaskRecord {
-  if (!value || typeof value !== "object") return false;
-  const task = value as Partial<ProjectTaskRecord>;
-  return (
-    typeof task.id === "string" &&
-    typeof task.title === "string" &&
-    (task.date === null || typeof task.date === "string") &&
-    ["TODO", "IN_PROGRESS", "DONE"].includes(String(task.status)) &&
-    ["LOW", "MEDIUM", "HIGH"].includes(String(task.priority)) &&
-    Number.isInteger(task.urgentScore) &&
-    Number.isInteger(task.importanceScore) &&
-    (task.deadline === null || typeof task.deadline === "string") &&
-    Number.isInteger(task.estimateMinutes) &&
-    Number.isInteger(task.actualMinutes) &&
-    Number.isInteger(task.sortOrder) &&
-    (task.completedAt === null || typeof task.completedAt === "string") &&
-    (task.projectId === null || typeof task.projectId === "string") &&
-    (task.phaseId === null || typeof task.phaseId === "string")
-  );
-}
-
-function isOkResponse(value: unknown): value is { ok: true } {
-  return (
-    Boolean(value) &&
-    typeof value === "object" &&
-    (value as { ok?: unknown }).ok === true
-  );
-}
-
 export function ProjectsWorkspace({
   projects,
   selectedProjectId,
@@ -205,11 +124,7 @@ export function ProjectsWorkspace({
     }
     let cancelled = false;
     setLoadingDetail(true);
-    void fetch(`/api/projects/${selectedProjectId}`, { cache: "no-store" })
-      .then(async (response) => {
-        if (!response.ok) throw new Error("Project could not be opened.");
-        return response.json();
-      })
+    void loadProjectDetail(selectedProjectId)
       .then((value: ProjectDetail) => {
         if (!cancelled) setDetail(value);
       })
@@ -226,9 +141,12 @@ export function ProjectsWorkspace({
 
   async function reloadDetail() {
     if (!selectedProjectId) return;
-    const response = await fetch(`/api/projects/${selectedProjectId}`, { cache: "no-store" });
-    if (!response.ok) return;
-    setDetail(await response.json());
+    try {
+      setDetail(await loadProjectDetail(selectedProjectId));
+    } catch (error) {
+      if (error instanceof ApiError && error.kind === "http") return;
+      throw error;
+    }
   }
 
   async function sync() {
@@ -252,28 +170,20 @@ export function ProjectsWorkspace({
   async function updateProject(patch: ProjectPatch, reportError = true) {
     if (!selectedProjectId) return false;
     setError("");
-    let result: unknown;
+    let result: ProjectDetail;
     try {
-      const response = await fetch(`/api/projects/${selectedProjectId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(patch)
-      });
-      result = await response.json().catch(() => null);
-      if (!response.ok || !isProjectDetailResponse(result)) {
+      result = await updateProjectRequest(selectedProjectId, patch);
+
+    } catch (failure) {
+      if (failure instanceof ApiError) {
         if (reportError) {
           setError(
-            result &&
-              typeof result === "object" &&
-              "error" in result &&
-              typeof result.error === "string"
-              ? result.error
-              : "Project could not be updated. Your edits are still here."
+            failure.message
           );
         }
         return false;
       }
-    } catch {
+
       if (reportError) {
         setError("Project could not be updated. Your edits are still here.");
       }
@@ -293,23 +203,16 @@ export function ProjectsWorkspace({
   async function deleteProject() {
     if (!detail) return;
     try {
-      const response = await fetch(
-        `/api/projects/${detail.id}?confirm=true`,
-        { method: "DELETE" }
-      );
-      const result = await response.json().catch(() => null);
-      if (!response.ok || !isOkResponse(result)) {
+      const result = await deleteProjectRequest(detail.id);
+
+    } catch (failure) {
+      if (failure instanceof ApiError) {
         setError(
-          result &&
-            typeof result === "object" &&
-            "error" in result &&
-            typeof result.error === "string"
-            ? result.error
-            : "Project could not be deleted."
+          failure.message
         );
         return;
       }
-    } catch {
+
       setError("Project could not be deleted.");
       return;
     }
@@ -503,30 +406,17 @@ function ProjectCreateForm({
     setError("");
     let result: ProjectDetail | null = null;
     try {
-      const response = await fetch("/api/projects", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Dayflow-Mutation-Id": mutationId
-        },
-        body: JSON.stringify(payload)
-      });
-      const body = await response.json().catch(() => null);
-      if (
-        !response.ok ||
-        !isProjectDetailResponse(body) ||
-        body.name !== payload.name.trim() ||
-        body.desiredOutcome !== payload.desiredOutcome.trim()
-      ) {
+      const body = await createProjectRequest(payload, mutationId);
+
+      result = body;
+    } catch (failure) {
+      if (failure instanceof ApiError) {
         setError(
-          body && typeof body.error === "string"
-            ? body.error
-            : "Project could not be created. Your draft is still here."
+          failure.message
         );
         return;
       }
-      result = body;
-    } catch {
+
       setError("Project could not be created. Your draft is still here.");
       return;
     } finally {
@@ -712,13 +602,8 @@ function ProjectRow({
     setLoading(true);
     setLoadError("");
     try {
-      const response = await fetch(`/api/projects/${project.id}`, {
-        cache: "no-store"
-      });
-      const result = await response.json().catch(() => null);
-      if (!response.ok || !result || !Array.isArray(result.tasks)) {
-        throw new Error("unavailable");
-      }
+      const result = await loadProjectPlanRequest(project.id);
+
       if (token !== requestToken.current) return;
       loadedKey.current = requestedKey;
       setPlan({
@@ -1115,29 +1000,12 @@ function ProjectDetailWorkspace({
   const allTasksDone = detail.taskCount > 0 && detail.completedTaskCount === detail.taskCount;
   const canAddWork = detail.status !== "COMPLETED" && detail.status !== "ARCHIVED";
 
-  async function request(
-    path: string,
-    init: RequestInit,
-    validateResult: (value: unknown) => boolean
-  ) {
+  async function confirmProjectChange(operation: () => Promise<unknown>) {
     onError("");
-    let result: unknown;
     try {
-      const response = await fetch(path, init);
-      result = await response.json().catch(() => null);
-      if (!response.ok || !validateResult(result)) {
-        onError(
-          result &&
-            typeof result === "object" &&
-            "error" in result &&
-            typeof result.error === "string"
-            ? result.error
-            : "The change could not be saved. Your draft is still here."
-        );
-        return false;
-      }
-    } catch {
-      onError("The change could not be saved. Your draft is still here.");
+      await operation();
+    } catch (error) {
+      onError(error instanceof ApiError ? error.message : "The change could not be saved. Your draft is still here.");
       return false;
     }
     try {
@@ -1155,21 +1023,7 @@ function ProjectDetailWorkspace({
     const payload = { name: newPhase };
     const mutationId = mutationIdFor(phaseCreateMutation, payload);
     setPhaseSaving(true);
-    const saved = await request(
-      `/api/projects/${project.id}/phases`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Dayflow-Mutation-Id": mutationId
-        },
-        body: JSON.stringify(payload)
-      },
-      (value) =>
-        isProjectPhaseResponse(value) &&
-        value.projectId === project.id &&
-        value.name === payload.name.trim()
-    );
+    const saved = await confirmProjectChange(() => createPhase(project.id, payload, mutationId));
     setPhaseSaving(false);
     if (saved) {
       phaseCreateMutation.current = null;
@@ -1189,22 +1043,7 @@ function ProjectDetailWorkspace({
     };
     const mutationId = mutationIdFor(taskCreateMutation, payload);
     setTaskSaving(true);
-    const saved = await request(
-      "/api/tasks",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Dayflow-Mutation-Id": mutationId
-        },
-        body: JSON.stringify(payload)
-      },
-      (value) =>
-        isProjectTaskResponse(value) &&
-        value.title === payload.title.trim() &&
-        value.projectId === payload.projectId &&
-        value.phaseId === payload.phaseId
-    );
+    const saved = await confirmProjectChange(() => createProjectTask(payload, mutationId));
     setTaskSaving(false);
     if (saved) {
       taskCreateMutation.current = null;
@@ -1213,43 +1052,15 @@ function ProjectDetailWorkspace({
   }
 
   async function updateTask(id: string, patch: Partial<ProjectTaskRecord> & { scheduleSource?: string }) {
-    await request(
-      `/api/tasks/${id}`,
-      {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(patch)
-      },
-      (value) => isProjectTaskResponse(value) && value.id === id
-    );
+    await confirmProjectChange(() => updateProjectTask(id, patch));
   }
 
   async function deleteTask(id: string) {
-    return request(
-      `/api/tasks/${id}`,
-      { method: "DELETE" },
-      (value) =>
-        Boolean(
-          value &&
-            typeof value === "object" &&
-            "ok" in value &&
-            value.ok === true
-        )
-    );
+    return confirmProjectChange(() => deleteProjectTask(id));
   }
 
   async function deletePhase(id: string) {
-    const deleted = await request(
-      `/api/phases/${id}`,
-      { method: "DELETE" },
-      (value) =>
-        Boolean(
-          value &&
-            typeof value === "object" &&
-            "ok" in value &&
-            value.ok === true
-        )
-    );
+    const deleted = await confirmProjectChange(() => deletePhaseRequest(id));
     if (deleted) {
       setNewTaskPhase((selectedPhase) =>
         selectedPhase === id ? "" : selectedPhase
@@ -2417,20 +2228,8 @@ function EditablePhaseName({
   const nameSave = useSaveState({
     value: phase.name,
     save: async (name: string) => {
-      const response = await fetch(`/api/phases/${phase.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name })
-      });
-      const result = await response.json().catch(() => null);
-      if (
-        !response.ok ||
-        !isProjectPhaseResponse(result) ||
-        result.id !== phase.id ||
-        result.name !== name
-      ) {
-        return false;
-      }
+      const result = await renamePhaseRequest(phase.id, name);
+
       await onSaved();
       return true;
     },

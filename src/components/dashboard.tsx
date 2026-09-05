@@ -9,36 +9,28 @@ import {
 } from "react";
 import {
   CalendarDays,
-  Check,
-  ChevronDown,
-  ChevronUp,
   Circle,
   DatabaseBackup,
   FileText,
   FolderKanban,
-  GripVertical,
   Layers3,
   LayoutDashboard,
   Library,
   Menu,
   NotebookPen,
-  Pause,
   Play,
   Plus,
   RefreshCw,
   Save,
-  Sparkles,
-  Trash2
+  Sparkles
 } from "lucide-react";
 import { CommandPalette } from "@/components/command-palette";
 import { DataManagementDialog } from "@/components/data-management-dialog";
 import { DayPage } from "@/components/day-workspace";
 import { safeTimeBlockDurationMinutes } from "@/components/day-workspace-helpers";
 import {
-  formatLongDate,
   formatLongLocalDateKey,
-  formatMinutes,
-  formatShortDate
+  formatMinutes
 } from "@/components/dashboard-formatters";
 import {
   ActivityDraft,
@@ -53,18 +45,15 @@ import { ProjectsWorkspace } from "@/components/projects-workspace";
 import { ReviewPage } from "@/components/review-workspace";
 import { FocusDraft, FocusRail } from "@/components/focus-timer";
 import { useFocusSession } from "@/components/focus-session-provider";
-import { SaveStateChip, useSaveState } from "@/components/save-state";
-import {
-  MiniFocusRing,
-  PageHeader
-} from "@/components/workspace-ui";
 import {
   BacklogPage,
-  taskQuadrant,
+  FirstRunPage,
+  TodayPage,
+  describeTaskMove,
   useBacklogPage,
+  useTodayPage,
   type FocusTarget,
-  type Task,
-  type TaskStatus
+  type Task
 } from "@/modules/planning/ui";
 import { useViewedDay } from "@/components/use-viewed-day";
 import {
@@ -80,10 +69,7 @@ import {
   type TimeBlockEditorDraft,
   type TimeBlockErrorField
 } from "@/components/time-block-dialog";
-import {
-  LayoutMode,
-  useLayoutMode
-} from "@/components/use-layout-mode";
+import { useLayoutMode } from "@/components/use-layout-mode";
 import {
   DEFAULT_FOCUS_MINUTES,
   focusRemainingSeconds,
@@ -262,12 +248,6 @@ const nav = [
   { id: "journal", label: "Journal", icon: NotebookPen },
   { id: "review", label: "Review", icon: Sparkles }
 ] as const;
-
-function describeTaskMove(title: string, position: number, total: number) {
-  const edge =
-    position === 0 ? " Now first." : position === total - 1 ? " Now last." : "";
-  return `Moved "${title}" to position ${position + 1} of ${total}.${edge}`;
-}
 
 function stringArraysEqual(left: string[], right: string[]) {
   return (
@@ -634,12 +614,24 @@ export function Dashboard() {
         ),
     [data]
   );
-  const visibleUnfinished = (data?.unfinishedTasks ?? []).filter(
-    (task) => !dismissedUnfinished.includes(task.id)
-  );
-  const plannedMinutes = todayTasks.reduce(
-    (sum, task) => sum + task.estimateMinutes,
-    0
+  const today = useTodayPage(
+    data && {
+      today: data.today,
+      tasks: todayTasks,
+      backlogTasks,
+      unfinishedTasks: data.unfinishedTasks,
+      projects: data.projects,
+      projectById,
+      activities: data.activities
+    },
+    {
+      layoutMode,
+      focusedMinutes: focus.snapshot?.today.focusedMinutes ?? 0,
+      activeFocus: focus.active,
+      focusNow: focus.now,
+      focusBusy: focus.busy
+    },
+    dismissedUnfinished
   );
   const viewedDay = useViewedDay(
     data?.todayKey ?? "",
@@ -1975,20 +1967,9 @@ export function Dashboard() {
             onOpenCapture={openCommandPalette}
           />
         )}
-        {screen === "today" && !firstRun && (
+        {screen === "today" && !firstRun && today.page && (
           <TodayPage
-            layoutMode={layoutMode}
-            today={data.today}
-            tasks={todayTasks}
-            backlogTasks={backlogTasks}
-            unfinishedTasks={visibleUnfinished}
-            projects={data.projects}
-            projectById={projectById}
-            plannedMinutes={plannedMinutes}
-            focusedMinutes={focusedMinutes}
-            activeFocus={focus.active}
-            focusNow={focus.now}
-            focusBusy={focus.busy}
+            {...today.page}
             onFocusTransition={focus.transition}
             onAddTask={addTask}
             newTask={newTask}
@@ -2008,7 +1989,6 @@ export function Dashboard() {
             onLeaveUnfinished={(id) =>
               setDismissedUnfinished((current) => [...current, id])
             }
-            activities={data.activities}
           />
         )}
 
@@ -2271,886 +2251,6 @@ export function Dashboard() {
   );
 }
 
-function TodayPage({
-  layoutMode,
-  today,
-  tasks,
-  backlogTasks,
-  unfinishedTasks,
-  projects,
-  projectById,
-  plannedMinutes,
-  focusedMinutes,
-  activeFocus,
-  focusNow,
-  focusBusy,
-  onFocusTransition,
-  onAddTask,
-  newTask,
-  taskCreatePending,
-  onNewTaskChange,
-  onUpdateTask,
-  onSaveTaskField,
-  onTaskSaveError,
-  onTaskSaveRecovered,
-  onDeleteTask,
-  onReorderTask,
-  onAnnounce,
-  onStartFocus,
-  onQueueTask,
-  onOpenProject,
-  onOpenBacklog,
-  onLeaveUnfinished,
-  activities
-}: {
-  layoutMode: LayoutMode;
-  today: string;
-  tasks: Task[];
-  backlogTasks: Task[];
-  unfinishedTasks: Task[];
-  projects: ProjectSummary[];
-  projectById: Map<string, ProjectSummary>;
-  plannedMinutes: number;
-  focusedMinutes: number;
-  activeFocus: ReturnType<typeof useFocusSession>["active"];
-  focusNow: number;
-  focusBusy: boolean;
-  onFocusTransition: ReturnType<typeof useFocusSession>["transition"];
-  onAddTask: () => Promise<boolean>;
-  newTask: string;
-  taskCreatePending: boolean;
-  onNewTaskChange: (value: string) => void;
-  onUpdateTask: (
-    id: string,
-    patch: Partial<Task> & { scheduleSource?: string }
-  ) => Promise<boolean>;
-  onSaveTaskField: (
-    id: string,
-    patch: Partial<Task> & { scheduleSource?: string }
-  ) => Promise<boolean>;
-  onTaskSaveError: () => void;
-  onTaskSaveRecovered: () => void;
-  onDeleteTask: (id: string) => Promise<void>;
-  onReorderTask: (
-    source: string,
-    target: string,
-    announce?: boolean
-  ) => Promise<boolean>;
-  onAnnounce: (message: string) => void;
-  onStartFocus: (target: FocusTarget) => void;
-  onQueueTask: (task: Task, placement: QueuePlacement) => Promise<boolean>;
-  onOpenProject: (id: string) => void;
-  onOpenBacklog: () => void;
-  onLeaveUnfinished: (id: string) => void;
-  activities: ActivityEntry[];
-}) {
-  const phoneLayout = layoutMode === "phone";
-  const open = tasks.filter((task) => task.status !== "DONE");
-  const done = tasks.filter((task) => task.status === "DONE");
-  const firstCarry = unfinishedTasks[0];
-  const [reorderMode, setReorderMode] = useState(false);
-  // On a phone the day's own list is the page; Later stays folded away behind
-  // it. But with nothing left to act on, these backlog tasks are the only
-  // useful content on the screen, so lead with them instead of hiding them.
-  //
-  // This counts open tasks, not all tasks: `tasks` keeps completed ones, so
-  // checking its length would miss the most common way a day empties out —
-  // ticking off the last thing on it.
-  const nothingLeftToday = open.length === 0;
-  const [laterOpen, setLaterOpen] = useState(nothingLeftToday);
-  const hadNothingLeft = useRef(nothingLeftToday);
-  const reorderButtonRef = useRef<HTMLButtonElement | null>(null);
-  const instructionDoneRef = useRef<HTMLButtonElement | null>(null);
-
-  // Completing, deleting or unscheduling the last open task empties the day
-  // after mount, so the initial value alone is not enough. Only the transition
-  // into empty reopens the section; while it stays empty, a collapse sticks.
-  useEffect(() => {
-    if (nothingLeftToday && !hadNothingLeft.current) setLaterOpen(true);
-    hadNothingLeft.current = nothingLeftToday;
-  }, [nothingLeftToday]);
-
-  useEffect(() => {
-    if (!reorderMode) return;
-    instructionDoneRef.current?.focus();
-    function exitOnEscape(event: KeyboardEvent) {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      setReorderMode(false);
-      window.setTimeout(() => reorderButtonRef.current?.focus(), 0);
-    }
-    window.addEventListener("keydown", exitOnEscape);
-    return () => window.removeEventListener("keydown", exitOnEscape);
-  }, [reorderMode]);
-
-  function finishReordering() {
-    setReorderMode(false);
-    window.setTimeout(() => reorderButtonRef.current?.focus(), 0);
-  }
-
-  async function moveTask(task: Task, index: number, direction: -1 | 1) {
-    const target = open[index + direction];
-    if (!target) return;
-    const moved = await onReorderTask(task.id, target.id, false);
-    if (!moved) return;
-    const nextIndex = index + direction;
-    onAnnounce(describeTaskMove(task.title, nextIndex, open.length));
-    window.requestAnimationFrame(() => {
-      const preferredDirection =
-        nextIndex === 0 ? "down" : nextIndex === open.length - 1 ? "up" : direction < 0 ? "up" : "down";
-      document
-        .querySelector<HTMLButtonElement>(
-          `[data-reorder-task="${task.id}"][data-reorder-direction="${preferredDirection}"]`
-        )
-        ?.focus();
-    });
-  }
-
-  return (
-    <div className="today-page page-stack">
-      <PageHeader
-        eyebrow={formatLongDate(today)}
-        title={todayHeadline(open.length, done.length)}
-        actions={
-          <div className="today-metrics">
-            <span>{plannedMinutes}m planned</span>
-            <strong>{focusedMinutes}m done</strong>
-          </div>
-        }
-      />
-
-      {firstCarry && (
-        <section className="carry-over-strip">
-          <RefreshCw size={15} />
-          <p>
-            <strong>{firstCarry.title}</strong> was left on{" "}
-            {firstCarry.date ? formatShortDate(firstCarry.date) : "an earlier day"}
-          </p>
-          <div>
-            <button
-              className="secondary-button focus-button"
-              onClick={() =>
-                void onUpdateTask(firstCarry.id, {
-                  date: localDateKey(new Date(today)),
-                  scheduleSource: "unfinished-to-today"
-                })
-              }
-            >
-              Do it today
-            </button>
-            <label className="pick-day-button">
-              Pick a day
-              <input
-                type="date"
-                aria-label={`Pick a day for ${firstCarry.title}`}
-                onChange={(event) => {
-                  if (event.target.value) {
-                    void onUpdateTask(firstCarry.id, {
-                      date: event.target.value,
-                      scheduleSource: "unfinished-date-picker"
-                    });
-                  }
-                }}
-              />
-            </label>
-            <button
-              className="text-button"
-              onClick={() =>
-                void onUpdateTask(firstCarry.id, {
-                  date: null,
-                  scheduleSource: "unfinished-to-backlog"
-                })
-              }
-            >
-              Unschedule
-            </button>
-            <button className="text-button" onClick={() => onLeaveUnfinished(firstCarry.id)}>
-              Leave on {firstCarry.date ? formatShortDate(firstCarry.date) : "that day"}
-            </button>
-          </div>
-        </section>
-      )}
-
-      {activeFocus && (
-        <section className="today-section now-section">
-          <div className="section-heading">
-            <span className="eyebrow focus-eyebrow">Now</span>
-            <small>
-              {activeFocus.status === "PAUSED" ? "paused" : "running"} ·{" "}
-              {formatFocusClock(focusRemainingSeconds(activeFocus, focusNow))} left
-            </small>
-          </div>
-          <div className="now-card">
-            <MiniFocusRing session={activeFocus} now={focusNow} />
-            <div>
-              <h2>{activeFocus.task?.title ?? activeFocus.label}</h2>
-              <p>
-                {[
-                  activeFocus.task?.project?.name ?? activeFocus.project?.name,
-                  activeFocus.task?.phase?.name,
-                  activeFocus.label !== activeFocus.task?.title
-                    ? activeFocus.label
-                    : null
-                ]
-                  .filter(Boolean)
-                  .join(" · ") || "Independent focus"}
-              </p>
-            </div>
-            <div className="now-actions">
-              <button
-                className="secondary-button"
-                disabled={focusBusy}
-                onClick={() =>
-                  void onFocusTransition(
-                    activeFocus.status === "PAUSED" ? "resume" : "pause"
-                  )
-                }
-              >
-                {activeFocus.status === "PAUSED" ? <Play size={14} /> : <Pause size={14} />}
-                {activeFocus.status === "PAUSED" ? "Resume" : "Pause"}
-              </button>
-              <button
-                className="primary-button"
-                disabled={focusBusy}
-                onClick={() => void onFocusTransition("complete")}
-              >
-                <Check size={14} />
-                Finish
-              </button>
-            </div>
-          </div>
-        </section>
-      )}
-
-      <section className="today-section next-section">
-        <div className="section-heading">
-          <span className="eyebrow">Next</span>
-          <button
-            ref={reorderButtonRef}
-            className="text-button"
-            aria-pressed={reorderMode}
-            onClick={() => {
-              if (reorderMode) finishReordering();
-              else setReorderMode(true);
-            }}
-          >
-            {reorderMode ? "Done reordering" : "Reorder"}
-          </button>
-        </div>
-        {reorderMode && (
-          <div className="reorder-instruction" role="region" aria-label="Reorder tasks">
-            <span>
-              Reordering. Drag a row, or focus one and press ↑ ↓ to move it.
-            </span>
-            <button
-              ref={instructionDoneRef}
-              className="text-button"
-              onClick={finishReordering}
-            >
-              Done
-            </button>
-          </div>
-        )}
-        <div className="task-input-row">
-          <input
-            id="new-task"
-            value={newTask}
-            onChange={(event) => onNewTaskChange(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !taskCreatePending) void onAddTask();
-            }}
-            placeholder="Add a task for today"
-          />
-          <button
-            className="primary-button"
-            disabled={taskCreatePending || !newTask.trim()}
-            onClick={() => void onAddTask()}
-          >
-            <Plus size={15} />
-            {taskCreatePending ? "Adding…" : "Add"}
-          </button>
-        </div>
-        <div className="task-list">
-          {open.map((task, index) => (
-            <TaskRow
-              key={task.id}
-              task={task}
-              suggested={
-                activeFocus
-                  ? task.id === open.find((item) => item.id !== activeFocus.taskId)?.id
-                  : index === 0
-              }
-              project={task.projectId ? projectById.get(task.projectId) : undefined}
-              projects={projects}
-              reorderMode={reorderMode}
-              position={index}
-              total={open.length}
-              onMove={(direction) => void moveTask(task, index, direction)}
-              onUpdate={onUpdateTask}
-              onSaveField={onSaveTaskField}
-              onSaveError={onTaskSaveError}
-              onSaveRecovered={onTaskSaveRecovered}
-              onDelete={onDeleteTask}
-              onReorder={onReorderTask}
-              onOpenProject={onOpenProject}
-              onStartFocus={onStartFocus}
-              liveSession={Boolean(activeFocus)}
-              activeTaskId={activeFocus?.taskId ?? null}
-              onQueueTask={onQueueTask}
-            />
-          ))}
-          {!open.length && (
-            <div className="quiet-empty">
-              <strong>The day is clear.</strong>
-              <span>Add one deliberate task when you are ready.</span>
-            </div>
-          )}
-        </div>
-      </section>
-
-      {done.length > 0 && (
-        <details className="completed-group">
-          <summary>Done today · {done.length}</summary>
-          <div className="task-list completed-list">
-            {done.map((task) => (
-              <TaskRow
-                key={task.id}
-                task={task}
-                project={task.projectId ? projectById.get(task.projectId) : undefined}
-                projects={projects}
-                reorderMode={false}
-                onUpdate={onUpdateTask}
-                onSaveField={onSaveTaskField}
-                onSaveError={onTaskSaveError}
-                onSaveRecovered={onTaskSaveRecovered}
-                onDelete={onDeleteTask}
-                onReorder={onReorderTask}
-                onOpenProject={onOpenProject}
-                onStartFocus={onStartFocus}
-                liveSession={Boolean(activeFocus)}
-                activeTaskId={activeFocus?.taskId ?? null}
-                onQueueTask={onQueueTask}
-              />
-            ))}
-          </div>
-        </details>
-      )}
-
-      <details
-        className="later-section responsive-later-section"
-        open={phoneLayout ? laterOpen : true}
-        onToggle={(event) => {
-          if (phoneLayout) setLaterOpen(event.currentTarget.open);
-        }}
-      >
-        <summary>
-          <span className="eyebrow">
-            {phoneLayout ? `Later · ${backlogTasks.length}` : "Later · not today"}
-          </span>
-          {phoneLayout && <small>Bring something into today</small>}
-        </summary>
-        <div>
-          {backlogTasks.slice(0, 5).map((task) => (
-            <button
-              key={task.id}
-              onClick={() =>
-                void onUpdateTask(task.id, {
-                  date: localDateKey(new Date(today)),
-                  scheduleSource: "later-pill"
-                })
-              }
-            >
-              {task.title} <strong>+ today</strong>
-            </button>
-          ))}
-          <button className="all-backlog-pill" onClick={onOpenBacklog}>
-            {phoneLayout ? "Open backlog" : "All backlog"} · {backlogTasks.length}
-          </button>
-        </div>
-      </details>
-
-      <section className="rail-card captured-card tablet-captured-card">
-        <div className="captured-heading">
-          <span className="eyebrow">Captured today</span>
-          <strong>
-            {activities.reduce((sum, activity) => sum + activity.durationMinutes, 0)}m
-          </strong>
-        </div>
-        <div className="captured-list">
-          {activities.slice(0, 4).map((activity) => (
-            <div key={activity.id}>
-              <time>
-                {new Date(activity.startedAt).toLocaleTimeString("en-US", {
-                  hour: "numeric",
-                  minute: "2-digit"
-                })}
-              </time>
-              <span>
-                <strong>{activity.note}</strong>
-                <small>{activity.durationMinutes}m · {activity.category}</small>
-              </span>
-            </div>
-          ))}
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function TaskRow({
-  task,
-  suggested = false,
-  project,
-  projects,
-  reorderMode = false,
-  position = 0,
-  total = 0,
-  onMove,
-  onUpdate,
-  onSaveField,
-  onSaveError,
-  onSaveRecovered,
-  onDelete,
-  onReorder,
-  onOpenProject,
-  onStartFocus,
-  liveSession,
-  activeTaskId,
-  onQueueTask
-}: {
-  task: Task;
-  suggested?: boolean;
-  project?: ProjectSummary;
-  projects: ProjectSummary[];
-  reorderMode?: boolean;
-  position?: number;
-  total?: number;
-  onMove?: (direction: -1 | 1) => void;
-  onUpdate: (
-    id: string,
-    patch: Partial<Task> & { scheduleSource?: string }
-  ) => Promise<boolean>;
-  onSaveField: (
-    id: string,
-    patch: Partial<Task> & { scheduleSource?: string }
-  ) => Promise<boolean>;
-  onSaveError: () => void;
-  onSaveRecovered: () => void;
-  onDelete: (id: string) => Promise<void>;
-  onReorder: (source: string, target: string) => Promise<boolean>;
-  onOpenProject: (id: string) => void;
-  onStartFocus: (target: FocusTarget) => void;
-  liveSession: boolean;
-  activeTaskId: string | null;
-  onQueueTask: (task: Task, placement: QueuePlacement) => Promise<boolean>;
-}) {
-  const done = task.status === "DONE";
-  const [detailsOpen, setDetailsOpen] = useState(false);
-  const [draggable, setDraggable] = useState(false);
-  const saveCallbacks = {
-    onFinalError: onSaveError,
-    onRecovered: onSaveRecovered
-  };
-  const titleSave = useSaveState({
-    value: task.title,
-    save: (value: string) => onSaveField(task.id, { title: value }),
-    normalize: (value: string) => value.trim(),
-    isValid: (value: string) => Boolean(value),
-    ...saveCallbacks
-  });
-  const deadlineSave = useSaveState({
-    value: task.deadline?.slice(0, 10) ?? "",
-    save: (value: string) =>
-      onSaveField(task.id, { deadline: value || null }),
-    ...saveCallbacks
-  });
-  const estimateSave = useSaveState({
-    value: String(task.estimateMinutes),
-    save: (value: string) =>
-      onSaveField(task.id, { estimateMinutes: Number(value) }),
-    normalize: (value: string) => value.trim(),
-    isValid: (value: string) => {
-      const minutes = Number(value);
-      return Number.isFinite(minutes) && minutes >= 1 && minutes <= 1440;
-    },
-    ...saveCallbacks
-  });
-  const projectSave = useSaveState({
-    value: task.projectId ?? "",
-    save: (value: string) =>
-      onSaveField(task.id, {
-        projectId: value || null,
-        phaseId: null
-      }),
-    ...saveCallbacks
-  });
-  const statusSave = useSaveState<TaskStatus>({
-    value: task.status,
-    save: (value) => onSaveField(task.id, { status: value }),
-    ...saveCallbacks
-  });
-
-  return (
-    <article
-      className={done ? "task-row done" : "task-row"}
-      aria-label={`Task: ${task.title}`}
-      draggable={reorderMode && draggable}
-      onDragStart={(event) => event.dataTransfer.setData("text/plain", task.id)}
-      onDragOver={(event) => event.preventDefault()}
-      onDrop={(event) => {
-        event.preventDefault();
-        const source = event.dataTransfer.getData("text/plain");
-        if (source) void onReorder(source, task.id);
-      }}
-    >
-      <button
-        className="check-button"
-        aria-label={done ? `Mark ${task.title} incomplete` : `Complete ${task.title}`}
-        onClick={() =>
-          void onUpdate(task.id, { status: done ? "TODO" : "DONE" })
-        }
-      >
-        {done ? <Check size={15} /> : <Circle size={15} />}
-      </button>
-      <div
-        className={`drag-handle ${reorderMode ? "visible" : ""}`}
-        aria-hidden={!reorderMode}
-        onMouseEnter={() => setDraggable(true)}
-        onMouseLeave={() => setDraggable(false)}
-      >
-        <GripVertical size={14} />
-      </div>
-      <div className="task-main">
-        <div className="task-title-editor">
-          <input
-            className="task-title-input"
-            aria-label={`Task title: ${task.title}`}
-            value={titleSave.draft}
-            onChange={(event) => titleSave.setDraft(event.target.value)}
-            onBlur={titleSave.inputProps.onBlur}
-            onKeyDown={(event) => {
-              titleSave.inputProps.onKeyDown(event);
-              if (
-                event.key === "Enter" &&
-                !event.metaKey &&
-                !event.ctrlKey
-              ) {
-                event.currentTarget.blur();
-              }
-            }}
-          />
-          <SaveStateChip
-            state={titleSave.state}
-            onRetry={() => void titleSave.flush(true)}
-            className="task-save-state"
-          />
-        </div>
-        <p>
-          {task.estimateMinutes}m
-          {task.deadline ? ` · due ${formatShortDate(task.deadline)}` : ""}
-          {project ? ` · ${project.name}` : " · standalone"}
-        </p>
-      </div>
-      <span className="duration-pill">{task.estimateMinutes}m</span>
-      {reorderMode && !done && (
-        <div className="task-reorder-controls">
-          <span>{position + 1} of {total}</span>
-          <button
-            type="button"
-            disabled={position === 0}
-            aria-label={`Move ${task.title} up`}
-            data-reorder-task={task.id}
-            data-reorder-direction="up"
-            onClick={() => onMove?.(-1)}
-          >
-            <ChevronUp size={15} />
-          </button>
-          <button
-            type="button"
-            disabled={position === total - 1}
-            aria-label={`Move ${task.title} down`}
-            data-reorder-task={task.id}
-            data-reorder-direction="down"
-            onClick={() => onMove?.(1)}
-          >
-            <ChevronDown size={15} />
-          </button>
-        </div>
-      )}
-      {!done && !reorderMode && liveSession && activeTaskId !== task.id && (
-        <button
-          className="focus-row-button queue-row-button"
-          disabled={task.focusQueuePosition !== null}
-          onClick={() =>
-            void onQueueTask(task, suggested ? "next" : "end")
-          }
-        >
-          {task.focusQueuePosition !== null
-            ? "Queued"
-            : suggested
-              ? "Queue next"
-              : "Queue"}
-        </button>
-      )}
-      {!done && !reorderMode && !liveSession && (
-        <button
-          className={suggested ? "focus-row-button suggested focus-button" : "focus-row-button"}
-          onClick={() =>
-            onStartFocus({
-              taskId: task.id,
-              projectId: task.projectId ?? undefined,
-              label: task.title,
-              plannedMinutes: task.estimateMinutes
-            })
-          }
-        >
-          <Play size={13} />
-          Focus {task.estimateMinutes}m
-        </button>
-      )}
-      {done && <span className="session-count">1 session</span>}
-      {!reorderMode && (
-        <button
-          className="task-details-toggle"
-          aria-label={`${detailsOpen ? "Hide" : "Show"} task details: ${task.title}`}
-          onClick={() => setDetailsOpen((open) => !open)}
-        >
-          {detailsOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-        </button>
-      )}
-      {detailsOpen && (
-        <div className="task-details">
-          <div className="task-controls">
-            <label>
-              Urgency · {task.urgentScore} of 5
-              <ScoreDots
-                value={task.urgentScore}
-                tone="urgent"
-                onChange={(value) => void onUpdate(task.id, { urgentScore: value })}
-              />
-            </label>
-            <label>
-              Importance · {task.importanceScore} of 5
-              <ScoreDots
-                value={task.importanceScore}
-                tone="important"
-                onChange={(value) => void onUpdate(task.id, { importanceScore: value })}
-              />
-            </label>
-            <label>
-              <span className="task-field-label">
-                Deadline
-                <SaveStateChip
-                  state={deadlineSave.state}
-                  onRetry={() => void deadlineSave.flush(true)}
-                />
-              </span>
-              <input
-                type="date"
-                aria-label="Deadline"
-                value={deadlineSave.draft}
-                onChange={(event) => deadlineSave.setDraft(event.target.value)}
-                {...deadlineSave.inputProps}
-              />
-            </label>
-            <label>
-              <span className="task-field-label">
-                Estimate
-                <SaveStateChip
-                  state={estimateSave.state}
-                  onRetry={() => void estimateSave.flush(true)}
-                />
-              </span>
-              <span className="task-estimate-input">
-                <input
-                  type="number"
-                  aria-label="Estimate in minutes"
-                  min="1"
-                  max="1440"
-                  value={estimateSave.draft}
-                  onChange={(event) => estimateSave.setDraft(event.target.value)}
-                  {...estimateSave.inputProps}
-                />
-                <small>min</small>
-              </span>
-            </label>
-            <label>
-              <span className="task-field-label">
-                Project
-                <SaveStateChip
-                  state={projectSave.state}
-                  onRetry={() => void projectSave.flush(true)}
-                />
-              </span>
-              <select
-                aria-label="Project name"
-                value={projectSave.draft}
-                onChange={(event) => projectSave.setDraft(event.target.value)}
-                {...projectSave.inputProps}
-              >
-                <option value="">No project</option>
-                {projects.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              <span className="task-field-label">
-                Status
-                <SaveStateChip
-                  state={statusSave.state}
-                  onRetry={() => void statusSave.flush(true)}
-                />
-              </span>
-              <select
-                aria-label="Task status"
-                value={statusSave.draft}
-                onChange={(event) =>
-                  statusSave.setDraft(event.target.value as TaskStatus)
-                }
-                {...statusSave.inputProps}
-              >
-                <option value="TODO">To do</option>
-                <option value="IN_PROGRESS">In progress</option>
-                <option value="DONE">Done</option>
-              </select>
-            </label>
-          </div>
-          <div className="task-detail-actions">
-            <span className="task-lands-label">Lands in</span>
-            <span className={`task-quadrant-readout ${taskQuadrant(task, new Date().toISOString()).id}`}>
-              {taskQuadrant(task, new Date().toISOString()).label}
-            </span>
-            <i />
-            <button
-              className="text-button danger"
-              aria-label={`Delete task: ${task.title}`}
-              onClick={() => void onDelete(task.id)}
-            >
-              <Trash2 size={13} />
-              Delete task
-            </button>
-          </div>
-        </div>
-      )}
-    </article>
-  );
-}
-
-function FirstRunPage({
-  today,
-  title,
-  saving,
-  onTitleChange,
-  onBegin,
-  onCreateProject,
-  onOpenCapture
-}: {
-  today: string;
-  title: string;
-  saving: boolean;
-  onTitleChange: (title: string) => void;
-  onBegin: (title: string, startFocus: boolean) => Promise<void>;
-  onCreateProject: () => void;
-  onOpenCapture: () => void;
-}) {
-  return (
-    <div className="first-run-page page-stack">
-      <PageHeader eyebrow={formatLongDate(today)} title="Nothing here yet" />
-      <p className="first-run-intro">
-        Dayflow keeps one honest record of where your attention went. There is nothing
-        to import and nothing to configure — the first block of focus is the whole setup.
-      </p>
-      <ol className="first-run-loop" aria-label="Dayflow workflow">
-        <li>
-          <strong>Decide</strong>
-          <small>what matters</small>
-        </li>
-        <li>
-          <strong>Plan</strong>
-          <small>when to do it</small>
-        </li>
-        <li>
-          <strong>Record</strong>
-          <small>what happened</small>
-        </li>
-        <li>
-          <strong>Capture</strong>
-          <small>useful context</small>
-        </li>
-        <li>
-          <strong>Review</strong>
-          <small>evidence, choose next</small>
-        </li>
-      </ol>
-      <section className="first-run-start">
-        <span className="eyebrow focus-eyebrow">Start here</span>
-        <label>
-          What are you working on right now?
-          <input
-            id="first-task"
-            value={title}
-            onChange={(event) => onTitleChange(event.target.value)}
-            placeholder="Name one thing"
-          />
-        </label>
-        <div>
-          <button
-            type="button"
-            className="primary-button"
-            disabled={saving || !title.trim()}
-            onClick={() => void onBegin(title, true)}
-          >
-            <Play size={15} />
-            {saving ? "Saving…" : "Focus on it for 25m"}
-          </button>
-          <button
-            type="button"
-            className="secondary-button"
-            disabled={saving || !title.trim()}
-            onClick={() => void onBegin(title, false)}
-          >
-            Just add it to today
-          </button>
-        </div>
-      </section>
-      <section className="first-run-ready">
-        <span className="eyebrow">When you are ready</span>
-        <button
-          type="button"
-          disabled={saving}
-          onClick={onCreateProject}
-        >
-          <Layers3 size={17} />
-          <span>
-            <strong>Group work under a project</strong>
-            <small>Only worth it when something takes more than a few days.</small>
-          </span>
-        </button>
-        <button
-          type="button"
-          disabled={saving}
-          onClick={onOpenCapture}
-        >
-          <NotebookPen size={17} />
-          <span>
-            <strong>
-              Capture anything<span className="desktop-shortcut"> with ⌘K</span>
-            </strong>
-            <small>Tasks, notes, links and time you already spent.</small>
-          </span>
-        </button>
-      </section>
-      <p className="first-run-footnote">
-        Review and Log stay empty until there is something to show. That is
-        intentional — they fill themselves in.
-      </p>
-    </div>
-  );
-}
-
 function ActivityDialog({
   mode,
   tasks,
@@ -3365,58 +2465,6 @@ function ActivityDialog({
   );
 }
 
-function ScoreDots({
-  value,
-  tone,
-  onChange
-}: {
-  value: number;
-  tone: "urgent" | "important";
-  onChange: (value: number) => void;
-}) {
-  const label = tone === "urgent" ? "Urgency" : "Importance";
-  const optionLabels =
-    tone === "urgent"
-      ? ["Not urgent", "Slightly urgent", "Urgent", "Very urgent", "Critical urgency"]
-      : [
-          "Not important",
-          "Slightly important",
-          "Important",
-          "Very important",
-          "Critical importance"
-        ];
-  return (
-    <div className={`score-dots ${tone}`} role="radiogroup" aria-label={label}>
-      {[1, 2, 3, 4, 5].map((score) => (
-        <button
-          key={score}
-          type="button"
-          className={`score-${score} ${score <= value ? "selected" : ""}`}
-          aria-label={optionLabels[score - 1]}
-          aria-checked={score === value}
-          tabIndex={score === value ? 0 : -1}
-          role="radio"
-          onClick={() => onChange(score)}
-          onKeyDown={(event) => {
-            if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
-              return;
-            }
-            event.preventDefault();
-            const direction =
-              event.key === "ArrowLeft" || event.key === "ArrowDown" ? -1 : 1;
-            const next = Math.min(5, Math.max(1, score + direction));
-            const group = event.currentTarget.parentElement;
-            onChange(next);
-            window.requestAnimationFrame(() => {
-              group?.querySelectorAll<HTMLButtonElement>('[role="radio"]')[next - 1]?.focus();
-            });
-          }}
-        />
-      ))}
-    </div>
-  );
-}
-
 function suggestedTaskBlockDuration(
   task: Pick<Task, "estimateMinutes"> | null
 ) {
@@ -3444,22 +2492,4 @@ function mergeTimeBlockTaskOptions(
     }
   }
   return result;
-}
-
-
-
-function numberWord(value: number) {
-  const words = ["No", "One", "Two", "Three", "Four", "Five", "Six"];
-  return words[value] ?? String(value);
-}
-
-/**
- * A day with nothing on it has not been finished — it was never planned.
- * Saying "none left" in both cases claims a completion that did not happen.
- */
-function todayHeadline(openCount: number, doneCount: number) {
-  if (openCount === 0) {
-    return doneCount === 0 ? "Nothing scheduled yet" : "All done for today";
-  }
-  return `${numberWord(openCount)} ${openCount === 1 ? "task" : "tasks"} left`;
 }

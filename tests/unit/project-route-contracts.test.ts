@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { beforeEach, afterEach } from "node:test";
 import { Prisma } from "@prisma/client";
 import { NextRequest } from "next/server";
 import { POST as createProject } from "../../src/app/api/projects/route";
@@ -15,6 +15,15 @@ import {
 } from "../../src/app/api/phases/[id]/route";
 import { mutationRequestHash } from "../../src/lib/idempotent-mutations";
 import { prisma } from "../../src/lib/prisma";
+
+// Route reads and phase updates now enter a transaction before calling these delegates.
+const originalTransactionRoot = prisma.$transaction;
+beforeEach(() => {
+  (prisma as unknown as { $transaction: unknown }).$transaction = async (
+    operation: (tx: typeof prisma) => unknown
+  ) => operation(prisma);
+});
+afterEach(() => { prisma.$transaction = originalTransactionRoot; });
 
 test("Project and Phase routes return typed malformed-JSON responses", async () => {
   const projectCreateResponse = await createProject(
@@ -450,6 +459,9 @@ test("Project and Phase item routes pin P2025, P2003, confirmation, and fallback
       ]
     ] as const) {
       if (action === "patch") {
+        (prisma as unknown as { $transaction: unknown }).$transaction = async (
+          operation: (tx: typeof prisma) => unknown
+        ) => operation(prisma);
         (prisma.projectPhase as unknown as { update: unknown }).update = async () => {
           throw error;
         };

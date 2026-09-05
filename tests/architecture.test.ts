@@ -83,7 +83,6 @@ function legacyClientCalls(file: string, count: number, migration: string) {
 // Call-site-specific entries ensure that a second violation in the same file fails.
 // Remove each entry with its named migration phase.
 const BASELINE: ReadonlyArray<Violation & { migration: string }> = [
-  baseline(8, "src/lib/backup-management.ts", 42, "Phase 4: backup engine")
 ];
 
 function baseline(rule: Rule, file: string, line: number, migration: string) {

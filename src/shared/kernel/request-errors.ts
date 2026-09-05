@@ -1,6 +1,6 @@
 import type { ErrorSpec } from "@/shared/kernel/errors";
 
-/** Exact envelopes owned by the request boundary. Property order is wire order. */
+/** Exact envelopes owned by the request boundary. The serializer emits exactly the declared properties. */
 export const requestErrors = {
   invalidJson: {
     status: 400,

@@ -474,7 +474,7 @@ export function formatProjectDuration(
 }
 
 
-/** Exact envelopes owned by the project boundary. Property order is wire order. */
+/** Exact envelopes owned by the project boundary. The serializer emits exactly the declared properties. */
 export const projectErrors = {
   completionConfirmationMustBeTrueOrFalse: {
     status: 400,

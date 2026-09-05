@@ -293,7 +293,7 @@ function categorySuggestionKey(value: string) {
 }
 
 
-/** Exact envelopes owned by the evidence boundary. Property order is wire order. */
+/** Exact envelopes owned by the evidence boundary. The serializer emits exactly the declared properties. */
 export const evidenceErrors = {
   activityNotFound: {
     status: 404,

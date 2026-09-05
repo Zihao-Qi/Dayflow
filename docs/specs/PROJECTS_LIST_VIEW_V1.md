@@ -78,9 +78,9 @@ Row anatomy, left to right:
    tooltip with the full status name. Because the status filter guarantees one
    status per list, the dot is decorative (`aria-hidden="true"`) and is not the
    only signal.
-2. **Name** — the row's open control (a button, like `.project-card-open`),
-   single line, ellipsized. `desiredOutcome` is not shown in List view; it
-   remains available in Cards view and the detail page.
+2. **Name** — part of the task disclosure button with the chevron and status
+   dot, single line, ellipsized. `desiredOutcome` is not shown in List view;
+   it remains available in Cards view and the detail page.
 3. **Progress** — a thin inline meter (reusing `.meter`, height reduced to
    4px) plus the percent, or an em dash when `progressPercent` is null.
 4. **Tasks** — `9/15 tasks` or `No tasks yet`.
@@ -89,6 +89,8 @@ Row anatomy, left to right:
 6. **Focus action** — the existing Focus button, reduced to an icon + planned
    minutes (`▶ 25m`), rendered only when `nextTaskId` exists. Same handler
    and payload as Cards view.
+7. **Overview action** — a separate icon button at the end of the row opens
+   the Project workspace.
 
 Deliberately omitted from List rows (still in Cards view and detail):
 target date / duration remaining, invested minutes, weekly budget, phase
@@ -136,8 +138,8 @@ screens too.
 
 ## Keyboard and accessibility
 
-- Tab order per row: open button (name), then Focus button. This matches the
-  Cards tab order, so switching views does not change interaction structure.
+- Tab order per row: task disclosure button (name), Focus button when present,
+  then the overview button. An expanded drawer's task controls follow these.
 - The segmented control follows the same radio-group behavior as Backlog:
   Tab reaches the checked option, Enter/Space selects it, and arrow keys wrap
   through the options while moving selection and focus.
@@ -149,7 +151,7 @@ screens too.
 
 ## Implementation sketch
 
-- `ProjectsWorkspace` gains `view: "cards" | "compact"` state, initialized
+- `ProjectsWorkspace` gains `view: "cards" | "list"` state, initialized
   by an SSR-safe lazy `localStorage` reader that defaults to `"cards"`.
 - `ProjectCard` stays untouched; a sibling `ProjectRow` component renders the
   compact row from the same `ProjectSummary` and the same `onOpen` /
@@ -201,40 +203,44 @@ Unphased tasks come first, then each Phase in the Project's configured
 order, matching how the Project workspace renders "Project tasks" above its
 phase list. Groups are seeded from the Phase list rather than from the order
 tasks happen to sort in, so a Phase holding only completed work keeps its
-place. Each task shows its completion mark, title, its scheduled day when it has
-one, and its estimate.
+place. Tasks are rendered with `ProjectTaskItem`, the same row the Project page
+uses, so the drawer supports completing, renaming, re-phasing, scheduling,
+focusing and deleting without a second implementation to keep in step. A
+compact add control closes the set.
 
-Only the scheduled day is labelled. Nearly every Project task is a Backlog
-Task — unscheduled is the resting state for Project work — so labelling that
-state marked every row and distinguished none of them. On the Project page
-the "Backlog" label earns its place by sitting beside the Schedule control it
-explains; the drawer has no such control, so the label carried no meaning
-there. Completion is carried by the filled mark and the muted title, and
-announced to assistive technology, rather than spelled out a third time.
+For a Completed Project, the drawer keeps tasks and their state visible but applies `canManagePlan` to every mutating task control in the shared Project page row, with an explanation to reopen the Project before editing tasks or adding unfinished work.
 
-Tasks are not themselves interactive, and the drawer carries no "open the
-Project" control: the Project name in the row directly above already does
-that, so a second control would have been a duplicate. The one exception is
-an empty Project, where the drawer has nothing to show and offers the next
-step instead.
+This restores the "Backlog" state label, which an earlier read-only version
+of the drawer had dropped. That was the right call then and the wrong one
+now: the label is meaningful precisely because it sits beside the Schedule
+control it explains, and the drawer now has that control.
 
-The drawer is **read-only**. Editing, scheduling, and Phase management stay
-on the Project page; duplicating them here would mean two implementations to
-keep in step.
+The drawer does not offer reordering. `sortOrder` is assigned per day, so
+every unscheduled Task across every Project shares one bucket, and Project
+task order is derived — completed last, then by date — so a manual order
+would be overruled by the sort. Ordering Project work needs its own
+Project-scoped field and is out of scope here.
+
+The drawer carries no additional "open the Project" control: the explicit
+overview control in the row directly above already does that. Task changes
+stay in the drawer and reuse the Project page's task row rather than creating
+a second implementation. Phase creation, renaming, reordering, and deletion
+remain on the Project page.
 
 ### Loading
 
 Task lists are not part of the Projects overview payload, so the first
 expand fetches `GET /api/projects/:id` — the same detail the Project page
 uses — and keeps the result for later toggles of that row. The cache is keyed
-on the Project's own summary counts and drops when they move, because the
+on the Project's own summary counts and refreshes when they move, because the
 Focus rail is app-wide: a session started from the row can be completed with
 "Mark done" without leaving Projects, and the drawer must not go on showing
 that Task as unfinished beside an updated summary. The drawer
 reports its own loading, empty, and failure states. The retry is a
 fetch-only path, deliberately separate from the disclosure toggle: routed
 through the toggle it would read the drawer as open and close it instead of
-fetching again.
+fetching again. Once loaded, the drawer remains mounted while a mutation or
+summary-key change refreshes it, so an unsubmitted add-Task draft is not lost.
 
 ### Naming
 

@@ -30,11 +30,11 @@ import { ApiError } from "@/shared/client/api-client";
 import { ActivityDraft, ActivityEntry, ActivityTaskOption } from "@/components/activity-records";
 import { CommandPalette } from "@/components/command-palette";
 import { formatLongLocalDateKey, formatMinutes } from "@/components/dashboard-formatters";
-import { DayPage } from "@/components/day-workspace";
-import { safeTimeBlockDurationMinutes } from "@/components/day-workspace-helpers";
+import { DayPage } from "@/modules/planning/ui/log/day-workspace";
+import { safeTimeBlockDurationMinutes } from "@/modules/planning/ui/log/day-workspace-helpers";
 import { useFocusSession } from "@/components/focus-session-provider";
 import { ProjectsWorkspace } from "@/components/projects-workspace";
-import { ReviewPage } from "@/components/review-workspace";
+import { ReviewPage } from "@/modules/review/ui/review-workspace";
 import {
   TimeBlockDialog,
   type TimeBlockEditorDraft,

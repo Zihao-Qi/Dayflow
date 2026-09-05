@@ -786,10 +786,14 @@ function callUsesGlobalClient(
   bindings: ReadonlySet<string>
 ) {
   let current = unwrapExpression(call.expression);
-  while (ts.isPropertyAccessExpression(current) || ts.isElementAccessExpression(current)) {
-    const receiver = unwrapExpression(current.expression);
-    if (expressionIsGlobalBinding(receiver, bindings)) return true;
-    current = receiver;
+  while (
+    ts.isPropertyAccessExpression(current) ||
+    ts.isElementAccessExpression(current) ||
+    ts.isCallExpression(current)
+  ) {
+    const next = unwrapExpression(current.expression);
+    if (expressionIsGlobalBinding(next, bindings)) return true;
+    current = next;
   }
   return false;
 }
@@ -1187,6 +1191,63 @@ test("Rule 4: services cannot call through the global client binding", () => {
         .map(({ file, line }) => `${file}:${line}`),
       ["src/modules/planning/services/fail.ts:1"]
     )
+  );
+});
+
+test("Rule 4: a query through an extended global client chain is still counted", () => {
+  withFixture(
+    {
+      "src/lib/prisma.ts": 'import { PrismaClient } from "@prisma/client"; export const prisma = new PrismaClient();\n',
+      "src/lib/counted.ts": [
+        'import { prisma } from "@/lib/prisma";',
+        'import { prisma as getClient } from "@/lib/prisma";',
+        'export function viaExtends() { return prisma.$extends({}).task.findMany(); }',
+        'export function viaFactory() { return getClient().task.findMany(); }',
+        'export function local(tx: any) { return tx.$extends({}).task.findMany(); }'
+      ].join("\n"),
+      "src/modules/planning/services/fail.ts": [
+        'import { prisma } from "@/lib/prisma";',
+        'export function fail() { return prisma.$extends({}).task.findMany(); }'
+      ].join("\n")
+    },
+    (root) => {
+      const report = scanArchitecture(root);
+      const libDetails = report.violations
+        .filter((violation) =>
+          violation.rule === 4 &&
+          violation.file === "src/lib/counted.ts" &&
+          violation.detail.includes("calls through")
+        )
+        .map((violation) => violation.detail);
+      assert.equal(
+        libDetails.filter((detail) => detail.endsWith("prisma.$extends({}).task.findMany")).length,
+        1
+      );
+      assert.equal(
+        libDetails.filter((detail) => detail.endsWith("prisma.$extends")).length,
+        1
+      );
+      assert.equal(
+        libDetails.filter((detail) => detail.endsWith("getClient().task.findMany")).length,
+        1
+      );
+      assert.equal(
+        libDetails.filter((detail) => detail.includes("tx.$extends")).length,
+        0
+      );
+      assert.equal(report.legacyGlobalClientCalls["src/lib/counted.ts"], 3);
+      assert.deepEqual(
+        report.violations
+          .filter((violation) =>
+            violation.rule === 4 &&
+            violation.file === "src/modules/planning/services/fail.ts" &&
+            violation.detail.includes("calls through") &&
+            violation.detail.endsWith("prisma.$extends({}).task.findMany")
+          )
+          .map(({ file, line }) => `${file}:${line}`),
+        ["src/modules/planning/services/fail.ts:2"]
+      );
+    }
   );
 });
 

@@ -5,7 +5,7 @@ import {
   reviewPeriodRange,
   startOfLocalDay
 } from "@/lib/dates";
-import { listProjectSummaries } from "@/lib/projects";
+import { listProjectSummaries } from "@/server/read-models/project-summaries";
 import { buildReviewSummary } from "@/lib/review-domain";
 import { reviewErrors } from "@/lib/review-errors";
 import { AppError } from "@/shared/kernel/errors";
@@ -126,11 +126,14 @@ export function parseReviewWindowRequest(
 }
 
 export async function readReviewWindow(
-  database: PrismaClient,
+  database: Prisma.TransactionClient,
   searchParams: URLSearchParams,
   now: Date
 ) {
-  const window = parseReviewWindowRequest(searchParams, now);
+  return readResolvedReviewWindow(database, parseReviewWindowRequest(searchParams, now));
+}
+
+export async function readResolvedReviewWindow(database: Prisma.TransactionClient, window: ReviewWindowRequest) {
   const period = { start: window.start, end: window.end };
   const [{ summary, projects }, review] = await Promise.all([
     readReviewPeriodEvidence(database, period),
@@ -289,7 +292,7 @@ export function isReviewIdentifier(value: string) {
  * window. Reading never writes.
  */
 export async function readPastReviewPeriod(
-  database: PrismaClient,
+  database: Prisma.TransactionClient,
   id: string,
   now: Date
 ) {

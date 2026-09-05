@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { beforeEach, afterEach } from "node:test";
 import { NextRequest } from "next/server";
 import { PUT as saveReview } from "../../src/app/api/review/route";
 import { GET as getPastReview } from "../../src/app/api/review/[id]/route";
@@ -7,6 +7,15 @@ import { GET as getReviewHistory } from "../../src/app/api/review/history/route"
 import { GET as getReviewWindow } from "../../src/app/api/review/window/route";
 import { reviewPeriodRange } from "../../src/lib/dates";
 import { prisma } from "../../src/lib/prisma";
+
+// Route reads now enter a transaction before calling these delegates.
+const originalTransactionRoot = prisma.$transaction;
+beforeEach(() => {
+  (prisma as unknown as { $transaction: unknown }).$transaction = async (
+    operation: (tx: typeof prisma) => unknown
+  ) => operation(prisma);
+});
+afterEach(() => { prisma.$transaction = originalTransactionRoot; });
 
 test("Review route returns typed malformed and empty mutation errors", async () => {
   const malformed = await saveReview(

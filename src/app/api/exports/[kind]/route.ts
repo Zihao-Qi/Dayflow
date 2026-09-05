@@ -2,7 +2,7 @@ import { clock } from "@/lib/time";
 import {
   createCsvExport,
   parseCsvExportKind
-} from "@/lib/csv-export";
+} from "@/server/read-models/csv-export";
 import { csvExportResponseHeaders } from "@/lib/csv-export-contract";
 import { csvExportErrors } from "@/lib/csv-export-errors";
 import { appErrorResponse } from "@/lib/http-errors";
@@ -18,7 +18,7 @@ export async function GET(_request: Request, { params }: Params) {
   const now = clock.now();
   try {
     const kind = parseCsvExportKind((await params).kind);
-    const result = await createCsvExport(kind, now, prisma);
+    const result = await prisma.$transaction(tx => createCsvExport(kind, now, tx));
     return new Response(result.body, {
       status: 200,
       headers: csvExportResponseHeaders(result)

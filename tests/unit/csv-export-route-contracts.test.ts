@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { beforeEach, afterEach } from "node:test";
 import { GET as downloadCsv } from "../../src/app/api/exports/[kind]/route";
 import {
   csvExportResponseHeaders,
@@ -7,6 +7,15 @@ import {
   parseCsvExportResponseMetadata
 } from "../../src/lib/csv-export-contract";
 import { prisma } from "../../src/lib/prisma";
+
+// Route reads now enter a transaction before calling these delegates.
+const originalTransactionRoot = prisma.$transaction;
+beforeEach(() => {
+  (prisma as unknown as { $transaction: unknown }).$transaction = async (
+    operation: (tx: typeof prisma) => unknown
+  ) => operation(prisma);
+});
+afterEach(() => { prisma.$transaction = originalTransactionRoot; });
 
 test("CSV export route rejects unsupported kinds without attachment headers", async () => {
   const response = await downloadCsv(

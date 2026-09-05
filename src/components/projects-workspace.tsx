@@ -1,4 +1,5 @@
 "use client";
+import { isProjectDetailResponse, isProjectPhaseResponse, isProjectTaskResponse } from "@/modules/projects/domain/project";
 
 import { useEffect, useRef, useState } from "react";
 import {
@@ -110,66 +111,6 @@ function mutationIdFor(
       : `dayflow-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   reference.current = { id, fingerprint };
   return id;
-}
-
-function isProjectDetailResponse(value: unknown): value is ProjectDetail {
-  if (!value || typeof value !== "object") return false;
-  const project = value as Partial<ProjectDetail>;
-  return (
-    typeof project.id === "string" &&
-    typeof project.name === "string" &&
-    typeof project.desiredOutcome === "string" &&
-    ["ACTIVE", "PAUSED", "COMPLETED", "ARCHIVED"].includes(
-      String(project.status)
-    ) &&
-    Number.isInteger(project.completedTaskCount) &&
-    Number.isInteger(project.taskCount) &&
-    Number.isInteger(project.phaseCount) &&
-    Number.isInteger(project.backlogCount) &&
-    Number.isInteger(project.investedMinutes) &&
-    Number.isInteger(project.reviewPeriodInvestedMinutes) &&
-    typeof project.createdAt === "string" &&
-    typeof project.updatedAt === "string" &&
-    Array.isArray(project.phases) &&
-    Array.isArray(project.tasks) &&
-    Array.isArray(project.activities) &&
-    Array.isArray(project.notes) &&
-    Array.isArray(project.materials)
-  );
-}
-
-function isProjectPhaseResponse(value: unknown): value is ProjectPhaseRecord {
-  if (!value || typeof value !== "object") return false;
-  const phase = value as Partial<ProjectPhaseRecord>;
-  return (
-    typeof phase.id === "string" &&
-    typeof phase.projectId === "string" &&
-    typeof phase.name === "string" &&
-    Number.isInteger(phase.sortOrder) &&
-    typeof phase.createdAt === "string" &&
-    typeof phase.updatedAt === "string"
-  );
-}
-
-function isProjectTaskResponse(value: unknown): value is ProjectTaskRecord {
-  if (!value || typeof value !== "object") return false;
-  const task = value as Partial<ProjectTaskRecord>;
-  return (
-    typeof task.id === "string" &&
-    typeof task.title === "string" &&
-    (task.date === null || typeof task.date === "string") &&
-    ["TODO", "IN_PROGRESS", "DONE"].includes(String(task.status)) &&
-    ["LOW", "MEDIUM", "HIGH"].includes(String(task.priority)) &&
-    Number.isInteger(task.urgentScore) &&
-    Number.isInteger(task.importanceScore) &&
-    (task.deadline === null || typeof task.deadline === "string") &&
-    Number.isInteger(task.estimateMinutes) &&
-    Number.isInteger(task.actualMinutes) &&
-    Number.isInteger(task.sortOrder) &&
-    (task.completedAt === null || typeof task.completedAt === "string") &&
-    (task.projectId === null || typeof task.projectId === "string") &&
-    (task.phaseId === null || typeof task.phaseId === "string")
-  );
 }
 
 function isOkResponse(value: unknown): value is { ok: true } {

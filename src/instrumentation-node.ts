@@ -1,16 +1,5 @@
-import {
-  applyPendingManagedRestore,
-  runDueAutomaticBackup
-} from "@/lib/backup-management";
-
-/**
- * How often the process re-checks whether an Automatic Backup is due.
- *
- * Startup alone is not enough: a Dayflow left running for days would never
- * protect anything. The check itself is cheap and declines quickly when the
- * policy is off.
- */
-const AUTOMATIC_BACKUP_CHECK_MS = 60 * 60 * 1000;
+import { applyPendingManagedRestore } from "@/modules/data-ops/services/restore-coordinator";
+import { startAutomaticBackupRunner } from "@/modules/data-ops/services/automatic-backup-runner";
 
 export async function registerNodeStartup() {
   if (
@@ -29,27 +18,5 @@ export async function registerNodeStartup() {
     );
   }
 
-  checkAutomaticBackup();
-  const timer = setInterval(checkAutomaticBackup, AUTOMATIC_BACKUP_CHECK_MS);
-  timer.unref?.();
-}
-
-/**
- * An Automatic Backup is background protection, never a gate: a failure here
- * must leave Dayflow serving normally.
- */
-function checkAutomaticBackup() {
-  try {
-    const attempt = runDueAutomaticBackup();
-    if (attempt.status === "failed") {
-      console.error(
-        `[Dayflow backup] The automatic backup did not complete: ${attempt.reason}`
-      );
-    }
-  } catch (error) {
-    console.error(
-      "[Dayflow backup] The automatic backup check failed; Dayflow will continue without it.",
-      error
-    );
-  }
+  startAutomaticBackupRunner();
 }

@@ -2,7 +2,7 @@ import {
   DatabaseMigrationError,
   migrateActiveDatabase,
   migrateDisposableRestoreCopy
-} from "./database-migration";
+} from "../src/modules/data-ops/services/sqlite-migration-engine";
 
 try {
   const args = process.argv.slice(2);

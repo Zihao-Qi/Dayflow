@@ -2,7 +2,7 @@ import {
   formatRecordCounts,
   resolveActiveDatabase,
   restoreDatabaseBackup
-} from "./database-backup";
+} from "../src/modules/data-ops/services/sqlite-backup-engine";
 
 void main();
 

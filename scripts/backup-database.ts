@@ -2,7 +2,7 @@ import {
   createDatabaseBackup,
   formatRecordCounts,
   resolveActiveDatabase
-} from "./database-backup";
+} from "../src/modules/data-ops/services/sqlite-backup-engine";
 
 try {
   const options = parseArguments(process.argv.slice(2));

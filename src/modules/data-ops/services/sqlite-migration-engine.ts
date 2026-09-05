@@ -20,7 +20,7 @@ import {
   formatRecordCounts,
   resolveActiveDatabase,
   type BackupResult
-} from "./database-backup";
+} from "./sqlite-backup-engine";
 
 export type MigrationSafety =
   | {

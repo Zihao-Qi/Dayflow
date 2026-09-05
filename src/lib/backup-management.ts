@@ -39,7 +39,7 @@ import {
   resolveActiveDatabase,
   restoreDatabaseBackup,
   type BackupPurpose
-} from "../../scripts/database-backup";
+} from "@/modules/data-ops/services/sqlite-backup-engine";
 
 export type {
   AutomaticBackupAttempt,

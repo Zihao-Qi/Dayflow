@@ -617,6 +617,108 @@ test("seeded transactional workflow conflicts preserve their invariants", async 
         }
       }
     );
+
+    await context.test(
+      "Focus enrichment rolls back Activity, Task, queue, and Session after a late write failure",
+      async (enrichmentContext) => {
+        const task = await prisma.task.create({
+          data: { title: "Rollback enrichment", focusQueuePosition: 0 }
+        });
+        const queuedTask = await prisma.task.create({
+          data: { title: "Keep queue position", focusQueuePosition: 1 }
+        });
+        const session = await prisma.focusSession.create({
+          data: {
+            kind: "FOCUS",
+            plannedMinutes: 25,
+            actualMinutes: 12,
+            label: "Rollback enrichment",
+            startedAt: new Date(Date.now() - 12 * 60_000),
+            completedAt: new Date(),
+            status: "COMPLETED",
+            needsEnrichment: true,
+            taskId: task.id
+          }
+        });
+        const activity = await prisma.activityEntry.create({
+          data: {
+            startedAt: session.startedAt,
+            durationMinutes: 12,
+            category: "Deep Work",
+            note: task.title,
+            origin: "FOCUS",
+            taskId: task.id,
+            focusSessionId: session.id
+          }
+        });
+        const readState = async () => ({
+          activities: await prisma.activityEntry.findMany({
+            where: { focusSessionId: session.id }, orderBy: { id: "asc" }
+          }),
+          task: await prisma.task.findUniqueOrThrow({ where: { id: task.id } }),
+          queuedTask: await prisma.task.findUniqueOrThrow({ where: { id: queuedTask.id } }),
+          queue: await prisma.task.findMany({
+            where: { focusQueuePosition: { not: null } },
+            orderBy: [{ focusQueuePosition: "asc" }, { id: "asc" }]
+          }),
+          session: await prisma.focusSession.findUniqueOrThrow({ where: { id: session.id } })
+        });
+        const before = await readState();
+        const sqlId = (id: string) => id.replaceAll("'", "''");
+        // needsEnrichment/enrichedAt map to needsRecord/recordedAt in SQLite.
+        // Abort only the final Session write, after every preceding mutation is visible.
+        // A NOT NULL violation aborts the statement; the transaction must undo the rest.
+        // RAISE(ABORT) maps to Prisma P2003/HTTP 409, so use a real P2011 for HTTP 500.
+        await prisma.$executeRawUnsafe(`
+          CREATE TABLE enrichment_failure_probe (injected_final_enrichment_write_failure TEXT NOT NULL);
+        `);
+        await prisma.$executeRawUnsafe(`
+          CREATE TRIGGER abort_final_enrichment_write
+          BEFORE UPDATE OF "needsRecord" ON "FocusSession"
+          WHEN OLD.id = '${sqlId(session.id)}'
+            AND NEW.needsRecord = 0 AND OLD.recordedAt IS NOT NULL
+            AND EXISTS (SELECT 1 FROM "ActivityEntry"
+              WHERE id = '${sqlId(activity.id)}'
+                AND note = 'Shipped the seam' AND category = 'Engineering')
+            AND EXISTS (SELECT 1 FROM "Task" WHERE id = '${sqlId(task.id)}'
+              AND status = 'DONE' AND completedAt IS NOT NULL AND focusQueuePosition IS NULL)
+            AND EXISTS (SELECT 1 FROM "Task" WHERE id = '${sqlId(queuedTask.id)}'
+              AND focusQueuePosition = 0)
+          BEGIN
+            INSERT INTO enrichment_failure_probe (injected_final_enrichment_write_failure) VALUES (NULL);
+          END;
+        `);
+        const errors = enrichmentContext.mock.method(console, "error", () => undefined);
+        try {
+          const response = await patchFocus(
+            jsonRequest(`/api/focus-session/${session.id}`, "PATCH", {
+              action: "enrich",
+              note: "Shipped the seam",
+              category: "Engineering",
+              taskCompleted: true
+            }),
+            params(session.id)
+          );
+          assert.equal(response.status, 500);
+          assert.deepEqual(await response.json(), {
+            error: "Focus timer could not be saved.", code: "INTERNAL_ERROR"
+          });
+          assert.match(
+            errors.mock.calls.map((call) => call.arguments.map(String).join(" ")).join("\n"),
+            /injected_final_enrichment_write_failure/,
+            "the trigger must observe the Activity, Task, queue, and enrichedAt writes before failing"
+          );
+          assert.deepEqual(
+            await readState(),
+            before,
+            "all rows and timestamps, including queue compaction and enrichedAt, must roll back"
+          );
+        } finally {
+          await prisma.$executeRawUnsafe("DROP TRIGGER abort_final_enrichment_write");
+          await prisma.$executeRawUnsafe("DROP TABLE enrichment_failure_probe");
+        }
+      }
+    );
   });
 });
 

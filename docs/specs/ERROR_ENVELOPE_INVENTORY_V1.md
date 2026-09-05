@@ -18,8 +18,8 @@ means a test already pinned the full status and parsed body before Phase 0;
 “New” means this characterization added that pin.
 Every row names its route and test explicitly. Backup inventory rows use real
 invalid requests or disposable-storage route cases to establish reachability.
-Defensive injected backup serializers appear only in Appendix A; they are not
-part of the reachable HTTP inventory.
+Defensive injected backup and Project-create Prisma serializers appear only in
+Appendix A; they are not part of the reachable HTTP inventory.
 
 Activity POST mutation-id, receipt, and attribution rows use real request inputs
 and transaction delegates that return missing relationships, conflicting attribution,
@@ -181,7 +181,6 @@ uses an exception injected into `headers.get`. See Appendix A for those pins.
 | `POST /api/projects` | Receipt mismatch | 409 | `{"error":"This mutation identifier was already used for a different request.","code":"MUTATION_ID_CONFLICT"}` | `code`; no `field` | `tests/unit/project-route-contracts.test.ts` — “Project and Phase create pin their own mismatch and corrupt receipt bodies” | New |
 | `POST /api/projects` | Invalid stored receipt | 500 | `{"error":"The saved mutation receipt could not be read.","code":"INVALID_MUTATION_RECEIPT"}` | `code`; no `field` | `tests/unit/project-route-contracts.test.ts` — “Project and Phase create pin their own mismatch and corrupt receipt bodies” | New |
 | `POST /api/projects` | Invalid body; negative weekly budget example | 400 | `{"error":"Weekly effort budget must be a whole number from 1 to 10080 minutes.","code":"VALIDATION_ERROR","field":"weeklyMinutesBudget"}` | `code`, `field` | `tests/unit/project-route-contracts.test.ts` — “Project and Phase routes expose typed validation fields” | Existing |
-| `POST /api/projects` | Prisma `P2003` | 409 | `{"error":"A related record changed before the Project could be created.","code":"CONFLICT"}` | `code`; no `field` | `tests/unit/project-route-contracts.test.ts` — “Project and Phase create pin Prisma and internal envelopes” | New |
 | `POST /api/projects` | Unexpected failure | 500 | `{"error":"Project could not be created.","code":"INTERNAL_ERROR"}` | `code`; no `field` | `tests/unit/project-route-contracts.test.ts` — “Project and Phase create pin Prisma and internal envelopes” | New |
 | `PATCH /api/projects/:id` | Invalid body or id | 400 | `{"error":"Project identifier is invalid.","code":"VALIDATION_ERROR","field":"id"}` | `code`, `field` | `tests/unit/project-route-contracts.test.ts` — “Project and Phase path identifiers are validated before querying” | Existing |
 | `PATCH /api/projects/:id` | Project absent or Prisma `P2025` | 404 | `{"error":"Project not found.","code":"NOT_FOUND"}` | `code`; no `field` | `tests/unit/project-route-contracts.test.ts` — “Project and Phase item routes pin P2025, P2003, confirmation, and fallbacks” | New |
@@ -361,7 +360,27 @@ when a relationship or validation condition is field-specific.
   its domain validation. Injected errors pin these arms without claiming a
   new user-triggerable failure.
 
-## Appendix A — Defensive backup serializers (not reachable inventory)
+## Appendix A — Defensive serializers (not reachable inventory)
+
+### Project creation
+
+`POST /api/projects` cannot produce `P2003` through its current writes.
+`parseProjectCreateMutation` returns scalar Project fields, `project.create`
+writes no foreign keys or nested relations, and `getProjectDetail` only reads.
+The optional MutationReceipt created by `runIdempotentCreate` has no relations
+in `prisma/schema.prisma`. The cited mapper test constructs a Prisma error and
+makes the transaction throw; keep it as defensive serializer coverage.
+
+The other rows on this route remain applicable: malformed JSON, invalid
+mutation id and invalid body are request validation; mismatched and corrupt
+stored receipts have explicit guards; unexpected persistence/readback failures
+reach the generic 500. None requires a nonexistent foreign-key write.
+
+| Route and method | Injected error (not an HTTP trigger) | Status | Exact JSON body | Keys | Contract test | Pin |
+| --- | --- | ---: | --- | --- | --- | --- |
+| `POST /api/projects` | Injected Prisma `P2003` (no foreign-key write) | 409 | `{"error":"A related record changed before the Project could be created.","code":"CONFLICT"}` | `code`; no `field` | `tests/unit/project-route-contracts.test.ts` — “Project and Phase create pin Prisma and internal envelopes” | New |
+
+### Backup boundaries
 
 These 17 rows were moved out of the reachable inventory. The cited test throws
 constructed `BackupManagementError` instances from `request.headers.get` to pin

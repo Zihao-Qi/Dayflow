@@ -51,7 +51,8 @@ export async function GET() {
 
 function parseTags(tags: string) {
   try {
-    return JSON.parse(tags);
+    const value = JSON.parse(tags);
+    return Array.isArray(value) ? value : [];
   } catch {
     return [];
   }

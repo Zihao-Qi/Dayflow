@@ -67,6 +67,13 @@ test("bootstrap and agent export preserve their payload contracts", async (conte
       date: today
     }
   });
+  const scalarTagsNote = await prisma.note.create({
+    data: {
+      content: "Normalize non-array tags",
+      tags: JSON.stringify("architecture"),
+      date: today
+    }
+  });
   const currentActivity = await prisma.activityEntry.create({
     data: {
       startedAt: new Date(today.getTime() + 9 * 60 * 60 * 1000),
@@ -130,6 +137,12 @@ test("bootstrap and agent export preserve their payload contracts", async (conte
           .tags,
         ["architecture", "phase-0"]
       );
+      assert.deepEqual(
+        body.notes.find((candidate: { id: string }) => candidate.id === scalarTagsNote.id)
+          .tags,
+        [],
+        "bootstrap must normalize valid JSON scalar tags to an array"
+      );
     }
   );
 
@@ -168,6 +181,12 @@ test("bootstrap and agent export preserve their payload contracts", async (conte
         body.notes.find((candidate: { id: string }) => candidate.id === note.id)
           .tags,
         ["architecture", "phase-0"]
+      );
+      assert.deepEqual(
+        body.notes.find((candidate: { id: string }) => candidate.id === scalarTagsNote.id)
+          .tags,
+        [],
+        "agent export must normalize valid JSON scalar tags to an array"
       );
       assert.equal(
         body.activities.some(

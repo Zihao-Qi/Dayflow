@@ -26,7 +26,7 @@ export async function GET() {
     tx.material.findMany({ orderBy: { createdAt: "desc" } }),
     tx.timeBlock.findMany({ orderBy: { date: "asc" } }),
     tx.activityEntry.findMany({ orderBy: { startedAt: "asc" } })
-  ]));
+  ]), { timeout: 60000 });
 
   return NextResponse.json({
     app: "Dayflow",

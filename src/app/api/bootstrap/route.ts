@@ -139,7 +139,7 @@ async function loadBootstrap() {
       }),
       isWorkspaceEmpty(tx),
       earliestRecordedDay(tx)
-    ]));
+    ]), { timeout: 60000 });
 
   const diaryEntry = diary
     ? { ...diary, persisted: true }

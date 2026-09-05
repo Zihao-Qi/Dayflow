@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { reviewErrors } from "@/lib/review-errors";
 import {
   readReviewHistoryPage
-} from "@/lib/review-history";
+} from "@/server/review";
 import { AppError } from "@/shared/kernel/errors";
 import { NextRequest, NextResponse } from "next/server";
 

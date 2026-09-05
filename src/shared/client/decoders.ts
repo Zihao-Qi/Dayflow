@@ -407,12 +407,7 @@ export function isCurrentReviewWindow(value: unknown): value is CurrentReviewWin
 
 export type ViewedDayKind = "past" | "today" | "future";
 
-export type ViewedDayTask = {
-  id: string;
-  title: string;
-  date: string | null;
-  status: "TODO" | "IN_PROGRESS" | "DONE";
-};
+export type ViewedDayTask = Task;
 
 export type ViewedDayActivity = {
   id: string;
@@ -437,17 +432,8 @@ const isIsoTimestamp = (value: unknown): value is string =>
   typeof value === "string" && !Number.isNaN(new Date(value).getTime());
 
 function isTask(value: unknown): value is ViewedDayTask {
-  if (!value || typeof value !== "object") return false;
-  const task = value as Record<string, unknown>;
-  return (
-    typeof task.id === "string" &&
-    task.id.length > 0 &&
-    typeof task.title === "string" &&
-    (task.date === null || isIsoTimestamp(task.date)) &&
-    (task.status === "TODO" ||
-      task.status === "IN_PROGRESS" ||
-      task.status === "DONE")
-  );
+  return isTaskResponse(value) && value.id.length > 0 &&
+    (value.date === null || isIsoTimestamp(value.date));
 }
 
 function isActivity(value: unknown): value is ViewedDayActivity {

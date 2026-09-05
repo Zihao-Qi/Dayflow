@@ -310,3 +310,110 @@ test("starting the next queued task refreshes again after enrichment's reads hav
     release.release();
   }
 });
+
+for (const malformed of [false, true]) {
+  test(`Today's attempted title survives ${malformed ? "a malformed 200" : "a failed save"} until a newer day read`, async ({ page }) => {
+    const { todayKey } = await (await page.request.get("/api/bootstrap")).json();
+    const task = await (await page.request.post("/api/tasks", {
+      data: { title: "Original coarse title", date: todayKey }
+    })).json();
+    const now = new Date(`${todayKey}T12:00:00`);
+    await page.clock.install({ time: now });
+    await page.clock.pauseAt(now);
+    await openToday(page);
+    let attempts = 0;
+    await page.route(`**/api/tasks/${task.id}`, async (route) => {
+      if (route.request().method() !== "PATCH") return route.continue();
+      attempts++;
+      await route.fulfill(malformed
+        ? { status: 200, json: { ok: true } }
+        : { status: 500, json: { error: "Save failed" } });
+    });
+    // Keep a pre-edit coarse read in flight to exercise the same generation owner.
+    const held = barrier();
+    const release = barrier();
+    await page.route("**/api/day?*", async (route) => {
+      const response = await route.fetch();
+      const json = await response.json();
+      held.release();
+      await release.promise;
+      await route.fulfill({ response, json });
+    });
+    await page.locator("#new-task").fill("Trigger a held day read");
+    await page.locator("#new-task").press("Enter");
+    await held.promise;
+    const row = (title: string) => page.locator(".today-page").getByRole("article", { name: `Task: ${title}`, exact: true });
+    const originalInput = row(task.title).getByRole("textbox", { name: `Task title: ${task.title}`, exact: true });
+    // Invalid drafts and ordinary typing must leave the original locator usable.
+    await originalInput.fill("");
+    await originalInput.press("Enter");
+    await page.clock.runFor(600);
+    expect(attempts).toBe(0);
+    await expect(originalInput).toHaveValue("");
+    await originalInput.fill("  Attempted coarse title  ");
+    await originalInput.press("Enter");
+    await expect.poll(() => attempts).toBe(1);
+    const attempted = row("Attempted coarse title");
+    await expect(attempted).toBeVisible();
+    await expect(attempted.getByRole("button", { name: "Complete Attempted coarse title", exact: true })).toBeVisible();
+    await page.clock.runFor(1000);
+    await expect.poll(() => attempts).toBe(2);
+    await page.clock.runFor(4000);
+    await expect.poll(() => attempts).toBe(3);
+    await expect(attempted.locator(".save-state-chip.error")).toContainText("Not saved");
+    await page.clock.runFor(10_000);
+    await expect(attempted.getByRole("textbox", { name: "Task title: Attempted coarse title", exact: true })).toHaveValue("  Attempted coarse title  ");
+    expect(attempts).toBe(3);
+
+    const staleResponse = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/day");
+    release.release();
+    await (await staleResponse).finished();
+    await page.clock.runFor(100);
+    await expect(attempted.locator(".save-state-chip.error")).toContainText("Not saved");
+    await page.unroute("**/api/day?*");
+
+    // A failed coarse refresh must preserve the attempted title throughout the error state.
+    await page.route("**/api/day?*", (route) => route.fulfill({ status: 503, json: { error: "Day offline" } }));
+    await page.locator("#new-task").fill("Trigger a failed day refresh");
+    await page.locator("#new-task").press("Enter");
+    await expect(page.getByRole("button", { name: "Retry day", exact: true })).toBeVisible();
+    await expect(attempted.locator(".save-state-chip.error")).toContainText("Not saved");
+
+    // APIRequestContext bypasses page routing: install a newer canonical value.
+    expect((await page.request.patch(`/api/tasks/${task.id}`, {
+      data: { title: "Newer canonical title" }
+    })).ok()).toBe(true);
+    await page.unroute("**/api/day?*");
+    await page.getByRole("button", { name: "Retry day", exact: true }).click();
+    const fresh = row("Newer canonical title");
+    await expect(fresh).toBeVisible();
+    await expect(attempted).toHaveCount(0);
+    await expect(fresh.getByRole("textbox", { name: "Task title: Newer canonical title", exact: true })).toHaveValue("  Attempted coarse title  ");
+    await expect(fresh.locator(".save-state-chip.error")).toContainText("Not saved");
+
+    // An unrelated optimistic edit merges into the current day task, not a stale bootstrap task.
+    await fresh.getByRole("button", { name: "Show task details: Newer canonical title", exact: true }).click();
+    await fresh.getByRole("radio", { name: "Very urgent", exact: true }).click();
+    await expect.poll(() => attempts).toBe(4);
+    await expect(fresh).toBeVisible();
+    await expect(attempted).toHaveCount(0);
+  });
+}
+
+test("a truncated successful day task shows read failure and can be retried", async ({ page }) => {
+  const { todayKey } = await (await page.request.get("/api/bootstrap")).json();
+  await page.request.post("/api/tasks", { data: { title: "Complete day contract", date: todayKey } });
+  await page.route("**/api/day?*", async (route) => {
+    const response = await route.fetch();
+    const json = await response.json();
+    json.tasks = json.tasks.map(({ id, title, date, status }: { id: string; title: string; date: string | null; status: string }) => ({ id, title, date, status }));
+    await route.fulfill({ response, json });
+  });
+  await page.addInitScript(() => localStorage.setItem("dayflow-first-run-seen", "1"));
+  await page.goto("/");
+  await expect(page.locator(".app-shell").getByRole("alert")).toContainText("That day could not be loaded");
+  await expect(page.locator(".today-page")).toHaveCount(0);
+  await page.unroute("**/api/day?*");
+  await page.getByRole("button", { name: "Retry day", exact: true }).click();
+  await expect(page.locator(".today-page").getByRole("article", { name: "Task: Complete day contract", exact: true })).toBeVisible();
+});

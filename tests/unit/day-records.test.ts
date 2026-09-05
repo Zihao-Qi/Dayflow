@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { loadViewedDay } from "../../src/components/dashboard-api";
+import { ApiError } from "../../src/shared/client/api-client";
 import { isViewedDayPayload } from "../../src/lib/day-records";
 
 const base = {
@@ -10,7 +12,18 @@ const base = {
       id: "t1",
       title: "Write the spec",
       date: "2026-08-23T04:00:00.000Z",
-      status: "TODO"
+      status: "TODO",
+      priority: "MEDIUM",
+      urgentScore: 1,
+      importanceScore: 1,
+      deadline: null,
+      estimateMinutes: 30,
+      actualMinutes: 0,
+      sortOrder: 0,
+      focusQueuePosition: null,
+      completedAt: null,
+      projectId: null,
+      phaseId: null
     }
   ],
   timeBlocks: [],
@@ -60,4 +73,44 @@ test("malformed day payloads are refused", () => {
   for (const value of [null, undefined, "day", 3, []]) {
     assert.equal(isViewedDayPayload(value), false, String(value));
   }
+});
+
+test("day tasks require every field of the full Task contract", () => {
+  for (const field of Object.keys(base.tasks[0])) {
+    const task: Record<string, unknown> = { ...base.tasks[0] };
+    delete task[field];
+    assert.equal(isViewedDayPayload({ ...base, tasks: [task] }), false, field);
+  }
+});
+
+test("day tasks reject malformed full Task fields", () => {
+  const invalidFields = {
+    id: "", title: 12, date: "not-a-date", status: "UNKNOWN", priority: "UNKNOWN",
+    urgentScore: "3", importanceScore: 1.5, deadline: 42, estimateMinutes: "30",
+    actualMinutes: 0.5, sortOrder: null, focusQueuePosition: "0",
+    completedAt: false, projectId: 12, phaseId: {}
+  };
+  for (const [field, value] of Object.entries(invalidFields)) {
+    const task = { ...base.tasks[0], [field]: value };
+    assert.equal(isViewedDayPayload({ ...base, tasks: [task] }), false, field);
+  }
+});
+
+test("a truncated task in a successful day response rejects through the read-failure path", async (t) => {
+  const { id, title, date, status } = base.tasks[0];
+  t.mock.method(globalThis, "fetch", async () => Response.json({
+    ...base, tasks: [{ id, title, date, status }]
+  }));
+  await assert.rejects(loadViewedDay(base.dateKey), (error: unknown) => {
+    assert.ok(error instanceof ApiError);
+    assert.equal(error.status, 200);
+    assert.equal(error.kind, "decode");
+    assert.equal(error.message, "That day could not be loaded. Check that Dayflow is still running.");
+    return true;
+  });
+});
+
+test("a complete day task reaches the caller with its control values intact", async (t) => {
+  t.mock.method(globalThis, "fetch", async () => Response.json(base));
+  assert.deepEqual((await loadViewedDay(base.dateKey)).tasks, base.tasks);
 });

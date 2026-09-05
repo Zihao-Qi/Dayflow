@@ -14,6 +14,11 @@ export function createReadGeneration() {
     supersede = null;
   }
 
+  /** A local edit outranks older reads without making them report a failure. */
+  function outrank() {
+    generation.current += 1;
+  }
+
   async function run<T>(
     fetch: () => Promise<T>,
     publish: (value: T) => void,
@@ -51,5 +56,5 @@ export function createReadGeneration() {
     return true;
   }
 
-  return { run, invalidate };
+  return { run, invalidate, outrank };
 }

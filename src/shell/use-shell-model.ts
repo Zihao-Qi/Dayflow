@@ -95,7 +95,7 @@ export function useShellModel() {
     screen === "today" ? "today" : onDay ? "log" : null
   );
   const todayTasks = viewedDay.dayKey === data?.todayKey
-    ? (viewedDay.payload?.tasks ?? []) as Task[]
+    ? (viewedDay.payload?.tasks ?? [])
     : [];
   const openTodayTasks = todayTasks.filter((task) => task.status !== "DONE");
   const todayTaskCount = (data?.tasks ?? []).filter((task) =>
@@ -180,7 +180,7 @@ export function useShellModel() {
     dismissedUnfinished
   );
   const dayIsToday = viewedDay.dayKey === (data?.todayKey ?? "");
-  const dayTasks = ((viewedDay.payload?.tasks ?? []) as Task[]).filter((task) => task.status !== "DONE");
+  const dayTasks = (viewedDay.payload?.tasks ?? []).filter((task) => task.status !== "DONE");
   const dayActivities = (viewedDay.payload?.activities ?? []) as ActivityEntry[];
   const dayTimeBlocks = (viewedDay.payload?.timeBlocks ?? []) as TimeBlock[];
   const dayBlockedMinutes = dayTimeBlocks
@@ -222,6 +222,7 @@ export function useShellModel() {
   } = useTaskActions({
     ...state,
     openTodayTasks,
+    patchTask: viewedDay.patchTask,
     acceptTask: viewedDay.acceptTask,
     removeTask: viewedDay.removeTask,
     refresh,

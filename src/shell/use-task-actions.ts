@@ -29,6 +29,7 @@ export function useTaskActions({
   taskCreateWasInError,
   taskCreateMutation,
   openTodayTasks,
+  patchTask,
   acceptTask,
   removeTask,
   refresh,
@@ -50,6 +51,7 @@ export function useTaskActions({
   | "taskCreateMutation"
 > & {
   openTodayTasks: Task[];
+  patchTask: (id: string, patch: Partial<Task>) => void;
   acceptTask: (task: Task) => void;
   removeTask: (id: string) => void;
   refresh: () => Promise<void>;
@@ -148,6 +150,7 @@ export function useTaskActions({
     patch: Partial<Task> & { scheduleSource?: string }
   ) {
     const { scheduleSource: _scheduleSource, ...taskPatch } = patch;
+    patchTask(id, taskPatch);
     setData((current) =>
       current
         ? {

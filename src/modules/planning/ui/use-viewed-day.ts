@@ -72,16 +72,29 @@ export function useViewedDay(
     : Promise.resolve(true);
 
   function updatePayload(update: (payload: ViewedDayPayload) => ViewedDayPayload) {
-    // A confirmed response is visible even if its following read fails.
+    // Local edits supersede older reads; a later read replaces the payload.
     owner.invalidate();
     setState((current) => current.payload ? { ...current, payload: update(current.payload) } : current);
+  }
+  function patchTask(id: string, patch: Partial<Task>) {
+    // An unconfirmed edit outranks older reads but never fails a running refresh.
+    owner.outrank();
+    setState((current) => current.payload
+      ? {
+        ...current,
+        payload: {
+          ...current.payload,
+          tasks: current.payload.tasks.map((task) => task.id === id ? { ...task, ...patch } : task)
+        }
+      }
+      : current);
   }
   function acceptTask(task: Task) {
     updatePayload((payload) => ({
       ...payload,
       tasks: [...payload.tasks.filter((item) => item.id !== task.id),
         ...(task.date && localDateKey(new Date(task.date)) === payload.dateKey ? [task] : [])]
-        .sort((a, b) => (a as Task).sortOrder - (b as Task).sortOrder)
+        .sort((a, b) => a.sortOrder - b.sortOrder)
     }));
   }
   function removeTask(id: string) {
@@ -111,5 +124,5 @@ export function useViewedDay(
     payload: entering ? null : state.payload,
     loading: entering ? Boolean(destination) : state.loading,
     error: entering ? "" : state.error,
-    setDay: load, goToToday, refresh, acceptTask, removeTask, acceptActivity, acceptTimeBlock, removeTimeBlock };
+    setDay: load, goToToday, refresh, patchTask, acceptTask, removeTask, acceptActivity, acceptTimeBlock, removeTimeBlock };
 }

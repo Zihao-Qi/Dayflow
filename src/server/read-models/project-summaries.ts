@@ -21,9 +21,23 @@ export async function listProjectSummaries(database: SummaryDatabase, reviewPeri
       select: { id: true, attributedProjectId: true, durationMinutes: true, startedAt: true }
     })
   ]);
+  const tasksByProject = new Map<string | null, typeof tasks>();
+  for (const task of tasks) {
+    const projectId = task.projectId;
+    const bucket = tasksByProject.get(projectId);
+    if (bucket) bucket.push(task);
+    else tasksByProject.set(projectId, [task]);
+  }
+  const activitiesByProject = new Map<string | null, typeof activities>();
+  for (const activity of activities) {
+    const projectId = activity.attributedProjectId;
+    const bucket = activitiesByProject.get(projectId);
+    if (bucket) bucket.push(activity);
+    else activitiesByProject.set(projectId, [activity]);
+  }
   return projects.map(project => summarizeProject({
     ...project,
-    tasks: tasks.filter(task => task.projectId === project.id),
-    attributedActivities: activities.filter(activity => activity.attributedProjectId === project.id)
+    tasks: tasksByProject.get(project.id) ?? [],
+    attributedActivities: activitiesByProject.get(project.id) ?? []
   }, reviewPeriod));
 }

@@ -26,10 +26,22 @@ export async function getProjectDetail(database: DetailDatabase, id: string, rev
   // Legacy order: direct journal rows first, then rows for each task in task order.
   // Map replacement deduplicates a row linked both directly and through a task.
   function journalOrder<T extends { id: string; projectId: string | null; taskId: string | null }>(rows: T[]) {
-    return [...new Map([
-      ...rows.filter(row => row.projectId === id),
-      ...tasks.flatMap(task => rows.filter(row => row.taskId === task.id))
-    ].map(row => [row.id, row])).values()];
+    const directRows: T[] = [];
+    const rowsByTask = new Map<string, T[]>();
+    for (const row of rows) {
+      if (row.projectId === id) directRows.push(row);
+      const taskId = row.taskId;
+      if (taskId !== null) {
+        const bucket = rowsByTask.get(taskId);
+        if (bucket) bucket.push(row);
+        else rowsByTask.set(taskId, [row]);
+      }
+    }
+    const ordered = new Map(directRows.map(row => [row.id, row]));
+    for (const task of tasks) {
+      for (const row of rowsByTask.get(task.id) ?? []) ordered.set(row.id, row);
+    }
+    return [...ordered.values()];
   }
   return {
     ...summarizeProject({ ...project, tasks, attributedActivities: activities }, reviewPeriod),

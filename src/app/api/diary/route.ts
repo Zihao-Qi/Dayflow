@@ -1,3 +1,4 @@
+import { clock } from "@/lib/time";
 import { evidenceErrors } from "@/lib/evidence-errors";
 import {
   parseDiaryUpsertMutation,
@@ -9,9 +10,10 @@ import { AppError } from "@/shared/kernel/errors";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function PUT(request: NextRequest) {
+  const now = clock.now();
   try {
     const body = await readEvidenceMutationBody(request);
-    const input = parseDiaryUpsertMutation(body);
+    const input = parseDiaryUpsertMutation(body, now);
     const diary = await prisma.$transaction((transaction) =>
       transaction.diaryEntry.upsert({
         where: { date: input.date },

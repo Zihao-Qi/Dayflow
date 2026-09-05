@@ -1,3 +1,4 @@
+import { clock } from "@/lib/time";
 import {
   compactFocusQueue,
   consumeFocusQueueTask
@@ -19,12 +20,12 @@ import { NextRequest, NextResponse } from "next/server";
 type Params = { params: Promise<{ id: string }> };
 
 export async function PATCH(request: NextRequest, { params }: Params) {
+  const now = clock.now();
   const { id: rawId } = await params;
   try {
     const id = parseTaskPathId(rawId);
     const body = await readTaskMutationBody(request);
-    const mutationTime = new Date();
-    validateTaskPatchMutation(body, mutationTime);
+    validateTaskPatchMutation(body, now);
     const task = await prisma.$transaction(async (transaction) => {
       const current = await transaction.task.findUnique({
         where: { id },
@@ -32,7 +33,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       });
       if (!current) return null;
 
-      const input = parseTaskPatchMutation(body, current, mutationTime);
+      const input = parseTaskPatchMutation(body, current, now);
       await validateProjectPlacement(
         input.projectId,
         input.phaseId,

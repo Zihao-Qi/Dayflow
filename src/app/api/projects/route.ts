@@ -1,3 +1,4 @@
+import { clock, calendar } from "@/lib/time";
 import { appErrorResponse } from "@/lib/http-errors";
 import {
   parseMutationId,
@@ -15,10 +16,12 @@ import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function GET() {
-  return NextResponse.json(await listProjectSummaries(prisma));
+  const now = clock.now();
+  return NextResponse.json(await listProjectSummaries(prisma, calendar.reviewPeriodEnding(calendar.dayOf(now))));
 }
 
 export async function POST(request: NextRequest) {
+  const now = clock.now();
   try {
     const body = await readProjectMutationBody(request);
     const mutationId = parseMutationId(
@@ -34,7 +37,7 @@ export async function POST(request: NextRequest) {
         const project = await transaction.project.create({
           data: input
         });
-        const createdDetail = await getProjectDetail(project.id, transaction);
+        const createdDetail = await getProjectDetail(project.id, transaction, calendar.reviewPeriodEnding(calendar.dayOf(now)));
         if (!createdDetail) {
           throw new Error("Created Project could not be read back.");
         }

@@ -98,7 +98,7 @@ export async function readReviewPeriodEvidence(
 
 export function parseReviewWindowRequest(
   searchParams: URLSearchParams,
-  now = new Date()
+  now: Date
 ): ReviewWindowRequest {
   const values = searchParams.getAll("ending");
   if (values.length !== 1) {
@@ -128,7 +128,7 @@ export function parseReviewWindowRequest(
 export async function readReviewWindow(
   database: PrismaClient,
   searchParams: URLSearchParams,
-  now = new Date()
+  now: Date
 ) {
   const window = parseReviewWindowRequest(searchParams, now);
   const period = { start: window.start, end: window.end };
@@ -238,7 +238,7 @@ export function decodeReviewCursor(value: string): ReviewCursor {
 export async function readReviewHistoryPage(
   database: PrismaClient,
   searchParams: URLSearchParams,
-  now = new Date()
+  now: Date
 ) {
   const { limit, cursor } = parseReviewHistoryPage(searchParams);
   const current = reviewPeriodRange(now);
@@ -291,7 +291,7 @@ export function isReviewIdentifier(value: string) {
 export async function readPastReviewPeriod(
   database: PrismaClient,
   id: string,
-  now = new Date()
+  now: Date
 ) {
   if (!isReviewIdentifier(id)) {
     throw new AppError(reviewErrors.thatReviewIdentifierIsNotValid);

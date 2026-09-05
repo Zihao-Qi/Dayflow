@@ -136,7 +136,7 @@ function isFocusTaskReference(
   );
 }
 
-export function focusElapsedSeconds(session: FocusSessionRecord, now = Date.now()) {
+export function focusElapsedSeconds(session: FocusSessionRecord, now: number) {
   const end =
     session.status === "PAUSED" && session.pausedAt
       ? new Date(session.pausedAt).getTime()
@@ -145,7 +145,7 @@ export function focusElapsedSeconds(session: FocusSessionRecord, now = Date.now(
   return Math.max(0, total - session.accumulatedPauseSeconds);
 }
 
-export function focusRemainingSeconds(session: FocusSessionRecord, now = Date.now()) {
+export function focusRemainingSeconds(session: FocusSessionRecord, now: number) {
   return Math.max(0, session.plannedMinutes * 60 - focusElapsedSeconds(session, now));
 }
 

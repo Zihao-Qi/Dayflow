@@ -92,7 +92,7 @@ export async function readTimeBlockMutationBody(request: {
 
 export function parseTimeBlockDraft(
   value: unknown,
-  now = new Date()
+  now: Date
 ): TimeBlockDraft {
   const draft = parseTimeBlockDraftStructure(value);
   assertTimeBlockIsNotPast(draft, now);
@@ -134,7 +134,7 @@ export function parseTimeBlockDraftStructure(
  */
 export function assertTimeBlockIsNotPast(
   draft: Pick<TimeBlockDraft, "date">,
-  now = new Date()
+  now: Date
 ) {
   if (draft.date.getTime() < startOfLocalDay(now).getTime()) {
     throw new AppError(timeBlockErrors.timeBlocksCannotBePlannedForADayThatHasAlready);

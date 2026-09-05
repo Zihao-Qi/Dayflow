@@ -1,3 +1,4 @@
+import { clock } from "@/lib/time";
 import { appErrorResponse } from "@/lib/http-errors";
 import {
   parseMutationId,
@@ -14,12 +15,13 @@ import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function POST(request: NextRequest) {
+  const now = clock.now();
   try {
     const body = await readTaskMutationBody(request);
     const mutationId = parseMutationId(
       request.headers.get("X-Dayflow-Mutation-Id")
     );
-    const input = parseTaskCreateMutation(body);
+    const input = parseTaskCreateMutation(body, now);
 
     const task = await runIdempotentCreate({
       mutationId,

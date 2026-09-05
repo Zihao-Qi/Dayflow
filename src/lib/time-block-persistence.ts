@@ -46,7 +46,8 @@ export async function createTimeBlock(
 
 export async function replaceTimeBlock(
   id: string,
-  input: TimeBlockDraft
+  input: TimeBlockDraft,
+  now: Date
 ) {
   return prisma.$transaction(async (transaction) => {
     const current = await transaction.timeBlock.findUnique({
@@ -57,7 +58,7 @@ export async function replaceTimeBlock(
       throw new AppError(timeBlockErrors.timeBlockNotFound);
     }
     if (input.date.getTime() !== current.date.getTime()) {
-      assertTimeBlockIsNotPast(input);
+      assertTimeBlockIsNotPast(input, now);
     }
     await validatePersistedTimeBlock(
       input,

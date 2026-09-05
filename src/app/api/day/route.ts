@@ -1,14 +1,16 @@
-import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { dayErrors } from "@/lib/day-errors";
 import {
   DAY_VIEW_FORWARD_WEEKS,
-  DayViewRequestError,
   assertViewedDayOnOrAfter,
   earliestRecordedDay,
   parseViewedDay,
   readViewedDay,
   resolveEarliestNavigableDayKey
 } from "@/lib/day-view";
+import { appErrorResponse } from "@/lib/http-errors";
+import { prisma } from "@/lib/prisma";
+import { AppError } from "@/shared/kernel/errors";
+import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,17 +29,9 @@ export async function GET(request: NextRequest) {
       forwardWeeks: DAY_VIEW_FORWARD_WEEKS
     });
   } catch (error) {
-    if (error instanceof DayViewRequestError) {
-      return NextResponse.json(
-        { error: error.message, code: error.code, field: error.field },
-        { status: error.status }
-      );
-    }
+    if (error instanceof AppError) return appErrorResponse(error);
 
     console.error("Day could not be read.", error);
-    return NextResponse.json(
-      { error: "That day could not be read.", code: "INTERNAL_ERROR" },
-      { status: 500 }
-    );
+    return appErrorResponse(new AppError(dayErrors.thatDayCouldNotBeRead));
   }
 }

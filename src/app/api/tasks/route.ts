@@ -1,17 +1,17 @@
-import { Prisma } from "@prisma/client";
-import { NextRequest, NextResponse } from "next/server";
+import { appErrorResponse } from "@/lib/http-errors";
 import {
-  IdempotentMutationError,
   parseMutationId,
   runIdempotentCreate
 } from "@/lib/idempotent-mutations";
-import { ProjectRuleError, validateProjectPlacement } from "@/lib/projects";
+import { validateProjectPlacement } from "@/lib/projects";
+import { taskErrors } from "@/lib/task-errors";
 import {
-  TaskMutationValidationError,
   parseTaskCreateMutation,
-  readTaskMutationBody,
-  taskProjectRuleErrorDetails
+  readTaskMutationBody
 } from "@/lib/task-mutations";
+import { AppError } from "@/shared/kernel/errors";
+import { Prisma } from "@prisma/client";
+import { NextRequest, NextResponse } from "next/server";
 
 export async function POST(request: NextRequest) {
   try {
@@ -52,45 +52,16 @@ export async function POST(request: NextRequest) {
 }
 
 function taskMutationErrorResponse(error: unknown) {
-  if (error instanceof IdempotentMutationError) {
-    return NextResponse.json(
-      { error: error.message, code: error.code },
-      { status: error.status }
-    );
-  }
-  if (error instanceof TaskMutationValidationError) {
-    return NextResponse.json(
-      { error: error.message, code: error.code, field: error.field },
-      { status: 400 }
-    );
-  }
-  if (error instanceof ProjectRuleError) {
-    const relationshipError = taskProjectRuleErrorDetails(error.message);
-    return NextResponse.json(
-      {
-        error: error.message,
-        code: relationshipError.code,
-        field: relationshipError.field
-      },
-      { status: relationshipError.status }
-    );
-  }
+  if (error instanceof AppError) return appErrorResponse(error);
+
+
   if (
     error instanceof Prisma.PrismaClientKnownRequestError &&
     error.code === "P2003"
   ) {
-    return NextResponse.json(
-      {
-        error: "The selected task relationship is no longer available.",
-        code: "CONFLICT"
-      },
-      { status: 409 }
-    );
+    return appErrorResponse(new AppError(taskErrors.theSelectedTaskRelationshipIsNoLongerAvailable));
   }
 
   console.error("Task creation failed.", error);
-  return NextResponse.json(
-    { error: "Task could not be created.", code: "INTERNAL_ERROR" },
-    { status: 500 }
-  );
+  return appErrorResponse(new AppError(taskErrors.taskCouldNotBeCreated));
 }

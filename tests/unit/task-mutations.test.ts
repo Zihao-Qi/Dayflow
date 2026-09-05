@@ -6,9 +6,10 @@ import {
   TaskMutationValidationError,
   parseTaskCreateMutation,
   parseTaskPatchMutation,
-  readTaskMutationBody,
-  taskProjectRuleErrorDetails
+  readTaskMutationBody
 } from "../../src/lib/task-mutations";
+
+import { projectErrors } from "../../src/lib/project-errors";
 
 function expectValidationError(
   action: () => unknown,
@@ -239,7 +240,7 @@ test("malformed and non-object JSON bodies produce typed parse errors", async ()
 
 test("task relationship errors distinguish missing and conflicting placement", () => {
   assert.deepEqual(
-    taskProjectRuleErrorDetails("The selected project could not be found."),
+    placementDetails(projectErrors.theSelectedProjectCouldNotBeFound),
     {
       code: "RELATIONSHIP_NOT_FOUND",
       field: "projectId",
@@ -247,9 +248,7 @@ test("task relationship errors distinguish missing and conflicting placement", (
     }
   );
   assert.deepEqual(
-    taskProjectRuleErrorDetails(
-      "The selected phase does not belong to this project."
-    ),
+    placementDetails(projectErrors.theSelectedPhaseDoesNotBelongToThisProject),
     {
       code: "RELATIONSHIP_CONFLICT",
       field: "phaseId",
@@ -257,9 +256,7 @@ test("task relationship errors distinguish missing and conflicting placement", (
     }
   );
   assert.deepEqual(
-    taskProjectRuleErrorDetails(
-      "A task cannot have a phase without a project."
-    ),
+    placementDetails(projectErrors.aTaskCannotHaveAPhaseWithoutAProject),
     {
       code: "VALIDATION_ERROR",
       field: "phaseId",
@@ -267,3 +264,7 @@ test("task relationship errors distinguish missing and conflicting placement", (
     }
   );
 });
+
+function placementDetails({ code, field, status }: { code: string; field: string; status: number }) {
+  return { code, field, status };
+}

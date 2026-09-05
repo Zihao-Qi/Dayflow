@@ -1,3 +1,5 @@
+import { backupErrors } from "@/lib/backup-errors";
+import { AppError, validation } from "@/shared/kernel/errors";
 /**
  * Automatic Backup policy and scheduling.
  *
@@ -8,15 +10,15 @@
  * Contract: docs/specs/ROLLING_BACKUPS_V1.md
  */
 
-import {
-  requireObject,
-  parseBoundedInteger as kernelParseBoundedInteger
-} from "@/shared/kernel/parsing";
 import type {
   AutomaticBackupPolicy,
   AutomaticBackupSchedule,
   RetentionReport
 } from "@/lib/automatic-backup-contract";
+import {
+  parseBoundedInteger as kernelParseBoundedInteger,
+  requireObject
+} from "@/shared/kernel/parsing";
 
 export type {
   AutomaticBackupPolicy,
@@ -41,15 +43,8 @@ export type AutomaticBackupPolicyErrorField =
   | "retainCount"
   | "policy";
 
-export class AutomaticBackupPolicyError extends Error {
-  constructor(
-    message: string,
-    readonly field: AutomaticBackupPolicyErrorField
-  ) {
-    super(message);
-    this.name = "AutomaticBackupPolicyError";
-  }
-}
+/** @deprecated Compatibility constructor for existing callers; returns AppError. */
+export { AppError as AutomaticBackupPolicyError };
 
 const POLICY_FIELDS = new Set(["enabled", "intervalHours", "retainCount"]);
 
@@ -63,7 +58,7 @@ function parseBoundedInteger(
   return kernelParseBoundedInteger(
     value, field, min, max,
     `${label} must be a whole number between ${min} and ${max}.`,
-    (message, errorField) => new AutomaticBackupPolicyError(message, errorField)
+    (message, errorField) => validation(message, errorField)
   );
 }
 
@@ -78,20 +73,14 @@ export function parseAutomaticBackupPolicy(
   const body = requireObject(
     value, "policy", "Automatic backup settings must be an object.",
     (message, field) =>
-      new AutomaticBackupPolicyError(message, field)
+      validation(message, field)
   );
   const unknown = Object.keys(body).filter((key) => !POLICY_FIELDS.has(key));
   if (unknown.length) {
-    throw new AutomaticBackupPolicyError(
-      `Automatic backup settings do not support ${unknown.sort().join(", ")}.`,
-      "policy"
-    );
+    throw validation(`Automatic backup settings do not support ${unknown.sort().join(", ")}.`, "policy");
   }
   if (typeof body.enabled !== "boolean") {
-    throw new AutomaticBackupPolicyError(
-      "Automatic backups must be explicitly turned on or off.",
-      "enabled"
-    );
+    throw new AppError(backupErrors.automaticBackupsMustBeExplicitlyTurnedOnOrOff);
   }
   return {
     enabled: body.enabled,
@@ -100,14 +89,14 @@ export function parseAutomaticBackupPolicy(
       "intervalHours",
       AUTOMATIC_BACKUP_MIN_INTERVAL_HOURS,
       AUTOMATIC_BACKUP_MAX_INTERVAL_HOURS,
-      "The backup interval in hours"
+      backupErrors.theBackupIntervalInHours.message
     ),
     retainCount: parseBoundedInteger(
       body.retainCount,
       "retainCount",
       AUTOMATIC_BACKUP_MIN_RETAIN,
       AUTOMATIC_BACKUP_MAX_RETAIN,
-      "The number of automatic backups to keep"
+      backupErrors.theNumberOfAutomaticBackupsToKeep.message
     )
   };
 }

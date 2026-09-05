@@ -1,20 +1,22 @@
-import { Prisma } from "@prisma/client";
-import { NextRequest, NextResponse } from "next/server";
 import {
   activityMutationErrorResponse
 } from "@/lib/activity-http";
 import {
   replaceManualActivity
 } from "@/lib/activity-persistence";
+import { evidenceErrors } from "@/lib/evidence-errors";
 import {
   parseActivityReplaceMutation,
   readEvidenceMutationBody
 } from "@/lib/evidence-mutations";
+import { appErrorResponse } from "@/lib/http-errors";
 import { prisma } from "@/lib/prisma";
 import {
-  WorkflowMutationRequestError,
   parseWorkflowId
 } from "@/lib/workflow-mutations";
+import { AppError } from "@/shared/kernel/errors";
+import { Prisma } from "@prisma/client";
+import { NextRequest, NextResponse } from "next/server";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -24,7 +26,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
     const id = parseWorkflowId(
       routeParams.id,
       "id",
-      "Activity identifier is invalid."
+      evidenceErrors.activityIdentifierIsInvalid.message
     );
     const body = await readEvidenceMutationBody(request);
     const input = parseActivityReplaceMutation(body);
@@ -45,7 +47,7 @@ export async function DELETE(_request: NextRequest, { params }: Params) {
     const id = parseWorkflowId(
       routeParams.id,
       "id",
-      "Activity identifier is invalid."
+      evidenceErrors.activityIdentifierIsInvalid.message
     );
     const result = await prisma.$transaction(async (transaction) => {
       const activity = await transaction.activityEntry.findUnique({
@@ -64,50 +66,27 @@ export async function DELETE(_request: NextRequest, { params }: Params) {
           origin: "MANUAL"
         }
       });
-      if (deleted.count !== 1) throw new ActivityDeleteConflictError();
+      if (deleted.count !== 1) throw new AppError(evidenceErrors.theActivityChangedBeforeItCouldBeDeleted);
       return "deleted" as const;
     });
 
     if (result === "missing") {
-      return NextResponse.json(
-        { error: "Activity not found." },
-        { status: 404 }
-      );
+      return appErrorResponse(new AppError(evidenceErrors.activityDeleteNotFound));
     }
     if (result === "protected") {
-      return NextResponse.json(
-        { error: "Focus evidence cannot be deleted." },
-        { status: 409 }
-      );
+      return appErrorResponse(new AppError(evidenceErrors.focusEvidenceCannotBeDeleted));
     }
     return NextResponse.json({ ok: true, id });
   } catch (error) {
-    if (error instanceof WorkflowMutationRequestError) {
-      return NextResponse.json(
-        { error: error.message, code: error.code, field: error.field },
-        { status: 400 }
-      );
-    }
+    if (error instanceof AppError) return appErrorResponse(error);
     if (
-      error instanceof ActivityDeleteConflictError ||
       (error instanceof Prisma.PrismaClientKnownRequestError &&
         (error.code === "P2003" || error.code === "P2025"))
     ) {
-      return NextResponse.json(
-        {
-          error: "The Activity changed before it could be deleted.",
-          code: "CONFLICT"
-        },
-        { status: 409 }
-      );
+      return appErrorResponse(new AppError(evidenceErrors.theActivityChangedBeforeItCouldBeDeleted));
     }
 
     console.error("Activity deletion failed.", error);
-    return NextResponse.json(
-      { error: "Activity could not be deleted.", code: "INTERNAL_ERROR" },
-      { status: 500 }
-    );
+    return appErrorResponse(new AppError(evidenceErrors.activityCouldNotBeDeleted));
   }
 }
-
-class ActivityDeleteConflictError extends Error {}

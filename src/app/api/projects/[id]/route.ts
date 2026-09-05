@@ -1,16 +1,18 @@
-import { Prisma } from "@prisma/client";
-import { NextRequest, NextResponse } from "next/server";
+import { appErrorResponse } from "@/lib/http-errors";
 import { prisma } from "@/lib/prisma";
+import { projectErrors } from "@/lib/project-errors";
 import {
-  ProjectMutationRequestError,
-  parseProjectPathId,
   parseProjectPatchMutation,
+  parseProjectPathId,
   readProjectMutationBody
 } from "@/lib/project-mutations";
 import {
   deleteProjectSafely,
   getProjectDetail
 } from "@/lib/projects";
+import { AppError } from "@/shared/kernel/errors";
+import { Prisma } from "@prisma/client";
+import { NextRequest, NextResponse } from "next/server";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -18,7 +20,7 @@ export async function GET(_request: NextRequest, { params }: Params) {
   const { id } = await params;
   const project = await getProjectDetail(id, prisma);
   if (!project) {
-    return NextResponse.json({ error: "Project not found." }, { status: 404 });
+    return appErrorResponse(new AppError(projectErrors.projectDetailNotFound));
   }
   return NextResponse.json(project);
 }
@@ -53,15 +55,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     });
     if (result.kind === "not-found") return projectNotFoundResponse();
     if (result.kind === "confirmation-required") {
-      return NextResponse.json(
-        {
-          error: "Confirm completion while unfinished tasks remain.",
-          code: "CONFLICT",
-          field: "status",
-          requiresConfirmation: true
-        },
-        { status: 409 }
-      );
+      return appErrorResponse(new AppError(projectErrors.confirmCompletionWhileUnfinishedTasksRemain));
     }
     return NextResponse.json(result.detail);
   } catch (error) {
@@ -74,14 +68,7 @@ export async function DELETE(request: NextRequest, { params }: Params) {
   try {
     const id = parseProjectPathId(rawId, "id", "Project");
     if (request.nextUrl.searchParams.get("confirm") !== "true") {
-      return NextResponse.json(
-        {
-          error: "Project deletion requires confirmation.",
-          code: "VALIDATION_ERROR",
-          field: "confirm"
-        },
-        { status: 400 }
-      );
+      return appErrorResponse(new AppError(projectErrors.projectDeletionRequiresConfirmation));
     }
 
     const existing = await prisma.project.findUnique({
@@ -98,22 +85,14 @@ export async function DELETE(request: NextRequest, { params }: Params) {
 }
 
 function projectNotFoundResponse() {
-  return NextResponse.json(
-    { error: "Project not found.", code: "NOT_FOUND" },
-    { status: 404 }
-  );
+  return appErrorResponse(new AppError(projectErrors.projectNotFound));
 }
 
 function projectMutationErrorResponse(
   error: unknown,
   action: "save" | "delete" = "save"
 ) {
-  if (error instanceof ProjectMutationRequestError) {
-    return NextResponse.json(
-      { error: error.message, code: error.code, field: error.field },
-      { status: error.status }
-    );
-  }
+  if (error instanceof AppError) return appErrorResponse(error);
   if (
     error instanceof Prisma.PrismaClientKnownRequestError &&
     error.code === "P2025"
@@ -124,24 +103,9 @@ function projectMutationErrorResponse(
     error instanceof Prisma.PrismaClientKnownRequestError &&
     error.code === "P2003"
   ) {
-    return NextResponse.json(
-      {
-        error: "A related record changed before the Project could be saved.",
-        code: "CONFLICT"
-      },
-      { status: 409 }
-    );
+    return appErrorResponse(new AppError(projectErrors.aRelatedRecordChangedBeforeTheProjectCouldBeSaved));
   }
 
   console.error(`Project ${action} failed.`, error);
-  return NextResponse.json(
-    {
-      error:
-        action === "delete"
-          ? "Project could not be deleted."
-          : "Project could not be saved.",
-      code: "INTERNAL_ERROR"
-    },
-    { status: 500 }
-  );
+  return appErrorResponse((action === "delete" ? new AppError(projectErrors.projectCouldNotBeDeleted) : new AppError(projectErrors.projectCouldNotBeSaved)));
 }

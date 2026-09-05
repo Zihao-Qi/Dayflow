@@ -1,17 +1,21 @@
 import {
-  requireObject as kernelRequireObject,
-  readJsonBody,
-  parseBoundedInteger as kernelParseBoundedInteger,
-  has,
-  parseRecordId,
-  parseBoundedString,
-  parseNullableLocalDate
-} from "@/shared/kernel/parsing";
-import { parseLocalDate, startOfLocalDay } from "@/lib/dates";
-import {
   ACTIVITY_CATEGORY_MAX_LENGTH,
   DEFAULT_ACTIVITY_CATEGORY
 } from "@/lib/activity-categories";
+import { parseLocalDate, startOfLocalDay } from "@/lib/dates";
+import { appErrorConstructor } from "@/lib/error-compat";
+import { evidenceErrors } from "@/lib/evidence-errors";
+import { requestErrors } from "@/lib/request-errors";
+import { AppError, validation } from "@/shared/kernel/errors";
+import {
+  has,
+  parseBoundedInteger as kernelParseBoundedInteger,
+  requireObject as kernelRequireObject,
+  parseBoundedString,
+  parseNullableLocalDate,
+  parseRecordId,
+  readJsonBody
+} from "@/shared/kernel/parsing";
 
 export const ACTIVITY_DURATION_MAX_MINUTES = 1_440;
 export { ACTIVITY_CATEGORY_MAX_LENGTH };
@@ -24,16 +28,15 @@ export type EvidenceMutationErrorCode =
   | "INVALID_JSON"
   | "VALIDATION_ERROR";
 
-export class EvidenceMutationRequestError extends Error {
-  constructor(
+/** @deprecated Compatibility constructor for existing callers; returns AppError. */
+export const EvidenceMutationRequestError = appErrorConstructor(
+  (
     message: string,
-    readonly field: string,
-    readonly code: EvidenceMutationErrorCode = "VALIDATION_ERROR"
-  ) {
-    super(message);
-    this.name = "EvidenceMutationRequestError";
-  }
-}
+    field: string,
+    code: EvidenceMutationErrorCode = "VALIDATION_ERROR"
+  ) => new AppError({ status: 400, message, code, field })
+);
+export type EvidenceMutationRequestError = AppError;
 
 export type ActivityCreateMutation = {
   startedAt: Date;
@@ -69,9 +72,8 @@ export async function readEvidenceMutationBody(request: {
   const body = await readJsonBody(
     request,
     "body",
-    "Request body must be valid JSON.",
-    (message, field) =>
-      new EvidenceMutationRequestError(message, field, "INVALID_JSON")
+    requestErrors.invalidJson.message,
+    () => new AppError(requestErrors.invalidJson)
   );
   return requireObject(body);
 }
@@ -93,7 +95,7 @@ export function parseActivityCreateMutation(
       "durationMinutes",
       1,
       ACTIVITY_DURATION_MAX_MINUTES,
-      `Duration must be between 1 and ${ACTIVITY_DURATION_MAX_MINUTES} minutes.`
+      evidenceErrors.durationMustBeBetween1And1440Minutes.message
     ),
     category: parseActivityCategory(body.category),
     note: parseActivityNote(body.note),
@@ -113,7 +115,7 @@ export function parseActivityReplaceMutation(
       "durationMinutes",
       1,
       ACTIVITY_DURATION_MAX_MINUTES,
-      `Duration must be between 1 and ${ACTIVITY_DURATION_MAX_MINUTES} minutes.`
+      evidenceErrors.durationMustBeBetween1And1440Minutes.message
     ),
     category: parseRequiredActivityCategory(body.category),
     note: parseActivityNote(body.note),
@@ -132,7 +134,7 @@ export function parseDiaryUpsertMutation(
       body.date,
       now,
       "date",
-      "Diary date must be a valid calendar date."
+      evidenceErrors.diaryDateMustBeAValidCalendarDate.message
     ),
     content: parseOptionalText(
       body.content,
@@ -153,7 +155,7 @@ export function parseDiaryUpsertMutation(
 
 function requireObject(value: unknown): JsonObject {
   return kernelRequireObject(
-    value, "body", "Request body must be a JSON object.", validationError
+    value, "body", requestErrors.objectRequired.message, validationError
   );
 }
 
@@ -172,22 +174,16 @@ function parseDate(
 
 function parseActivityDate(value: unknown, now: Date) {
   if (typeof value === "string" && !value.trim()) {
-    throw new EvidenceMutationRequestError(
-      "Activity date is invalid.",
-      "date"
-    );
+    throw new AppError(evidenceErrors.activityDateIsInvalid);
   }
   const date = parseDate(
     value,
     now,
     "date",
-    "Activity date is invalid."
+    evidenceErrors.activityDateIsInvalid.message
   );
   if (date.getTime() > startOfLocalDay(now).getTime()) {
-    throw new EvidenceMutationRequestError(
-      "Activity date cannot be in the future.",
-      "date"
-    );
+    throw new AppError(evidenceErrors.activityDateCannotBeInTheFuture);
   }
   return date;
 }
@@ -205,17 +201,11 @@ function parseActivityTime(value: unknown, now: Date) {
 
 function parseRequiredActivityTime(value: unknown) {
   if (typeof value !== "string") {
-    throw new EvidenceMutationRequestError(
-      "Activity start time is invalid.",
-      "startTime"
-    );
+    throw new AppError(evidenceErrors.activityStartTimeIsInvalid);
   }
   const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(value);
   if (!match) {
-    throw new EvidenceMutationRequestError(
-      "Activity start time is invalid.",
-      "startTime"
-    );
+    throw new AppError(evidenceErrors.activityStartTimeIsInvalid);
   }
   return value;
 }
@@ -229,7 +219,7 @@ function parseRequiredActivityCategory(value: unknown) {
   return parseBoundedString(
     value,
     "category",
-    "Activity category must be text.",
+    evidenceErrors.activityCategoryMustBeText.message,
     validationError,
     {
       maximumLength: ACTIVITY_CATEGORY_MAX_LENGTH,
@@ -244,12 +234,12 @@ function parseActivityNote(value: unknown) {
   return parseBoundedString(
     value,
     "note",
-    "Add a short note about what happened.",
+    evidenceErrors.addAShortNoteAboutWhatHappened.message,
     validationError,
     {
       maximumLength: ACTIVITY_NOTE_MAX_LENGTH,
       lengthMessage: `Activity note must be ${ACTIVITY_NOTE_MAX_LENGTH.toLocaleString("en-US")} characters or fewer.`,
-      emptyMessage: "Add a short note about what happened.",
+      emptyMessage: evidenceErrors.addAShortNoteAboutWhatHappened.message,
       trim: true
     }
   );
@@ -273,10 +263,7 @@ function parseRequiredRelationshipId(
   label: "Task" | "Project"
 ) {
   if (!has(body, field)) {
-    throw new EvidenceMutationRequestError(
-      `${label} relationship is required.`,
-      field
-    );
+    throw validation(`${label} relationship is required.`, field);
   }
   return parseRecordId(
     body[field],
@@ -333,5 +320,5 @@ function parseBoundedInteger(
 }
 
 function validationError(message: string, field: string) {
-  return new EvidenceMutationRequestError(message, field);
+  return validation(message, field);
 }

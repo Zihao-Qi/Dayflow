@@ -1,11 +1,13 @@
-import {
-  requireObject,
-  parseEnum,
-  parseRecordId,
-  parseBoundedString,
-  parseNullableLocalDate
-} from "@/shared/kernel/parsing";
 import { parseLocalDate, startOfLocalDay } from "@/lib/dates";
+import { journalErrors } from "@/lib/journal-errors";
+import { AppError } from "@/shared/kernel/errors";
+import {
+  parseBoundedString,
+  parseEnum,
+  parseNullableLocalDate,
+  parseRecordId,
+  requireObject
+} from "@/shared/kernel/parsing";
 
 export const JOURNAL_PAGE_DEFAULT_LIMIT = 50;
 export const JOURNAL_PAGE_MAX_LIMIT = 100;
@@ -35,16 +37,8 @@ export type JournalErrorCode =
   | "RELATIONSHIP_NOT_FOUND"
   | "ATTRIBUTION_CONFLICT";
 
-export class JournalRequestError extends Error {
-  constructor(
-    public readonly code: JournalErrorCode,
-    message: string,
-    public readonly status = 400
-  ) {
-    super(message);
-    this.name = "JournalRequestError";
-  }
-}
+/** @deprecated Compatibility constructor for existing callers; returns AppError. */
+export { AppError as JournalRequestError };
 
 export type NoteCreateInput = {
   content: string;
@@ -77,7 +71,7 @@ export function parseNoteCreateInput(
   const content = parseRequiredString(
     body.content,
     "content",
-    "Write something before saving this note.",
+    journalErrors.writeSomethingBeforeSavingThisNote.message,
     "Note content",
     NOTE_CONTENT_MAX_LENGTH
   );
@@ -126,30 +120,21 @@ export function parseJournalPage(
 ) {
   const limitValues = searchParams.getAll("limit");
   if (limitValues.length > 1) {
-    throw new JournalRequestError(
-      "VALIDATION_ERROR",
-      "Provide only one page limit."
-    );
+    throw new AppError(journalErrors.provideOnlyOnePageLimit);
   }
 
   const rawLimit = limitValues[0];
   let limit = JOURNAL_PAGE_DEFAULT_LIMIT;
   if (rawLimit !== undefined) {
     if (!/^[1-9]\d*$/.test(rawLimit)) {
-      throw new JournalRequestError(
-        "VALIDATION_ERROR",
-        "Page limit must be a positive whole number."
-      );
+      throw new AppError(journalErrors.pageLimitMustBeAPositiveWholeNumber);
     }
     limit = Math.min(Number(rawLimit), JOURNAL_PAGE_MAX_LIMIT);
   }
 
   const cursorValues = searchParams.getAll("cursor");
   if (cursorValues.length > 1) {
-    throw new JournalRequestError(
-      "INVALID_CURSOR",
-      "Provide only one pagination cursor."
-    );
+    throw new AppError(journalErrors.provideOnlyOnePaginationCursor);
   }
 
   return {
@@ -170,18 +155,18 @@ export function encodeJournalCursor(
     JSON.stringify(
       queryScope
         ? {
-            version: 2,
-            kind,
-            scope: queryScope,
-            createdAt: value.createdAt.toISOString(),
-            id: value.id
-          }
+          version: 2,
+          kind,
+          scope: queryScope,
+          createdAt: value.createdAt.toISOString(),
+          id: value.id
+        }
         : {
-            version: 1,
-            kind,
-            createdAt: value.createdAt.toISOString(),
-            id: value.id
-          }
+          version: 1,
+          kind,
+          createdAt: value.createdAt.toISOString(),
+          id: value.id
+        }
     ),
     "utf8"
   ).toString("base64url");
@@ -227,10 +212,7 @@ export function decodeJournalCursor(
 
     return { createdAt, id };
   } catch {
-    throw new JournalRequestError(
-      "INVALID_CURSOR",
-      "The pagination cursor is invalid."
-    );
+    throw new AppError(journalErrors.thePaginationCursorIsInvalid);
   }
 }
 
@@ -303,26 +285,17 @@ function parseJournalDate(value: unknown, now: Date, errorMessage: string) {
 export function normalizeNoteTags(value: unknown) {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) {
-    throw new JournalRequestError(
-      "VALIDATION_ERROR",
-      "Note tags must be an array of text values."
-    );
+    throw new AppError(journalErrors.noteTagsMustBeAnArrayOfTextValues);
   }
   if (value.length > NOTE_TAG_MAX_COUNT) {
-    throw new JournalRequestError(
-      "VALIDATION_ERROR",
-      `A note can have at most ${NOTE_TAG_MAX_COUNT} tags.`
-    );
+    throw new AppError(journalErrors.aNoteCanHaveAtMost20Tags);
   }
 
   const tags: string[] = [];
   const seen = new Set<string>();
   for (const rawTag of value) {
     if (typeof rawTag !== "string") {
-      throw new JournalRequestError(
-        "VALIDATION_ERROR",
-        "Note tags must contain only text values."
-      );
+      throw new AppError(journalErrors.noteTagsMustContainOnlyTextValues);
     }
     const tag = rawTag
       .normalize("NFKC")
@@ -336,10 +309,7 @@ export function normalizeNoteTags(value: unknown) {
       tag.length > NOTE_TAG_MAX_LENGTH ||
       /[\u0000-\u001f\u007f]/.test(tag)
     ) {
-      throw new JournalRequestError(
-        "VALIDATION_ERROR",
-        `Each note tag must be ${NOTE_TAG_MAX_LENGTH} characters or fewer.`
-      );
+      throw new AppError(journalErrors.eachNoteTagMustBe50CharactersOrFewer);
     }
     if (!seen.has(tag)) {
       tags.push(tag);
@@ -353,7 +323,7 @@ function parseMaterialUrl(value: unknown) {
   const url = parseRequiredString(
     value,
     "url",
-    "Add a URL before saving this reference.",
+    journalErrors.addAURLBeforeSavingThisReference.message,
     "Material URL",
     MATERIAL_URL_MAX_LENGTH
   );
@@ -367,10 +337,7 @@ function parseMaterialUrl(value: unknown) {
       throw new Error("Unsupported URL");
     }
   } catch {
-    throw new JournalRequestError(
-      "VALIDATION_ERROR",
-      "Material URL must be a valid http or https URL."
-    );
+    throw new AppError(journalErrors.materialURLMustBeAValidHttpOrHttpsURL);
   }
   return url;
 }
@@ -411,5 +378,5 @@ export function inferMaterialTitle(type: MaterialType) {
 }
 
 function validationError(message: string) {
-  return new JournalRequestError("VALIDATION_ERROR", message);
+  return new AppError({ status: 400, code: "VALIDATION_ERROR", message });
 }

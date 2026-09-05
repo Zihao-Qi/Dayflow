@@ -1,20 +1,22 @@
+import { appErrorConstructor } from "@/lib/error-compat";
+import { evidenceErrors } from "@/lib/evidence-errors";
+import { AppError } from "@/shared/kernel/errors";
 import type { Prisma } from "@prisma/client";
 
 export type EvidenceAttributionErrorCode =
   | "RELATIONSHIP_NOT_FOUND"
   | "ATTRIBUTION_CONFLICT";
 
-export class EvidenceAttributionError extends Error {
-  constructor(
+/** @deprecated Compatibility constructor for existing callers; returns AppError. */
+export const EvidenceAttributionError = appErrorConstructor(
+  (
     message: string,
-    readonly code: EvidenceAttributionErrorCode,
-    readonly field: "taskId" | "projectId",
-    readonly status: 404 | 409
-  ) {
-    super(message);
-    this.name = "EvidenceAttributionError";
-  }
-}
+    code: EvidenceAttributionErrorCode,
+    field: "taskId" | "projectId",
+    status: 404 | 409
+  ) => new AppError({ status, message, code, field })
+);
+export type EvidenceAttributionError = AppError;
 
 type EvidenceAttributionClient = Pick<
   Prisma.TransactionClient,
@@ -36,21 +38,11 @@ export async function resolveTaskProjectAttribution(
       select: { id: true, projectId: true }
     });
     if (!task) {
-      throw new EvidenceAttributionError(
-        "The linked task could not be found.",
-        "RELATIONSHIP_NOT_FOUND",
-        "taskId",
-        404
-      );
+      throw new AppError(evidenceErrors.theLinkedTaskCouldNotBeFound);
     }
     if (task.projectId) {
       if (projectId && projectId !== task.projectId) {
-        throw new EvidenceAttributionError(
-          "The selected task belongs to a different project.",
-          "ATTRIBUTION_CONFLICT",
-          "projectId",
-          409
-        );
+        throw new AppError(evidenceErrors.theSelectedTaskBelongsToADifferentProject);
       }
       projectId = null;
       attributedProjectId = task.projectId;
@@ -63,12 +55,7 @@ export async function resolveTaskProjectAttribution(
       select: { id: true }
     });
     if (!project) {
-      throw new EvidenceAttributionError(
-        "The linked project could not be found.",
-        "RELATIONSHIP_NOT_FOUND",
-        "projectId",
-        404
-      );
+      throw new AppError(evidenceErrors.theLinkedProjectCouldNotBeFound);
     }
   }
 

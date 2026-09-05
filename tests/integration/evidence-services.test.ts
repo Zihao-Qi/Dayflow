@@ -179,22 +179,21 @@ test("evidence services run headlessly on SQLite", async context => {
       });
     });
 
-    await context.test("Focus completion and enrichment rows match the current upserts byte for byte", async () => {
-      // Freeze only database-generated metadata, allowing full-row byte comparisons.
+    await context.test("Focus completion and enrichment persist independently specified rows", async () => {
+      // Freeze database-generated metadata so every persisted field can be asserted.
       const stable = (tx: Prisma.TransactionClient) => ({ ...tx, activityEntry: { ...tx.activityEntry,
         upsert: (args: Prisma.ActivityEntryUpsertArgs) => tx.activityEntry.upsert({ ...args,
           create: { ...args.create, id: "focus-parity", createdAt: now, updatedAt: now },
           update: Object.keys(args.update).length ? { ...args.update, updatedAt: now } : args.update
         })
       } }) as unknown as Prisma.TransactionClient;
-      const { transitionFocusSession } = await import("../../src/lib/focus-sessions");
       for (const taskId of [task.id, null]) {
         for (const enrich of [false, true]) {
           for (const existing of [false, true]) {
             const session = await prisma.focusSession.create({ data: {
               kind: "FOCUS", plannedMinutes: 25, actualMinutes: 3,
               startedAt: new Date(now.getTime() - 3 * 60_000), taskId, projectId: other.id,
-              label: "Session label", status: enrich ? "COMPLETED" : "RUNNING", activeKey: enrich ? null : 1
+              label: "Session label", status: "COMPLETED", activeKey: null
             }, include: { task: true } });
             const seed = async () => {
               if (existing) await prisma.activityEntry.create({ data: { id: "focus-parity", createdAt: now, updatedAt: now,
@@ -202,24 +201,31 @@ test("evidence services run headlessly on SQLite", async context => {
                 origin: "FOCUS", focusSessionId: session.id, attributedProjectId: other.id } });
             };
             await seed();
-            // Execute the unchanged legacy focus path against the seeded session.
-            const originalTransaction = prisma.$transaction;
-            const execute = prisma.$transaction.bind(prisma);
-            (prisma as unknown as { $transaction: unknown }).$transaction =
-              (run: (tx: Prisma.TransactionClient) => Promise<unknown>) => execute(tx => run(stable(tx)));
-            try {
-              await transitionFocusSession(session.id, enrich ? "enrich" : "complete",
-                enrich ? { category: "Learning", note: "Enriched note" } : {}, now);
-            } finally {
-              (prisma as unknown as { $transaction: unknown }).$transaction = originalTransaction;
-            }
-            const expected = await prisma.activityEntry.findUniqueOrThrow({ where: { focusSessionId: session.id } });
-            await prisma.activityEntry.delete({ where: { id: expected.id } });
-            await seed();
+            // Specify the contract directly: completion preserves existing evidence;
+            // enrichment changes only its category/note. New rows use session values
+            // and prefer the Task's Project over the session's direct Project.
+            const expected = {
+              id: "focus-parity",
+              startedAt: new Date(existing ? "2026-08-01T09:00:00-05:00" : "2026-09-04T11:57:00-05:00"),
+              durationMinutes: existing ? 17 : 3,
+              category: enrich ? "Learning" : existing ? "Health" : "Deep Work",
+              note: enrich ? "Enriched note" : existing ? "Historical" : taskId ? "Task title" : "Session label",
+              origin: "FOCUS",
+              taskId: existing ? null : taskId,
+              projectId: existing || taskId ? null : other.id,
+              attributedProjectId: existing || !taskId ? other.id : project.id,
+              focusSessionId: session.id,
+              createdAt: now,
+              updatedAt: now
+            };
             const actual = await prisma.$transaction(tx => enrich
               ? enrichFocusActivity(stable(tx), session.id, { ...session, category: "Learning", note: "Enriched note" })
               : recordFocusActivity(stable(tx), session));
-            assert.equal(JSON.stringify(actual), JSON.stringify(expected));
+            const scenario = `task=${Boolean(taskId)}, enrich=${enrich}, existing=${existing}`;
+            assert.deepEqual(actual, expected, scenario);
+            assert.deepEqual(await prisma.activityEntry.findUniqueOrThrow({
+              where: { focusSessionId: session.id }
+            }), expected, `persisted ${scenario}`);
             await prisma.activityEntry.delete({ where: { id: actual.id } });
           }
         }

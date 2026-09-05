@@ -18,8 +18,9 @@ means a test already pinned the full status and parsed body before Phase 0;
 “New” means this characterization added that pin.
 Every row names its route and test explicitly. Backup inventory rows use real
 invalid requests or disposable-storage route cases to establish reachability.
-Defensive injected backup and Project-create Prisma serializers appear only in
-Appendix A; they are not part of the reachable HTTP inventory.
+Defensive injected backup, Project-create Prisma, Focus, focus-queue, and
+fieldless Time Block serializers appear only in Appendix A; they are not part
+of the reachable HTTP inventory.
 
 Activity POST mutation-id, receipt, and attribution rows use real request inputs
 and transaction delegates that return missing relationships, conflicting attribution,
@@ -164,7 +165,6 @@ uses an exception injected into `headers.get`. See Appendix A for those pins.
 | `PUT /api/time-blocks/:id` | Unexpected failure | 500 | `{"error":"Time Block could not be saved.","code":"INTERNAL_ERROR"}` | `code`; no `field` | `tests/unit/time-block-route-contracts.test.ts` — “Time Block error mapping pins idempotency, domain, Prisma, and fallback envelopes” | New |
 | `DELETE /api/time-blocks/:id` | Unexpected failure | 500 | `{"error":"Time Block could not be deleted.","code":"INTERNAL_ERROR"}` | `code`; no `field` | `tests/unit/time-block-route-contracts.test.ts` — “Time Block error mapping pins idempotency, domain, Prisma, and fallback envelopes” | New |
 | `POST /api/focus-queue` | Invalid placement | 400 | `{"error":"Queue placement must be next or end.","code":"VALIDATION_ERROR","field":"placement"}` | `code`, `field` | `tests/unit/workflow-route-contracts.test.ts` — “workflow routes expose typed validation fields before persistence” | Existing |
-| `POST /api/focus-queue` | Defensive `FocusQueueError`; bad placement example | 400 | `{"error":"Queue placement must be next or end.","code":"VALIDATION_ERROR"}` | `code`; no `field` | `tests/unit/workflow-route-contracts.test.ts` — “Focus queue pins not-found, conflict, and fallback envelopes” | New |
 | `POST /api/focus-queue` | Task missing | 404 | `{"error":"Task not found.","code":"NOT_FOUND","field":"taskId"}` | `code`, `field` | `tests/unit/workflow-route-contracts.test.ts` — “Focus queue pins not-found, conflict, and fallback envelopes” | New |
 | `POST /api/focus-queue` | Task already completed | 409 | `{"error":"Completed tasks cannot be queued.","code":"CONFLICT"}` | `code`; no `field` | `tests/unit/workflow-route-contracts.test.ts` — “Focus queue pins not-found, conflict, and fallback envelopes” | New |
 | `PATCH /api/focus-queue` | Expected queue order is stale | 409 | `{"error":"Queue order is out of date. Refresh and try again.","code":"CONFLICT"}` | `code`; no `field` | `tests/unit/workflow-route-contracts.test.ts` — “Focus queue pins not-found, conflict, and fallback envelopes” | New |
@@ -190,7 +190,7 @@ uses an exception injected into `headers.get`. See Appendix A for those pins.
 | `DELETE /api/projects/:id` | Missing `confirm=true` | 400 | `{"error":"Project deletion requires confirmation.","code":"VALIDATION_ERROR","field":"confirm"}` | `code`, `field` | `tests/unit/project-route-contracts.test.ts` — “Project deletion requires a typed confirmation response” | Existing |
 | `DELETE /api/projects/:id` | Project absent or Prisma `P2025` | 404 | `{"error":"Project not found.","code":"NOT_FOUND"}` | `code`; no `field` | `tests/unit/project-route-contracts.test.ts` — “Project and Phase item routes pin P2025, P2003, confirmation, and fallbacks” | New |
 | `DELETE /api/projects/:id` | Prisma `P2003` | 409 | `{"error":"A related record changed before the Project could be saved.","code":"CONFLICT"}` | `code`; no `field` | `tests/unit/project-route-contracts.test.ts` — “Project and Phase item routes pin P2025, P2003, confirmation, and fallbacks” | New |
-| `DELETE /api/projects/:id` | Unexpected failure | 500 | `{"error":"Project could not be deleted.","code":"INTERNAL_ERROR"}` | `code`; no `field` | `tests/unit/project-route-contracts.test.ts` — “Project and Phase item routes pin P2025, P2003, confirmation, and fallbacks” | New |
+| `DELETE /api/projects/:id` | Unexpected failure | 500 | `{"error":"Project could not be deleted.","code":"INTERNAL_ERROR"}` | `code`; no `field` | `tests/unit/project-route-contracts.test.ts` — “Project and Phase item routes pin P2025, P2003, confirmation, and fallbacks”; `tests/integration/transactional-workflows.test.ts` — “Project deletion rolls back every detachment when the final delete fails” (real final-delete constraint failure) | New |
 | `POST /api/projects/:id/phases` | Invalid mutation id | 400 | `{"error":"X-Dayflow-Mutation-Id must contain 1 to 128 characters.","code":"INVALID_MUTATION_ID"}` | `code`; no `field` | `tests/unit/project-route-contracts.test.ts` — “Project and Phase creates validate mutation identifiers before writing” | Existing |
 | `POST /api/projects/:id/phases` | Parent Project absent | 404 | `{"error":"The selected project could not be found.","code":"NOT_FOUND","field":"projectId"}` | `code`, `field` | `tests/unit/project-route-contracts.test.ts` — “Project and Phase create pin Prisma and internal envelopes” | New |
 | `POST /api/projects/:id/phases` | Parent Project completed | 409 | `{"error":"Reopen the completed project before adding unfinished work.","code":"RELATIONSHIP_CONFLICT","field":"projectId"}` | `code`, `field` | `tests/unit/project-route-contracts.test.ts` — “Project and Phase create pin Prisma and internal envelopes” | New |
@@ -321,9 +321,6 @@ when a relationship or validation condition is field-specific.
 | `GET /api/materials` | Invalid cursor | 400 | `{"code":"INVALID_CURSOR","error":"The pagination cursor is invalid."}` | `code`; no `field` | `tests/unit/journal-route-contracts.test.ts` — “Journal GET routes pin Notes validation and Materials cursor errors” | New |
 | `GET /api/review/history` | limit=0 | 400 | `{"error":"Page limit must be a whole number between 1 and 100.","code":"VALIDATION_ERROR"}` | `code`; no `field` | `tests/unit/review-route-contracts.test.ts` — “Review History GET pins query validation without a field” | New |
 | `POST /api/materials` | Selected Task belongs to another Project | 409 | `{"code":"ATTRIBUTION_CONFLICT","error":"The selected task belongs to a different project."}` | `code`; no `field` | `tests/unit/journal-route-contracts.test.ts` — “Materials POST pins receipt and attribution bodies through its handler” | New |
-| `PUT /api/time-blocks/:id` | Injected fieldless TimeBlockError (defensive mapper branch) | 404 | `{"error":"Time Block not found.","code":"NOT_FOUND"}` | `code`; no `field` | `tests/unit/time-block-route-contracts.test.ts` — “Time Block error mapping pins idempotency, domain, Prisma, and fallback envelopes” | New |
-| `POST /api/focus-session` | Injected FocusSessionError (preempted by request validation) | 400 | `{"error":"Timer duration must be between 1 and 240 minutes.","code":"VALIDATION_ERROR"}` | `code`; no `field` | `tests/unit/workflow-route-contracts.test.ts` — “Focus handlers preserve defensive fieldless validation envelopes” | New |
-| `PATCH /api/focus-session/:id` | Injected FocusSessionError (preempted by request validation) | 400 | `{"error":"Unknown timer action.","code":"VALIDATION_ERROR"}` | `code`; no `field` | `tests/unit/workflow-route-contracts.test.ts` — “Focus handlers preserve defensive fieldless validation envelopes” | New |
 | `PATCH /api/focus-queue` | Duplicate ids | 400 | `{"error":"Task identifiers must not contain duplicates.","code":"VALIDATION_ERROR","field":"ids"}` | `code`, `field` | `tests/unit/workflow-route-contracts.test.ts` — “Focus queue PATCH and DELETE pin their validation and fallback bodies” | New |
 | `DELETE /api/focus-queue` | Empty taskId | 400 | `{"error":"Task identifier is invalid.","code":"VALIDATION_ERROR","field":"taskId"}` | `code`, `field` | `tests/unit/workflow-route-contracts.test.ts` — “Focus queue PATCH and DELETE pin their validation and fallback bodies” | New |
 | `POST /api/tasks` | Completed Project with unfinished Task | 409 | `{"error":"Reopen the completed project before adding unfinished work.","code":"RELATIONSHIP_CONFLICT","field":"projectId"}` | `code`, `field` | `tests/unit/task-route-contracts.test.ts` — “Task POST and PATCH pin each placement error independently” | New |
@@ -333,11 +330,11 @@ when a relationship or validation condition is field-specific.
 
 ## Findings
 
-- `GET /api/agent-export` is a complete-data export and currently returns a
-  directly planted future-dated Activity, while bootstrap and day reads filter
-  future evidence. Phase 0 pins that current behavior in
-  `tests/integration/read-model-invariants.test.ts`; production behavior was
-  not changed.
+- `GET /api/agent-export` includes every stored Activity with no date cutoff,
+  preserving README's complete-export contract and the route's metadata.
+  The read-model fixture pins historical, current-day, and tomorrow's Activities
+  in ascending order. Bootstrap returns only the current half-open local day,
+  including its last millisecond and excluding tomorrow at midnight.
 - `GET /api/projects/:id` and two `DELETE /api/activities/:id` branches omit
   both `code` and `field`. This is intentional characterization, not a
   normalization.
@@ -348,19 +345,49 @@ when a relationship or validation condition is field-specific.
   409 conflicts. Prisma `P2025` likewise means 404 for Task/Project/Phase/Time
   Block item writes but 409 for Focus transitions, Activity deletes, Task
   reorder, and schedule undo.
-- Bootstrap filters evidence by local calendar day, not by the current instant.
-  The invariant fixture now fixes September 4 at noon in America/Chicago, so
-  its existing timestamp assertion is deterministic even before 09:00.
+- Bootstrap bounds Activity evidence by local calendar day, not by the current
+  instant. The invariant fixture fixes September 4 at noon in America/Chicago
+  and retains later-today evidence. Agent export has no date cutoff.
 - Notes reject `limit=0` with “Page limit must be a positive whole number.”;
   Review History uses “Page limit must be a whole number between 1 and 100.”
   Both omit `field`. Their distinct HTTP bodies are pinned above.
-- The fieldless Time Block domain-error arm and the two fieldless Focus
-  validation arms are defensive serializer contracts. Current Time Block
-  throw sites supply fields, and Focus request validation normally preempts
-  its domain validation. Injected errors pin these arms without claiming a
-  new user-triggerable failure.
+- The fieldless Time Block domain-error arm, two fieldless Focus validation
+  arms, and fieldless focus-queue validation arm are defensive serializer
+  contracts documented in Appendix A. Their mapper tests remain unchanged.
 
 ## Appendix A — Defensive serializers (not reachable inventory)
+
+### Focus, focus queue, and neighboring Time Block serializer
+
+These four rows are serializer pins, not reachable HTTP envelopes:
+
+- Focus POST calls `parseFocusSessionStartMutation` before `startFocusSession`.
+  Its integer range check rejects invalid `plannedMinutes` with a field-bearing
+  `WorkflowMutationRequestError`; the service's same range check is preempted.
+  The mapper test instead makes `$transaction` throw a constructed error.
+- Focus PATCH calls `parseFocusSessionTransitionMutation` before
+  `transitionFocusSession`. Its action enum rejects unknown actions with
+  `field: "action"`; every accepted action has a service branch (`record` aliases
+  `enrich`). The mapper test injects the fieldless error through `findUnique`.
+- Focus-queue POST calls `parseFocusQueueAddMutation`, whose placement enum
+  produces `field: "placement"`. The only production `new FocusQueueError`
+  is in `parseQueuePlacement`, which no handler calls. The mapper test replaces
+  `$transaction` with a thrower. Neighboring missing-Task and completed-Task
+  responses come from real guards in `addToFocusQueue`; stale order comes from
+  `reorderFocusQueue`. Those reachable rows remain above.
+- The neighboring Time Block PUT fieldless 404 has the same problem. All
+  `TimeBlockError` constructors in `time-blocks.ts` and
+  `time-block-persistence.ts` supply fields; the missing-row guard uses `id`,
+  as does the `P2025` mapper in `time-block-http.ts`. The cited test constructs
+  a fieldless error and injects it via the transaction. Field-bearing missing
+  row, relationship, parser, and overlap responses remain reachable.
+
+| Route and method | Injected error (not an HTTP trigger) | Status | Exact JSON body | Keys | Contract test | Pin |
+| --- | --- | ---: | --- | --- | --- | --- |
+| `POST /api/focus-queue` | Defensive `FocusQueueError`; bad placement example | 400 | `{"error":"Queue placement must be next or end.","code":"VALIDATION_ERROR"}` | `code`; no `field` | `tests/unit/workflow-route-contracts.test.ts` — “Focus queue pins not-found, conflict, and fallback envelopes” | New |
+| `PUT /api/time-blocks/:id` | Injected fieldless TimeBlockError (defensive mapper branch) | 404 | `{"error":"Time Block not found.","code":"NOT_FOUND"}` | `code`; no `field` | `tests/unit/time-block-route-contracts.test.ts` — “Time Block error mapping pins idempotency, domain, Prisma, and fallback envelopes” | New |
+| `POST /api/focus-session` | Injected FocusSessionError (preempted by request validation) | 400 | `{"error":"Timer duration must be between 1 and 240 minutes.","code":"VALIDATION_ERROR"}` | `code`; no `field` | `tests/unit/workflow-route-contracts.test.ts` — “Focus handlers preserve defensive fieldless validation envelopes” | New |
+| `PATCH /api/focus-session/:id` | Injected FocusSessionError (preempted by request validation) | 400 | `{"error":"Unknown timer action.","code":"VALIDATION_ERROR"}` | `code`; no `field` | `tests/unit/workflow-route-contracts.test.ts` — “Focus handlers preserve defensive fieldless validation envelopes” | New |
 
 ### Project creation
 

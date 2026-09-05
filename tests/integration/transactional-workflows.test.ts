@@ -501,6 +501,95 @@ test("seeded transactional workflow conflicts preserve their invariants", async 
     );
 
     await context.test(
+      "Project deletion rolls back every detachment when the final delete fails",
+      async (deletionContext) => {
+        const project = await prisma.project.create({ data: { name: "Rollback deletion" } });
+        const phase = await prisma.projectPhase.create({
+          data: { projectId: project.id, name: "Keep phase" }
+        });
+        const task = await prisma.task.create({
+          data: { title: "Keep relationships", projectId: project.id, phaseId: phase.id }
+        });
+        const note = await prisma.note.create({
+          data: { content: "Keep note", date: new Date(), projectId: project.id }
+        });
+        const material = await prisma.material.create({
+          data: { title: "Keep material", url: "https://example.com/keep", projectId: project.id }
+        });
+        const activity = await prisma.activityEntry.create({
+          data: {
+            startedAt: new Date(), durationMinutes: 10, category: "Work",
+            note: "Keep direct evidence", projectId: project.id, attributedProjectId: project.id
+          }
+        });
+        const attributedActivity = await prisma.activityEntry.create({
+          data: {
+            startedAt: new Date(), durationMinutes: 5, category: "Work",
+            note: "Keep attributed evidence", taskId: task.id, attributedProjectId: project.id
+          }
+        });
+        const readState = async () => ({
+          projects: await prisma.project.findMany({ orderBy: { id: "asc" } }),
+          phases: await prisma.projectPhase.findMany({ orderBy: { id: "asc" } }),
+          tasks: await prisma.task.findMany({ orderBy: { id: "asc" } }),
+          activities: await prisma.activityEntry.findMany({ orderBy: { id: "asc" } }),
+          notes: await prisma.note.findMany({ orderBy: { id: "asc" } }),
+          materials: await prisma.material.findMany({ orderBy: { id: "asc" } }),
+          sessions: await prisma.focusSession.findMany({ orderBy: { id: "asc" } })
+        });
+        const before = await readState();
+        const sqlId = (id: string) => id.replaceAll("'", "''");
+        // Fail this final delete only after all four detachment writes are visible.
+        // A real NOT NULL violation yields P2011/HTTP 500; the transaction must
+        // undo the preceding statements, not just the failed delete statement.
+        await prisma.$executeRawUnsafe(`
+          CREATE TABLE deletion_failure_probe (injected_final_project_delete_failure TEXT NOT NULL);
+        `);
+        await prisma.$executeRawUnsafe(`
+          CREATE TRIGGER abort_final_project_delete
+          BEFORE DELETE ON "Project"
+          WHEN OLD.id = '${sqlId(project.id)}'
+            AND EXISTS (SELECT 1 FROM "Task" WHERE id = '${sqlId(task.id)}'
+              AND projectId IS NULL AND phaseId IS NULL)
+            AND EXISTS (SELECT 1 FROM "ActivityEntry" WHERE id = '${sqlId(activity.id)}'
+              AND projectId IS NULL AND attributedProjectId IS NULL)
+            AND EXISTS (SELECT 1 FROM "ActivityEntry" WHERE id = '${sqlId(attributedActivity.id)}'
+              AND projectId IS NULL AND attributedProjectId IS NULL)
+            AND EXISTS (SELECT 1 FROM "Note" WHERE id = '${sqlId(note.id)}' AND projectId IS NULL)
+            AND EXISTS (SELECT 1 FROM "Material" WHERE id = '${sqlId(material.id)}' AND projectId IS NULL)
+          BEGIN
+            INSERT INTO deletion_failure_probe (injected_final_project_delete_failure) VALUES (NULL);
+          END;
+        `);
+        const errors = deletionContext.mock.method(console, "error", () => undefined);
+        try {
+          const response = await deleteProject(
+            new NextRequest(`http://localhost/api/projects/${project.id}?confirm=true`, {
+              method: "DELETE"
+            }),
+            params(project.id)
+          );
+          assert.equal(response.status, 500);
+          assert.deepEqual(await response.json(), {
+            error: "Project could not be deleted.", code: "INTERNAL_ERROR"
+          });
+          assert.match(
+            errors.mock.calls.map((call) => call.arguments.map(String).join(" ")).join("\n"),
+            /injected_final_project_delete_failure/,
+            "the delete must fail after observing Task, Activity, Note, and Material detachments"
+          );
+          assert.deepEqual(
+            await readState(), before,
+            "every row, relationship, and timestamp must survive the failed Project delete unchanged"
+          );
+        } finally {
+          await prisma.$executeRawUnsafe("DROP TRIGGER abort_final_project_delete");
+          await prisma.$executeRawUnsafe("DROP TABLE deletion_failure_probe");
+        }
+      }
+    );
+
+    await context.test(
       "Activity replace and delete protect Focus-origin evidence",
       async () => {
         const session = await prisma.focusSession.create({

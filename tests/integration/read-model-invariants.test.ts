@@ -82,9 +82,25 @@ test("bootstrap and agent export preserve their payload contracts", async (conte
       note: "Current evidence"
     }
   });
+  const lastTodayActivity = await prisma.activityEntry.create({
+    data: {
+      startedAt: new Date(tomorrow.getTime() - 1),
+      durationMinutes: 5,
+      category: "Work",
+      note: "Last instant of today's evidence"
+    }
+  });
+  const historicalActivity = await prisma.activityEntry.create({
+    data: {
+      startedAt: yesterday,
+      durationMinutes: 5,
+      category: "Work",
+      note: "Historical evidence stays in export"
+    }
+  });
   const futureActivity = await prisma.activityEntry.create({
     data: {
-      startedAt: new Date(tomorrow.getTime() + 9 * 60 * 60 * 1000),
+      startedAt: tomorrow,
       durationMinutes: 20,
       category: "Deep Work",
       note: "Future planted evidence"
@@ -119,12 +135,12 @@ test("bootstrap and agent export preserve their payload contracts", async (conte
       ]);
       assert.deepEqual(
         body.activities.map((activity: { id: string }) => activity.id),
-        [currentActivity.id]
+        [lastTodayActivity.id, currentActivity.id]
       );
       assert.equal(
         body.activities.some(
           (activity: { startedAt: string }) =>
-            new Date(activity.startedAt).getTime() > Date.now()
+            new Date(activity.startedAt).getTime() >= tomorrow.getTime()
         ),
         false
       );
@@ -147,7 +163,7 @@ test("bootstrap and agent export preserve their payload contracts", async (conte
   );
 
   await context.test(
-    "agent export has the exact top-level keys and decodes tags without moving Tasks",
+    "agent export includes all stored Activities and decodes tags without moving Tasks",
     async () => {
       const response = await loadAgentExport();
       assert.equal(response.status, 200);
@@ -193,7 +209,12 @@ test("bootstrap and agent export preserve their payload contracts", async (conte
           (activity: { id: string }) => activity.id === futureActivity.id
         ),
         true,
-        "the complete agent export currently includes directly planted future evidence"
+        "agent export must include stored evidence starting on the next local day"
+      );
+      assert.deepEqual(
+        body.activities.map((activity: { id: string }) => activity.id),
+        [historicalActivity.id, currentActivity.id, lastTodayActivity.id, futureActivity.id],
+        "export includes every stored Activity in ascending order with no date cutoff"
       );
     }
   );

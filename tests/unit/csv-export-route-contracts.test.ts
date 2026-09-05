@@ -6,16 +6,20 @@ import {
   isCsvExportFileName,
   parseCsvExportResponseMetadata
 } from "../../src/lib/csv-export-contract";
-import { prisma } from "../../src/lib/prisma";
+import { getPrisma } from "../../src/lib/prisma";
 
 // Route reads now enter a transaction before calling these delegates.
-const originalTransactionRoot = prisma.$transaction;
+let originalTransactionRoot: ReturnType<typeof getPrisma>["$transaction"];
 beforeEach(() => {
+  const prisma = getPrisma();
+  originalTransactionRoot = prisma.$transaction;
   (prisma as unknown as { $transaction: unknown }).$transaction = async (
     operation: (tx: typeof prisma) => unknown
   ) => operation(prisma);
 });
-afterEach(() => { prisma.$transaction = originalTransactionRoot; });
+afterEach(() => {
+  getPrisma().$transaction = originalTransactionRoot;
+});
 
 test("CSV export route rejects unsupported kinds without attachment headers", async () => {
   const response = await downloadCsv(
@@ -69,6 +73,7 @@ test("CSV filenames require a real local calendar date", () => {
 });
 
 test("CSV export route pins its internal error envelope", async () => {
+  const prisma = getPrisma();
   const originalFindMany = prisma.task.findMany;
   const originalConsoleError = console.error;
   console.error = () => undefined;

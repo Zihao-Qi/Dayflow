@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { GET } from "../../src/app/api/agent-export/route";
-import { prisma } from "../../src/lib/prisma";
+import { getPrisma } from "../../src/lib/prisma";
 import { clock } from "../../src/lib/time";
 import { frozenClock } from "../../src/shared/kernel/calendar";
 
 test("agent export captures its clock once before reading the database", async (t) => {
+  const prisma = getPrisma();
   const at = frozenClock(new Date("2026-09-04T04:59:59.999Z"));
   const readClock = t.mock.method(clock, "now", () => at.now());
   const originalTransaction = prisma.$transaction;

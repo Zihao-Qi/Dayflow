@@ -3,7 +3,7 @@ import { appErrorConstructor } from "@/lib/error-compat";
 import { suggestedBreakMinutes } from "@/lib/focus-domain";
 import { focusErrors } from "@/lib/focus-errors";
 import { consumeFocusQueueTask } from "@/lib/focus-queue";
-import { prisma } from "@/lib/prisma";
+import { getPrisma } from "@/lib/prisma";
 import { AppError, validation } from "@/shared/kernel/errors";
 import {
   FocusSessionKind,
@@ -30,7 +30,7 @@ const focusSessionInclude = {
 };
 
 export async function getFocusSnapshot(
-  database: Prisma.TransactionClient | typeof prisma,
+  database: Prisma.TransactionClient | ReturnType<typeof getPrisma>,
   now: Date
 ) {
   const { start, end } = sameDayRange(now);
@@ -178,7 +178,7 @@ export async function startFocusSession(
   return createWithActiveSessionGuard(() =>
     transaction
       ? createSession(transaction)
-      : prisma.$transaction(createSession)
+      : getPrisma().$transaction(createSession)
   );
 }
 
@@ -192,7 +192,7 @@ export async function transitionFocusSession(
   } = {},
   now: Date
 ) {
-  const session = await prisma.focusSession.findUnique({
+  const session = await getPrisma().focusSession.findUnique({
     where: { id },
     include: focusSessionInclude
   });
@@ -204,7 +204,7 @@ export async function transitionFocusSession(
     if (session.status !== "RUNNING") {
       throw new AppError(focusErrors.onlyARunningTimerCanBePaused);
     }
-    const paused = await prisma.focusSession.updateMany({
+    const paused = await getPrisma().focusSession.updateMany({
       where: { id, status: "RUNNING", activeKey: 1 },
       data: { status: "PAUSED", pausedAt: now }
     });
@@ -220,7 +220,7 @@ export async function transitionFocusSession(
       0,
       Math.floor((now.getTime() - session.pausedAt.getTime()) / 1000)
     );
-    const resumed = await prisma.focusSession.updateMany({
+    const resumed = await getPrisma().focusSession.updateMany({
       where: { id, status: "PAUSED", activeKey: 1 },
       data: {
         status: "RUNNING",
@@ -236,7 +236,7 @@ export async function transitionFocusSession(
     if (!isActive(session.status)) {
       throw new AppError(focusErrors.thisTimerIsNoLongerActive);
     }
-    const canceled = await prisma.focusSession.updateMany({
+    const canceled = await getPrisma().focusSession.updateMany({
       where: {
         id,
         status: session.status,
@@ -262,7 +262,7 @@ export async function transitionFocusSession(
     const activityNote =
       note || session.task?.title || session.label || "Focus session";
 
-    const activity = await prisma.$transaction(async (transaction) => {
+    const activity = await getPrisma().$transaction(async (transaction) => {
       let persistedActivity = null;
       if (session.actualMinutes >= 1) {
         persistedActivity = await transaction.activityEntry.upsert({
@@ -345,7 +345,7 @@ export async function transitionFocusSession(
       Math.floor(elapsedSeconds / 60)
     );
 
-    const completedSession = await prisma.$transaction(async (transaction) => {
+    const completedSession = await getPrisma().$transaction(async (transaction) => {
       const claimed = await transaction.focusSession.updateMany({
         where: {
           id,

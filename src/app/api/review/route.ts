@@ -1,6 +1,6 @@
 import { clock } from "@/lib/time";
 import { appErrorResponse } from "@/lib/http-errors";
-import { prisma } from "@/lib/prisma";
+import { getPrisma } from "@/lib/prisma";
 import {
   assertCurrentReviewPeriod,
   parseReviewMutation,
@@ -17,7 +17,7 @@ export async function PUT(request: NextRequest) {
     const input = parseReviewMutation(body);
     assertCurrentReviewPeriod(input, now);
 
-    const review = await prisma.review.upsert({
+    const review = await getPrisma().review.upsert({
       where: {
         periodStart_periodEnd: {
           periodStart: input.periodStart,

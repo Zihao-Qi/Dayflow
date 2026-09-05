@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { NextRequest } from "next/server";
 import { GET as getDay } from "../../src/app/api/day/route";
-import { prisma } from "../../src/lib/prisma";
+import { getPrisma } from "../../src/lib/prisma";
 
 test("Day route pins its validation envelope", async () => {
   const response = await getDay(
@@ -17,6 +17,7 @@ test("Day route pins its validation envelope", async () => {
 });
 
 test("Day route pins its internal envelope", async () => {
+  const prisma = getPrisma();
   const originalTask = prisma.task.findFirst;
   const originalActivity = prisma.activityEntry.findFirst;
   const originalBlock = prisma.timeBlock.findFirst;

@@ -16,7 +16,7 @@ import { addDays, localDateKey } from "../../src/lib/dates";
 import { EvidenceAttributionError } from "../../src/lib/evidence-attribution";
 import { EvidenceMutationRequestError } from "../../src/lib/evidence-mutations";
 import { IdempotentMutationError } from "../../src/lib/idempotent-mutations";
-import { prisma } from "../../src/lib/prisma";
+import { getPrisma } from "../../src/lib/prisma";
 
 test("evidence routes return typed malformed-JSON responses", async () => {
   const activityResponse = await createActivity(
@@ -202,6 +202,7 @@ test("Note and Material routes validate mutation identifiers before writing", as
 });
 
 test("Activity error mapping pins every typed and Prisma branch", async () => {
+  const prisma = getPrisma();
   const cases: Array<[unknown, number, Record<string, unknown>]> = [
     [
       new IdempotentMutationError(
@@ -391,6 +392,7 @@ test("Activity error mapping pins every typed and Prisma branch", async () => {
 });
 
 test("Activity delete pins its code-less and conflict envelopes", async () => {
+  const prisma = getPrisma();
   const transaction = prisma.$transaction;
   const originalConsoleError = console.error;
   console.error = () => undefined;
@@ -449,6 +451,7 @@ test("Activity delete pins its code-less and conflict envelopes", async () => {
 });
 
 test("Diary route pins its internal envelope", async () => {
+  const prisma = getPrisma();
   const originalTransaction = prisma.$transaction;
   const originalConsoleError = console.error;
   console.error = () => undefined;

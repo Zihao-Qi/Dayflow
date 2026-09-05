@@ -18,7 +18,7 @@ import { POST as reorderTasks } from "../../src/app/api/tasks/reorder/route";
 import { FocusSessionError } from "../../src/lib/focus-sessions";
 import { FocusQueueError } from "../../src/lib/focus-queue";
 import { mutationRequestHash } from "../../src/lib/idempotent-mutations";
-import { prisma } from "../../src/lib/prisma";
+import { getPrisma } from "../../src/lib/prisma";
 
 test("workflow mutation routes return typed malformed-JSON responses", async () => {
   for (const [route, request] of [
@@ -161,6 +161,7 @@ test("path-based workflow routes reject invalid identifiers before querying", as
 });
 
 test("Focus start pins active-session, P2002, P2003, not-found, and fallback envelopes", async () => {
+  const prisma = getPrisma();
   const originalTransaction = prisma.$transaction;
   const originalConsoleError = console.error;
   console.error = () => undefined;
@@ -320,6 +321,7 @@ test("Focus start pins active-session, P2002, P2003, not-found, and fallback env
 });
 
 test("Focus snapshot GET pins its internal envelope", async () => {
+  const prisma = getPrisma();
   const originalFindFirst = prisma.focusSession.findFirst;
   const originalFindMany = prisma.focusSession.findMany;
   const originalAggregate = prisma.activityEntry.aggregate;
@@ -352,6 +354,7 @@ test("Focus snapshot GET pins its internal envelope", async () => {
 });
 
 test("Focus transition pins not-found, conflict, Prisma, and fallback envelopes", async () => {
+  const prisma = getPrisma();
   const originalFindUnique = prisma.focusSession.findUnique;
   const originalConsoleError = console.error;
   console.error = () => undefined;
@@ -426,6 +429,7 @@ test("Focus transition pins not-found, conflict, Prisma, and fallback envelopes"
 });
 
 test("Focus queue pins not-found, conflict, and fallback envelopes", async () => {
+  const prisma = getPrisma();
   const originalTransaction = prisma.$transaction;
   const originalConsoleError = console.error;
   console.error = () => undefined;
@@ -510,6 +514,7 @@ test("Focus queue pins not-found, conflict, and fallback envelopes", async () =>
 });
 
 test("Task reorder and schedule undo pin not-found, Prisma, and fallback envelopes", async () => {
+  const prisma = getPrisma();
   const originalTransaction = prisma.$transaction;
   const originalConsoleError = console.error;
   console.error = () => undefined;
@@ -668,6 +673,7 @@ test("Focus POST pins invalid mutation identifiers through its handler", async (
 
 
 test("Focus handlers preserve defensive fieldless validation envelopes", async () => {
+  const prisma = getPrisma();
   const originalTransaction = prisma.$transaction;
   const originalFindUnique = prisma.focusSession.findUnique;
   try {
@@ -696,6 +702,7 @@ test("Focus handlers preserve defensive fieldless validation envelopes", async (
 });
 
 test("Focus queue PATCH and DELETE pin their validation and fallback bodies", async () => {
+  const prisma = getPrisma();
   const patch = await reorderFocusQueue(jsonRequest("http://localhost/api/focus-queue", "PATCH", { ids: ["task", "task"] }));
   assert.equal(patch.status, 400);
   assert.deepEqual(await patch.json(), {

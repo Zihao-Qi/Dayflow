@@ -12,9 +12,10 @@ import {
 import {
   mutationRequestHash
 } from "../../src/lib/idempotent-mutations";
-import { prisma } from "../../src/lib/prisma";
+import { getPrisma } from "../../src/lib/prisma";
 
 test("Journal GET routes keep the code-error shape for validation and internal failures", async () => {
+  const prisma = getPrisma();
   const noteValidation = await getNotes(
     new NextRequest("http://localhost/api/notes?cursor=not-a-cursor")
   );
@@ -64,6 +65,7 @@ test("Journal GET routes keep the code-error shape for validation and internal f
 });
 
 test("Journal POST routes pin relationship, receipt, and fallback envelopes without field", async () => {
+  const prisma = getPrisma();
   const originalTransaction = prisma.$transaction;
   const originalConsoleError = console.error;
   console.error = () => undefined;
@@ -262,6 +264,7 @@ test("Journal GET routes pin Notes validation and Materials cursor errors", asyn
 });
 
 test("Materials POST pins receipt and attribution bodies through its handler", async () => {
+  const prisma = getPrisma();
   const originalTransaction = prisma.$transaction;
   const payload = { url: "https://example.com" };
   try {
@@ -304,6 +307,7 @@ test("Materials POST pins receipt and attribution bodies through its handler", a
 });
 
 test("Journal Prisma failures keep operation-specific internal envelopes without field", async () => {
+  const prisma = getPrisma();
   const { Prisma } = await import("@prisma/client");
   const originalTransaction = prisma.$transaction;
   const originalConsoleError = console.error;

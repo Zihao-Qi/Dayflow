@@ -404,7 +404,10 @@ function discoverSingletonModules(records: SourceRecord[]): SingletonDiscovery {
       addSingletonModule(
         base,
         record.moduleKey,
-        exportedNewPrismaClientBindings(record.sourceFile)
+        new Set([
+          ...(base.exportsByModule.get(record.moduleKey) ?? []),
+          ...exportedNewPrismaClientBindings(record.sourceFile)
+        ])
       );
     }
   }
@@ -699,19 +702,53 @@ function callUsesGlobalClient(
   call: ts.CallExpression,
   bindings: ReadonlySet<string>
 ) {
+  const callee = unwrapExpression(call.expression);
   if (
-    !ts.isPropertyAccessExpression(call.expression) &&
-    !ts.isElementAccessExpression(call.expression)
+    !ts.isPropertyAccessExpression(callee) &&
+    !ts.isElementAccessExpression(callee)
   ) return false;
-  const callee = call.expression.getText();
-  for (const binding of bindings) {
+
+  // Follow only the receiver chain, never arguments or computed property keys.
+  // Optional chains use the same access/call nodes; whitespace is only trivia.
+  let receiver = unwrapExpression(callee.expression);
+  while (true) {
+    const binding = clientBindingName(receiver);
+    if (binding !== null && bindings.has(binding)) return true;
     if (
-      callee.startsWith(`${binding}.`) ||
-      callee.startsWith(`${binding}[`) ||
-      callee.startsWith(`${binding}?.`)
-    ) return true;
+      !ts.isPropertyAccessExpression(receiver) &&
+      !ts.isElementAccessExpression(receiver) &&
+      !ts.isCallExpression(receiver)
+    ) return false;
+    receiver = unwrapExpression(receiver.expression);
   }
-  return false;
+}
+
+function unwrapExpression(expression: ts.Expression): ts.Expression {
+  while (
+    ts.isParenthesizedExpression(expression) ||
+    ts.isNonNullExpression(expression) ||
+    ts.isAsExpression(expression) ||
+    ts.isTypeAssertionExpression(expression) ||
+    ts.isSatisfiesExpression(expression)
+  ) expression = expression.expression;
+  return expression;
+}
+
+function clientBindingName(expression: ts.Expression): string | null {
+  expression = unwrapExpression(expression);
+  if (ts.isIdentifier(expression)) return expression.text;
+  if (ts.isPropertyAccessExpression(expression)) {
+    const parent = clientBindingName(expression.expression);
+    return parent === null ? null : `${parent}.${expression.name.text}`;
+  }
+  if (
+    ts.isElementAccessExpression(expression) &&
+    ts.isStringLiteralLike(expression.argumentExpression)
+  ) {
+    const parent = clientBindingName(expression.expression);
+    return parent === null ? null : `${parent}.${expression.argumentExpression.text}`;
+  }
+  return null;
 }
 
 function isAllowedTransactionRoot(file: string) {
@@ -1258,6 +1295,68 @@ test("Red-team Rule 8 (todo): indirect import via createRequire", { todo: "User-
     (root) => assert.deepEqual(locations(root, 8), ["src/lib/custom-require.ts:1"])
   );
 });
+
+test("lazy Prisma calls keep global-client calls and parameter fallbacks governed", () => {
+  withFixture(
+    {
+      "src/lib/prisma.ts": 'import { PrismaClient } from "@prisma/client"; export function getPrisma() { return new PrismaClient(); }\n',
+      "src/lib/lazy.ts": 'import { getPrisma } from "@/lib/prisma"; export const read = () => getPrisma().task.findMany();\n',
+      "src/fail-default.ts": 'import { getPrisma } from "@/lib/prisma"; export function run(db = getPrisma()) { return db; }\n',
+      "src/fail-fallback.ts": 'import { getPrisma as database } from "@/lib/prisma"; export function run(db?: object) { return db ?? database(); }\n',
+      "src/modules/planning/services/fail.ts": 'import { getPrisma } from "@/lib/prisma"; export const read = () => getPrisma().task.findMany();\n'
+    },
+    (root) => {
+      const report = scanArchitecture(root);
+      assert.deepEqual(report.legacyGlobalClientCalls, { "src/lib/lazy.ts": 1 });
+      assert.equal(report.violations.filter(entry => entry.rule === 4).length, 3);
+      assert.deepEqual(locations(root, 5), ["src/fail-default.ts:1", "src/fail-fallback.ts:1"]);
+    }
+  );
+});
+
+for (const [spelling, expression, expected] of [
+  ["plain", "getPrisma().task.findMany()", 1],
+  ["optional receiver", "getPrisma()?.task.findMany()", 1],
+  ["whitespace", "getPrisma( ).task.findMany()", 1],
+  ["comments", "getPrisma(/* lazy */).task.findMany()", 1],
+  ["parentheses", "(getPrisma)().task.findMany()", 1],
+  ["asserted receiver", "(getPrisma() as any)!.task.findMany()", 1],
+  ["optional call", "getPrisma?.().task.findMany()", 1],
+  ["element access", 'getPrisma()["task"]["findMany"]()', 1],
+  ["aliased getter", "database( ).task.findMany()", 1],
+  ["namespace getter", "clients . getPrisma( ).task.findMany()", 1],
+  ["direct optional singleton", "prisma?.task.findMany()", 1],
+  ["similar unrelated function", "getPrismaOther().task.findMany()", 0],
+  ["unused getter result", "getPrisma()", 0],
+  ["getter argument", "repository.read(getPrisma())", 0]
+] as const) {
+  test(`Rule 4: structural Prisma receiver - ${spelling}`, () => {
+    withFixture(
+      {
+        "src/lib/prisma.ts": 'import { PrismaClient } from "@prisma/client"; export const prisma = new PrismaClient(); export function getPrisma() { return prisma; }\n',
+        "src/lib/receiver.ts": [
+          'import { prisma, getPrisma, getPrisma as database } from "@/lib/prisma";',
+          'import * as clients from "@/lib/prisma";',
+          'const getPrismaOther = () => ({ task: { findMany() {} } });',
+          'const repository = { read(client: unknown) {} };',
+          `export const read = () => ${expression};`
+        ].join("\n")
+      },
+      (root) => {
+        const report = scanArchitecture(root);
+        assert.deepEqual(
+          report.legacyGlobalClientCalls,
+          expected ? { "src/lib/receiver.ts": expected } : {}
+        );
+        assert.deepEqual(
+          report.violations.filter(entry => entry.rule === 4)
+            .map(({ file, line }) => `${file}:${line}`),
+          expected ? ["src/lib/receiver.ts:5"] : []
+        );
+      }
+    );
+  });
+}
 
 test("the real tree has no architecture violations beyond the explicit baseline", () => {
   const repositoryRoot = join(dirname(fileURLToPath(import.meta.url)), "..");

@@ -6,16 +6,20 @@ import { GET as getPastReview } from "../../src/app/api/review/[id]/route";
 import { GET as getReviewHistory } from "../../src/app/api/review/history/route";
 import { GET as getReviewWindow } from "../../src/app/api/review/window/route";
 import { reviewPeriodRange } from "../../src/lib/dates";
-import { prisma } from "../../src/lib/prisma";
+import { getPrisma } from "../../src/lib/prisma";
 
 // Route reads now enter a transaction before calling these delegates.
-const originalTransactionRoot = prisma.$transaction;
+let originalTransactionRoot: ReturnType<typeof getPrisma>["$transaction"];
 beforeEach(() => {
+  const prisma = getPrisma();
+  originalTransactionRoot = prisma.$transaction;
   (prisma as unknown as { $transaction: unknown }).$transaction = async (
     operation: (tx: typeof prisma) => unknown
   ) => operation(prisma);
 });
-afterEach(() => { prisma.$transaction = originalTransactionRoot; });
+afterEach(() => {
+  getPrisma().$transaction = originalTransactionRoot;
+});
 
 test("Review route returns typed malformed and empty mutation errors", async () => {
   const malformed = await saveReview(
@@ -66,6 +70,7 @@ test("Review route rejects a stale exact period before persistence", async () =>
 });
 
 test("Review read routes pin validation, cursor, and not-found envelopes", async () => {
+  const prisma = getPrisma();
   const invalidId = await getPastReview(
     new Request("http://localhost/api/review/invalid"),
     { params: Promise.resolve({ id: "../invalid" }) }
@@ -114,6 +119,7 @@ test("Review read routes pin validation, cursor, and not-found envelopes", async
 });
 
 test("Review routes pin operation-specific internal envelopes", async () => {
+  const prisma = getPrisma();
   const originalUpsert = prisma.review.upsert;
   const originalFindUnique = prisma.review.findUnique;
   const originalFindMany = prisma.review.findMany;

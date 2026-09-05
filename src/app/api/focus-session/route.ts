@@ -9,7 +9,7 @@ import {
   parseMutationId,
   runIdempotentCreate
 } from "@/lib/idempotent-mutations";
-import { prisma } from "@/lib/prisma";
+import { getPrisma } from "@/lib/prisma";
 import {
   parseFocusSessionStartMutation,
   readWorkflowMutationBody
@@ -28,7 +28,7 @@ const globalForFocusSessionStart = globalThis as typeof globalThis & {
 export async function GET() {
   const now = clock.now();
   try {
-    return NextResponse.json(await getFocusSnapshot(prisma, now));
+    return NextResponse.json(await getFocusSnapshot(getPrisma(), now));
   } catch (error) {
     console.error("Focus snapshot load failed.", error);
     return appErrorResponse(new AppError(focusErrors.focusTimerCouldNotBeLoaded));

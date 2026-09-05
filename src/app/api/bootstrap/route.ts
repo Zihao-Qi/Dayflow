@@ -14,7 +14,7 @@ import {
   resolveEarliestNavigableDayKey
 } from "@/lib/day-view";
 import { appErrorResponse } from "@/lib/http-errors";
-import { prisma } from "@/lib/prisma";
+import { getPrisma } from "@/lib/prisma";
 import { readReviewPeriodEvidence } from "@/lib/review-history";
 import { readTimeBlocks } from "@/server/time-blocks";
 import { isWorkspaceEmpty } from "@/lib/workspace-readiness";
@@ -65,7 +65,7 @@ async function loadBootstrap(now: Date) {
     workspaceEmpty,
     earliestDayKey
   ] =
-    await prisma.$transaction(async (tx) => Promise.all([
+    await getPrisma().$transaction(async (tx) => Promise.all([
       tx.task.findMany({
         where: {
           OR: [

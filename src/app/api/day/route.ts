@@ -9,7 +9,7 @@ import {
   resolveEarliestNavigableDayKey
 } from "@/lib/day-view";
 import { appErrorResponse } from "@/lib/http-errors";
-import { prisma } from "@/lib/prisma";
+import { getPrisma } from "@/lib/prisma";
 import { AppError } from "@/shared/kernel/errors";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -21,10 +21,10 @@ export async function GET(request: NextRequest) {
   try {
     const { date } = parseViewedDay(request.nextUrl.searchParams, now);
     const earliestDayKey = resolveEarliestNavigableDayKey(
-      await earliestRecordedDay(prisma), now
+      await earliestRecordedDay(getPrisma()), now
     );
     assertViewedDayOnOrAfter(date, earliestDayKey);
-    const day = await readViewedDay(prisma, date, now);
+    const day = await readViewedDay(getPrisma(), date, now);
     return NextResponse.json({
       ...day,
       earliestDayKey,

@@ -14,16 +14,20 @@ import {
   PATCH as updatePhase
 } from "../../src/app/api/phases/[id]/route";
 import { mutationRequestHash } from "../../src/lib/idempotent-mutations";
-import { prisma } from "../../src/lib/prisma";
+import { getPrisma } from "../../src/lib/prisma";
 
 // Route reads and phase updates now enter a transaction before calling these delegates.
-const originalTransactionRoot = prisma.$transaction;
+let originalTransactionRoot: ReturnType<typeof getPrisma>["$transaction"];
 beforeEach(() => {
+  const prisma = getPrisma();
+  originalTransactionRoot = prisma.$transaction;
   (prisma as unknown as { $transaction: unknown }).$transaction = async (
     operation: (tx: typeof prisma) => unknown
   ) => operation(prisma);
 });
-afterEach(() => { prisma.$transaction = originalTransactionRoot; });
+afterEach(() => {
+  getPrisma().$transaction = originalTransactionRoot;
+});
 
 test("Project and Phase routes return typed malformed-JSON responses", async () => {
   const projectCreateResponse = await createProject(
@@ -215,6 +219,7 @@ test("Project deletion requires a typed confirmation response", async () => {
 });
 
 test("Project detail keeps its legacy code-less not-found envelope", async () => {
+  const prisma = getPrisma();
   const originalFindUnique = prisma.project.findUnique;
   try {
     (prisma.project as unknown as { findUnique: unknown }).findUnique = async () =>
@@ -232,6 +237,7 @@ test("Project detail keeps its legacy code-less not-found envelope", async () =>
 });
 
 test("Project and Phase create pin Prisma and internal envelopes", async () => {
+  const prisma = getPrisma();
   const originalTransaction = prisma.$transaction;
   const originalConsoleError = console.error;
   console.error = () => undefined;
@@ -328,6 +334,7 @@ test("Project and Phase create pin Prisma and internal envelopes", async () => {
 });
 
 test("Project and Phase item routes pin P2025, P2003, confirmation, and fallbacks", async () => {
+  const prisma = getPrisma();
   const originalTransaction = prisma.$transaction;
   const originalFindUnique = prisma.project.findUnique;
   const originalProjectPhaseUpdate = prisma.projectPhase.update;
@@ -531,6 +538,7 @@ function prismaError(code: string) {
 
 
 test("Project and Phase create pin their own mismatch and corrupt receipt bodies", async () => {
+  const prisma = getPrisma();
   const originalTransaction = prisma.$transaction;
   try {
     for (const kind of ["project.create", "phase.create"] as const) {

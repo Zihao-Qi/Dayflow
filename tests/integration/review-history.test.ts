@@ -62,11 +62,12 @@ async function withDatabase(
     { cwd: repositoryRoot, stdio: "pipe" }
   );
 
-  const [history, bootstrap, { prisma }] = await Promise.all([
+  const [history, bootstrap, { getPrisma }] = await Promise.all([
     import("../../src/lib/review-history"),
     import("../../src/app/api/bootstrap/route"),
     import("../../src/lib/prisma")
   ]);
+  const prisma = getPrisma();
   disconnectPrisma = () => prisma.$disconnect();
 
   await run({ prisma, history, loadBootstrap: bootstrap.GET });

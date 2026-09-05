@@ -8,7 +8,7 @@ import {
   PATCH as updateTask
 } from "../../src/app/api/tasks/[id]/route";
 import { mutationRequestHash } from "../../src/lib/idempotent-mutations";
-import { prisma } from "../../src/lib/prisma";
+import { getPrisma } from "../../src/lib/prisma";
 
 test("Task create and patch return typed malformed-JSON responses", async () => {
   const createResponse = await createTask(
@@ -104,6 +104,7 @@ test("Task routes validate mutation and path identifiers before writing", async 
 });
 
 test("Task create pins placement, Prisma P2003, and internal envelopes", async () => {
+  const prisma = getPrisma();
   const originalTransaction = prisma.$transaction;
   const originalConsoleError = console.error;
   console.error = () => undefined;
@@ -192,6 +193,7 @@ test("Task create pins placement, Prisma P2003, and internal envelopes", async (
 });
 
 test("Task item routes pin P2025, P2003, and action-specific fallbacks", async () => {
+  const prisma = getPrisma();
   const originalTransaction = prisma.$transaction;
   const originalConsoleError = console.error;
   console.error = () => undefined;
@@ -300,6 +302,7 @@ function prismaError(code: string) {
 
 
 test("Task create pins its own mismatch and corrupt receipt bodies", async () => {
+  const prisma = getPrisma();
   const originalTransaction = prisma.$transaction;
   const payload = { title: "Receipt task" };
   try {
@@ -330,6 +333,7 @@ test("Task create pins its own mismatch and corrupt receipt bodies", async () =>
 });
 
 test("Task POST and PATCH pin each placement error independently", async () => {
+  const prisma = getPrisma();
   const originalTransaction = prisma.$transaction;
   try {
     for (const method of ["POST", "PATCH"] as const) {

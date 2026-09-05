@@ -5,7 +5,7 @@ import {
   transitionFocusSession
 } from "@/lib/focus-sessions";
 import { appErrorResponse } from "@/lib/http-errors";
-import { prisma } from "@/lib/prisma";
+import { getPrisma } from "@/lib/prisma";
 import { workflowErrors } from "@/lib/workflow-errors";
 import {
   parseFocusSessionTransitionMutation,
@@ -32,7 +32,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     const result = await transitionFocusSession(id, input.action, input, now);
     return NextResponse.json({
       ...result,
-      snapshot: await getFocusSnapshot(prisma, now)
+      snapshot: await getFocusSnapshot(getPrisma(), now)
     });
   } catch (error) {
     if (error instanceof AppError) return appErrorResponse(error);

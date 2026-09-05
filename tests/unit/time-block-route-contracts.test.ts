@@ -13,7 +13,7 @@ import {
   TimeBlockError
 } from "../../src/lib/time-blocks";
 import { IdempotentMutationError } from "../../src/lib/idempotent-mutations";
-import { prisma } from "../../src/lib/prisma";
+import { getPrisma } from "../../src/lib/prisma";
 import { timeBlockMutationErrorResponse } from "../../src/server/time-blocks";
 
 const validBody = {
@@ -166,6 +166,7 @@ test("Time Block item routes reject invalid path identifiers before querying", a
 });
 
 test("Time Block error mapping pins idempotency, domain, Prisma, and fallback envelopes", async () => {
+  const prisma = getPrisma();
   const cases: Array<[unknown, "create" | "save" | "delete", number, Record<string, unknown>]> = [
     [
       new IdempotentMutationError(

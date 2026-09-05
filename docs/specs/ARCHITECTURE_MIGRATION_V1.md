@@ -98,6 +98,12 @@ rules target directories that do not exist until the migration creates them.
    `src/lib` until it is deleted, a call rooted at an imported global-client
    binding is a violation. The global client module itself and
    `src/lib/idempotent-mutations.ts`, a transaction root, are excluded.
+   Independently, constructing a Prisma client anywhere under `src/`
+   outside the explicit canonical modules `src/lib/prisma` and
+   `src/server/prisma/client` is a violation, whether or not the file
+   makes a global-client call. Construction recognition is syntactic:
+   `new PrismaClient(...)` or a `new` expression whose constructor is a
+   property access named `PrismaClient`; constructor aliases are not resolved.
 5. **No fallback to the global client.** In any file under `src/` that
    imports the global-client binding, by its own name or an alias, a
    parameter initializer containing that binding, or a `??`, `||`, `??=`
@@ -106,12 +112,16 @@ rules target directories that do not exist until the migration creates them.
    is permitted only under `src/app/api`, `src/server`, and the idempotency
    helper: today `src/lib/idempotent-mutations.ts`, later
    `src/server/prisma/run-once.ts`.
-7. **Activity writes.** Every direct call whose receiver property is
-   `activityEntry` and whose method is `create`, `createMany`, `upsert`,
-   `update` or `updateMany` under `src/`, and every string or template
-   literal containing `INSERT INTO`, `INSERT OR REPLACE INTO`,
-   `INSERT OR IGNORE INTO` or `UPDATE` against `ActivityEntry`, must be in
-   the test's allowlist, and the allowlist must contain nothing else. The
+7. **Activity writes.** Every direct call whose receiver property or
+   identifier is `activityEntry` and whose method is `create`, `createMany`,
+   `upsert`, `update`, `updateMany`, `delete` or `deleteMany` under `src/`,
+   and every string or template literal containing `INSERT INTO`,
+   `INSERT OR REPLACE INTO`,
+   `INSERT OR IGNORE INTO`, `UPDATE` or `DELETE FROM` against `ActivityEntry`,
+   must be in the test's allowlist, and the allowlist must contain nothing
+   else. Deletions count as writes; the initial allowlist names six call
+   sites. Recognition is syntactic, by receiver and method names (including
+   string-literal element access) or SQL text, without type resolution. The
    allowlist constrains where writes can happen; it does not inspect
    payloads. Behavior tests prove that only the evidence focus writer
    persists `origin: FOCUS`. `prisma/seed.ts` and `scripts/` are outside
@@ -147,7 +157,8 @@ either direction fails until its entry is corrected in the same change.
 
 ### Initial Activity write allowlist
 
-Exactly five keys: `src/app/api/activities/route.ts:34:activityEntry.create`,
+Exactly six keys: `src/app/api/activities/[id]/route.ts:60:activityEntry.deleteMany`,
+`src/app/api/activities/route.ts:34:activityEntry.create`,
 `src/lib/activity-persistence.ts:84:activityEntry.updateMany`,
 `src/lib/focus-sessions.ts:280:activityEntry.upsert`,
 `src/lib/focus-sessions.ts:387:activityEntry.upsert` and

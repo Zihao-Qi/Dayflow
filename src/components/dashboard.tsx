@@ -14,14 +14,12 @@ import {
   ChevronUp,
   Circle,
   DatabaseBackup,
-  ExternalLink,
   FileText,
   FolderKanban,
   GripVertical,
   Layers3,
   LayoutDashboard,
   Library,
-  LinkIcon,
   Menu,
   NotebookPen,
   Pause,
@@ -29,7 +27,6 @@ import {
   Plus,
   RefreshCw,
   Save,
-  Search,
   Sparkles,
   Trash2
 } from "lucide-react";
@@ -63,12 +60,13 @@ import {
 } from "@/components/workspace-ui";
 import { useViewedDay } from "@/components/use-viewed-day";
 import {
-  useJournalEvidenceHistory,
-  type JournalHistoryResult,
-  type JournalHistoryState,
-  type NoteHistoryCriteria,
-  type ReferenceHistoryCriteria
-} from "@/components/use-journal-evidence-history";
+  JournalPage,
+  taskProjectIdFor,
+  useJournalPage,
+  type Diary,
+  type MaterialCaptureDraft,
+  type NoteCaptureDraft
+} from "@/modules/journal/ui";
 import {
   TimeBlockDialog,
   type TimeBlockEditorDraft,
@@ -92,8 +90,6 @@ import {
 import {
   inferMaterialTitle,
   inferMaterialType,
-  JOURNAL_SEARCH_MAX_LENGTH,
-  NOTE_TAG_MAX_LENGTH,
   normalizeNoteTags
 } from "@/lib/journal-domain";
 import {
@@ -129,7 +125,6 @@ type Screen =
   | "journal"
   | "review";
 type DayView = "stream" | "timeline";
-type JournalView = "daily" | "notes" | "references";
 type BacklogArrange = "figure" | "quadrant" | "project" | "due";
 type FocusTarget = Omit<FocusDraft, "revision">;
 type TimeBlockEditor = {
@@ -167,19 +162,7 @@ type PaletteTaskRecord = Pick<
   | "focusQueuePosition"
   | "projectId"
 >;
-type JournalTaskOption = Pick<Task, "id" | "title" | "projectId">;
-
 type Note = JournalNoteRecord;
-
-type Diary = {
-  id: string | null;
-  date: string;
-  content: string;
-  reflection: string;
-  mood: number;
-  energy: number;
-  persisted: boolean;
-};
 
 type Review = {
   id: string | null;
@@ -191,22 +174,6 @@ type Review = {
 };
 
 type Material = JournalMaterialRecord;
-
-type NoteCaptureDraft = {
-  content: string;
-  tags: string;
-  taskId: string;
-  projectId: string;
-};
-
-type MaterialCaptureDraft = {
-  title: string;
-  url: string;
-  notes: string;
-  taskId: string;
-  noteId: string;
-  projectId: string;
-};
 
 type TimeBlock = TimeBlockRecord;
 
@@ -317,43 +284,10 @@ function describeTaskMove(title: string, position: number, total: number) {
   return `Moved "${title}" to position ${position + 1} of ${total}.${edge}`;
 }
 
-function diariesEqual(left: Diary, right: Diary) {
-  return (
-    left.id === right.id &&
-    left.persisted === right.persisted &&
-    left.date === right.date &&
-    left.content === right.content &&
-    left.reflection === right.reflection &&
-    left.mood === right.mood &&
-    left.energy === right.energy
-  );
-}
-
 function stringArraysEqual(left: string[], right: string[]) {
   return (
     left.length === right.length &&
     left.every((value, index) => value === right[index])
-  );
-}
-
-function taskProjectIdFor(
-  taskId: string,
-  tasks: JournalTaskOption[]
-): string | null {
-  return tasks.find(({ id }) => id === taskId)?.projectId ?? null;
-}
-
-function mergeJournalRecords<T extends { id: string; createdAt: string }>(
-  ...collections: T[][]
-) {
-  const byId = new Map<string, T>();
-  for (const item of collections.flat()) {
-    if (!byId.has(item.id)) byId.set(item.id, item);
-  }
-  return [...byId.values()].sort(
-    (left, right) =>
-      Date.parse(right.createdAt) - Date.parse(left.createdAt) ||
-      right.id.localeCompare(left.id)
   );
 }
 
@@ -458,18 +392,21 @@ export function Dashboard() {
   const [railExpanded, setRailExpanded] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState("");
-  const [journalView, setJournalView] = useState<JournalView>("daily");
-  const noteHistory = useJournalEvidenceHistory(
-    "note",
-    screen === "journal" && journalView === "notes"
+  const projectById = useMemo(
+    () => new Map((data?.projects ?? []).map((project) => [project.id, project])),
+    [data]
   );
-  const materialHistory = useJournalEvidenceHistory(
-    "material",
-    screen === "journal" && journalView === "references"
-  );
-  const noteOptionHistory = useJournalEvidenceHistory(
-    "note",
-    screen === "journal" && journalView === "references"
+  const journal = useJournalPage(
+    screen === "journal",
+    data && {
+      today: data.today,
+      diary: data.diary,
+      notes: data.notes,
+      materials: data.materials,
+      tasks: data.tasks,
+      paletteTasks: data.paletteTasks,
+      projects: projectById
+    }
   );
   const [backlogArrange, setBacklogArrange] =
     useState<BacklogArrange>("quadrant");
@@ -696,27 +633,6 @@ export function Dashboard() {
     announce: setAppAnnouncement,
     refreshAfterConfirmedMutation
   });
-  const journalTaskOptions = useMemo(() => {
-    const byId = new Map<string, JournalTaskOption>();
-    for (const task of [...(data?.paletteTasks ?? []), ...(data?.tasks ?? [])]) {
-      byId.set(task.id, {
-        id: task.id,
-        title: task.title,
-        projectId: task.projectId
-      });
-    }
-    return [...byId.values()].sort(
-      (left, right) =>
-        left.title.localeCompare(right.title, undefined, {
-          sensitivity: "base"
-        }) || left.id.localeCompare(right.id)
-    );
-  }, [data?.paletteTasks, data?.tasks]);
-  const journalNoteOptions = useMemo(
-    () =>
-      mergeJournalRecords(noteOptionHistory.items, data?.notes ?? []),
-    [data?.notes, noteOptionHistory.items]
-  );
   const backlogTasks = useMemo(
     () =>
       (data?.tasks ?? [])
@@ -736,10 +652,6 @@ export function Dashboard() {
             (a.focusQueuePosition ?? Number.MAX_SAFE_INTEGER) -
             (b.focusQueuePosition ?? Number.MAX_SAFE_INTEGER)
         ),
-    [data]
-  );
-  const projectById = useMemo(
-    () => new Map((data?.projects ?? []).map((project) => [project.id, project])),
     [data]
   );
   const visibleUnfinished = (data?.unfinishedTasks ?? []).filter(
@@ -912,7 +824,7 @@ export function Dashboard() {
           setNoteDraft((current) => ({ ...current, content }))
         );
         navigate("journal");
-        setJournalView("notes");
+        journal.setView("notes");
         window.setTimeout(
           () => document.getElementById("new-note")?.focus(),
           0
@@ -923,7 +835,7 @@ export function Dashboard() {
           setMaterialDraft((current) => ({ ...current, url }))
         );
         navigate("journal");
-        setJournalView("references");
+        journal.setView("references");
         window.setTimeout(
           () => document.getElementById("material-url")?.focus(),
           0
@@ -1354,7 +1266,7 @@ export function Dashboard() {
     setNoteDraft((current) => ({
       ...current,
       taskId,
-      projectId: taskProjectIdFor(taskId, journalTaskOptions)
+      projectId: taskProjectIdFor(taskId, journal.tasks)
         ? ""
         : current.projectId
     }));
@@ -1364,7 +1276,7 @@ export function Dashboard() {
     setMaterialDraft((current) => ({
       ...current,
       taskId,
-      projectId: taskProjectIdFor(taskId, journalTaskOptions)
+      projectId: taskProjectIdFor(taskId, journal.tasks)
         ? ""
         : current.projectId
     }));
@@ -1387,7 +1299,7 @@ export function Dashboard() {
     }
     const selectedTaskProjectId = taskProjectIdFor(
       noteDraft.taskId,
-      journalTaskOptions
+      journal.tasks
     );
     const expectedProjectId = selectedTaskProjectId
       ? null
@@ -1430,8 +1342,8 @@ export function Dashboard() {
       }
       setNoteDraft(emptyNoteCaptureDraft);
       noteCreateMutation.current = null;
-      noteHistory.refresh();
-      noteOptionHistory.refresh();
+      journal.noteHistory.refresh();
+      journal.noteOptionHistory.refresh();
       setAppError("");
       if (noteCreateWasInError.current) {
         noteCreateWasInError.current = false;
@@ -1450,7 +1362,7 @@ export function Dashboard() {
     if (!materialDraft.url.trim() || materialSaving) return;
     const selectedTaskProjectId = taskProjectIdFor(
       materialDraft.taskId,
-      journalTaskOptions
+      journal.tasks
     );
     const expectedProjectId = selectedTaskProjectId
       ? null
@@ -1498,7 +1410,7 @@ export function Dashboard() {
       }
       setMaterialDraft(emptyMaterialCaptureDraft);
       materialCreateMutation.current = null;
-      materialHistory.refresh();
+      journal.materialHistory.refresh();
       setAppError("");
       if (materialCreateWasInError.current) {
         materialCreateWasInError.current = false;
@@ -2193,22 +2105,9 @@ export function Dashboard() {
           />
         )}
 
-        {screen === "journal" && (
+        {screen === "journal" && journal.page && (
           <JournalPage
-            today={data.today}
-            view={journalView}
-            onViewChange={setJournalView}
-            diary={data.diary}
-            notes={journalView === "notes" ? noteHistory.items : data.notes}
-            materials={
-              journalView === "references" ? materialHistory.items : data.materials
-            }
-            noteHistory={noteHistory}
-            materialHistory={materialHistory}
-            noteOptionHistory={noteOptionHistory}
-            tasks={journalTaskOptions}
-            noteOptions={journalNoteOptions}
-            projects={projectById}
+            {...journal.page}
             onDiaryChange={setDiaryValue}
             onSaveDiary={saveDiary}
             onSaveError={reportDiarySaveFailure}
@@ -3669,461 +3568,6 @@ function BacklogPage({
   );
 }
 
-function JournalPage({
-  today,
-  view,
-  onViewChange,
-  diary,
-  notes,
-  materials,
-  noteHistory,
-  materialHistory,
-  noteOptionHistory,
-  tasks,
-  noteOptions,
-  projects,
-  onDiaryChange,
-  onSaveDiary,
-  onSaveError,
-  onSaveRecovered,
-  noteDraft,
-  noteSaving,
-  onNoteDraftChange,
-  onNoteTaskChange,
-  onAddNote,
-  materialDraft,
-  materialSaving,
-  onMaterialDraftChange,
-  onMaterialTaskChange,
-  onAddMaterial
-}: {
-  today: string;
-  view: JournalView;
-  onViewChange: (view: JournalView) => void;
-  diary: Diary;
-  notes: Note[];
-  materials: Material[];
-  noteHistory: JournalHistoryResult<Note, NoteHistoryCriteria>;
-  materialHistory: JournalHistoryResult<
-    Material,
-    ReferenceHistoryCriteria
-  >;
-  noteOptionHistory: JournalHistoryResult<Note, NoteHistoryCriteria>;
-  tasks: JournalTaskOption[];
-  noteOptions: Note[];
-  projects: Map<string, ProjectSummary>;
-  onDiaryChange: <K extends keyof Diary>(key: K, value: Diary[K]) => void;
-  onSaveDiary: (diary: Diary) => Promise<boolean>;
-  onSaveError: () => void;
-  onSaveRecovered: () => void;
-  noteDraft: NoteCaptureDraft;
-  noteSaving: boolean;
-  onNoteDraftChange: (
-    field: Exclude<keyof NoteCaptureDraft, "taskId">,
-    value: string
-  ) => void;
-  onNoteTaskChange: (value: string) => void;
-  onAddNote: () => Promise<void>;
-  materialDraft: MaterialCaptureDraft;
-  materialSaving: boolean;
-  onMaterialDraftChange: (
-    field: Exclude<keyof MaterialCaptureDraft, "taskId">,
-    value: string
-  ) => void;
-  onMaterialTaskChange: (value: string) => void;
-  onAddMaterial: () => Promise<void>;
-}) {
-  const diarySave = useSaveState<Diary>({
-    value: diary,
-    save: onSaveDiary,
-    isEqual: diariesEqual,
-    onFinalError: onSaveError,
-    onRecovered: onSaveRecovered
-  });
-
-  function updateDiary<K extends keyof Diary>(key: K, value: Diary[K]) {
-    diarySave.setDraft({ ...diarySave.draft, [key]: value });
-    onDiaryChange(key, value);
-  }
-
-  const noteTaskProjectId = taskProjectIdFor(noteDraft.taskId, tasks);
-  const materialTaskProjectId = taskProjectIdFor(materialDraft.taskId, tasks);
-  const noteFiltersActive = Boolean(
-    noteHistory.criteria.q.trim() || noteHistory.criteria.tag.trim()
-  );
-  const referenceSearchActive = Boolean(
-    materialHistory.criteria.q.trim()
-  );
-
-  return (
-    <div className="journal-page page-stack">
-      <PageHeader
-        eyebrow={formatLongDate(today)}
-        title="Journal"
-        actions={
-          <SegmentedControl
-            ariaLabel="Journal view"
-            value={view}
-            options={[
-              ["daily", "Daily page"],
-              [
-                "notes",
-                countedLabel(
-                  "Notes",
-                  noteHistory.totalCount ??
-                    (view === "notes" ? notes.length : null)
-                )
-              ],
-              [
-                "references",
-                countedLabel(
-                  "References",
-                  materialHistory.totalCount ??
-                    (view === "references" ? materials.length : null)
-                )
-              ]
-            ]}
-            onChange={onViewChange}
-          />
-        }
-      />
-      {view === "daily" && (
-        <div className="journal-grid">
-          <section className="panel daily-page-card">
-            <div className="journal-card-heading">
-              <h2>Daily page</h2>
-              <SaveStateChip
-                state={diarySave.state}
-                onRetry={() => void diarySave.flush(true)}
-              />
-            </div>
-            <textarea
-              value={diarySave.draft.content}
-              onChange={(event) => updateDiary("content", event.target.value)}
-              placeholder="Write a few lines about the day."
-              {...diarySave.inputProps}
-            />
-            <div className="journal-footer">
-              <label>
-                Mood · {diarySave.draft.mood}/5
-                <input
-                  type="range"
-                  aria-label="Mood"
-                  min="1"
-                  max="5"
-                  value={diarySave.draft.mood}
-                  onChange={(event) => updateDiary("mood", Number(event.target.value))}
-                  {...diarySave.inputProps}
-                />
-              </label>
-              <label>
-                Energy · {diarySave.draft.energy}/5
-                <input
-                  type="range"
-                  aria-label="Energy"
-                  min="1"
-                  max="5"
-                  value={diarySave.draft.energy}
-                  onChange={(event) => updateDiary("energy", Number(event.target.value))}
-                  {...diarySave.inputProps}
-                />
-              </label>
-              <button
-                className="primary-button"
-                onClick={() => void diarySave.flush(true)}
-              >
-                <Save size={14} />
-                Save
-              </button>
-            </div>
-          </section>
-          <aside className="journal-captured">
-            <span className="eyebrow">Captured today</span>
-            <NoteCards
-              notes={notes.slice(0, 2)}
-              projects={projects}
-              tasks={tasks}
-            />
-            <button className="rail-link" onClick={() => onViewChange("notes")}>
-              New note<span className="desktop-shortcut"> · ⌘K</span>
-            </button>
-            <span className="eyebrow references-label">References</span>
-            <ReferenceCards
-              materials={materials.slice(0, 3)}
-              projects={projects}
-              tasks={tasks}
-              notes={noteOptions}
-            />
-          </aside>
-        </div>
-      )}
-      {view === "notes" && (
-        <div className="capture-workspace">
-          <section className="panel capture-form">
-            <h2>New note</h2>
-            <textarea
-              id="new-note"
-              value={noteDraft.content}
-              disabled={noteSaving}
-              onChange={(event) =>
-                onNoteDraftChange("content", event.target.value)
-              }
-              placeholder="Capture a thought, decision, or reminder."
-            />
-            <input
-              value={noteDraft.tags}
-              disabled={noteSaving}
-              onChange={(event) =>
-                onNoteDraftChange("tags", event.target.value)
-              }
-              placeholder="Tags, comma separated"
-            />
-            <label>
-              Linked task
-              <select
-                aria-label="Note linked task"
-                value={noteDraft.taskId}
-                disabled={noteSaving}
-                onChange={(event) => onNoteTaskChange(event.target.value)}
-              >
-                <option value="">No linked task</option>
-                {tasks.map((task) => (
-                  <option key={task.id} value={task.id}>
-                    {task.title}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Project
-              <select
-                aria-label="Project"
-                value={noteTaskProjectId ?? noteDraft.projectId}
-                disabled={noteSaving || Boolean(noteTaskProjectId)}
-                onChange={(event) =>
-                  onNoteDraftChange("projectId", event.target.value)
-                }
-              >
-                <option value="">No Project</option>
-                {[...projects.values()].map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {project.name}
-                  </option>
-                ))}
-              </select>
-              {noteTaskProjectId && <small>Inherited from linked task</small>}
-            </label>
-            <button
-              className="primary-button"
-              disabled={noteSaving || !noteDraft.content.trim()}
-              onClick={() => void onAddNote()}
-            >
-              <Plus size={14} />
-              {noteSaving ? "Saving…" : "Save note"}
-            </button>
-          </section>
-          <section className="journal-history-results">
-            <JournalSearchControls
-              kind="note"
-              text={noteHistory.criteria.q}
-              tag={noteHistory.criteria.tag}
-              loading={noteHistory.loading}
-              onTextChange={(q) =>
-                noteHistory.setCriteria({
-                  ...noteHistory.criteria,
-                  q
-                })
-              }
-              onTagChange={(tag) =>
-                noteHistory.setCriteria({
-                  ...noteHistory.criteria,
-                  tag
-                })
-              }
-              onClear={() =>
-                noteHistory.setCriteria({ q: "", tag: "" })
-              }
-            />
-            <NoteCards
-              notes={notes}
-              projects={projects}
-              tasks={tasks}
-              onTagSelect={(tag) =>
-                noteHistory.setCriteria({
-                  ...noteHistory.criteria,
-                  tag
-                })
-              }
-              emptyCopy={
-                noteHistory.loading || noteHistory.error
-                  ? ""
-                  : noteFiltersActive
-                    ? "No notes match these filters."
-                    : "No notes saved yet."
-              }
-            />
-            <HistoryFooter
-              noun="notes"
-              state={noteHistory}
-              onLoadMore={noteHistory.loadNext}
-              onRetry={noteHistory.retry}
-            />
-          </section>
-        </div>
-      )}
-      {view === "references" && (
-        <div className="capture-workspace">
-          <section className="panel capture-form">
-            <h2>Save reference</h2>
-            <input
-              value={materialDraft.title}
-              disabled={materialSaving}
-              onChange={(event) =>
-                onMaterialDraftChange("title", event.target.value)
-              }
-              placeholder="Title"
-            />
-            <input
-              id="material-url"
-              value={materialDraft.url}
-              disabled={materialSaving}
-              onChange={(event) =>
-                onMaterialDraftChange("url", event.target.value)
-              }
-              placeholder="URL"
-            />
-            <textarea
-              value={materialDraft.notes}
-              disabled={materialSaving}
-              onChange={(event) =>
-                onMaterialDraftChange("notes", event.target.value)
-              }
-              placeholder="Why this matters"
-            />
-            <label>
-              Linked task
-              <select
-                aria-label="Reference linked task"
-                value={materialDraft.taskId}
-                disabled={materialSaving}
-                onChange={(event) => onMaterialTaskChange(event.target.value)}
-              >
-                <option value="">No linked task</option>
-                {tasks.map((task) => (
-                  <option key={task.id} value={task.id}>
-                    {task.title}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Linked note
-              <select
-                aria-label="Reference linked note"
-                value={materialDraft.noteId}
-                disabled={materialSaving || noteOptionHistory.loading}
-                onChange={(event) =>
-                  onMaterialDraftChange("noteId", event.target.value)
-                }
-              >
-                <option value="">No linked note</option>
-                {noteOptions.map((note) => (
-                  <option key={note.id} value={note.id}>
-                    {noteOptionLabel(note)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {noteOptionHistory.nextCursor && (
-              <button
-                className="text-button journal-note-options-more"
-                type="button"
-                disabled={noteOptionHistory.loading || materialSaving}
-                onClick={noteOptionHistory.loadNext}
-              >
-                {noteOptionHistory.loading ? "Loading…" : "Load older notes"}
-              </button>
-            )}
-            {noteOptionHistory.error && (
-              <div className="journal-note-options-error" role="alert">
-                <span>{noteOptionHistory.error}</span>
-                <button
-                  className="text-button"
-                  type="button"
-                  onClick={noteOptionHistory.retry}
-                >
-                  Retry notes
-                </button>
-              </div>
-            )}
-            <label>
-              Project
-              <select
-                aria-label="Project"
-                value={materialTaskProjectId ?? materialDraft.projectId}
-                disabled={materialSaving || Boolean(materialTaskProjectId)}
-                onChange={(event) =>
-                  onMaterialDraftChange("projectId", event.target.value)
-                }
-              >
-                <option value="">No Project</option>
-                {[...projects.values()].map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {project.name}
-                  </option>
-                ))}
-              </select>
-              {materialTaskProjectId && (
-                <small>Inherited from linked task</small>
-              )}
-            </label>
-            <button
-              className="primary-button"
-              disabled={materialSaving || !materialDraft.url.trim()}
-              onClick={() => void onAddMaterial()}
-            >
-              <LinkIcon size={14} />
-              {materialSaving ? "Saving…" : "Save reference"}
-            </button>
-          </section>
-          <section className="journal-history-results">
-            <JournalSearchControls
-              kind="material"
-              text={materialHistory.criteria.q}
-              loading={materialHistory.loading}
-              onTextChange={(q) =>
-                materialHistory.setCriteria({ q })
-              }
-              onClear={() =>
-                materialHistory.setCriteria({ q: "" })
-              }
-            />
-            <ReferenceCards
-              materials={materials}
-              projects={projects}
-              tasks={tasks}
-              notes={noteOptions}
-              emptyCopy={
-                materialHistory.loading || materialHistory.error
-                  ? ""
-                  : referenceSearchActive
-                    ? "No references match this search."
-                    : "No references saved yet."
-              }
-            />
-            <HistoryFooter
-              noun="references"
-              state={materialHistory}
-              onLoadMore={materialHistory.loadNext}
-              onRetry={materialHistory.retry}
-            />
-          </section>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function ActivityDialog({
   mode,
   tasks,
@@ -4410,246 +3854,6 @@ function ScoreDots({
       ))}
     </div>
   );
-}
-
-function JournalSearchControls({
-  kind,
-  text,
-  tag = "",
-  loading,
-  onTextChange,
-  onTagChange,
-  onClear
-}: {
-  kind: "note" | "material";
-  text: string;
-  tag?: string;
-  loading: boolean;
-  onTextChange: (value: string) => void;
-  onTagChange?: (value: string) => void;
-  onClear: () => void;
-}) {
-  const notes = kind === "note";
-  const active = Boolean(text.trim() || (notes && tag.trim()));
-  return (
-    <div
-      className="journal-search-controls"
-      role="search"
-      aria-label={notes ? "Search Notes" : "Search References"}
-      aria-busy={loading}
-    >
-      <label>
-        <span>{notes ? "Search Notes" : "Search References"}</span>
-        <span className="journal-search-input">
-          <Search size={15} aria-hidden="true" />
-          <input
-            type="search"
-            value={text}
-            maxLength={JOURNAL_SEARCH_MAX_LENGTH}
-            onChange={(event) => onTextChange(event.target.value)}
-            placeholder={
-              notes
-                ? "Find text in complete Note history"
-                : "Find reference names, links, or notes"
-            }
-          />
-        </span>
-      </label>
-      {notes && onTagChange && (
-        <label>
-          <span>Filter by tag</span>
-          <input
-            value={tag}
-            maxLength={NOTE_TAG_MAX_LENGTH}
-            onChange={(event) => onTagChange(event.target.value)}
-            placeholder="For example, decisions"
-          />
-        </label>
-      )}
-      {active && (
-        <button className="text-button" type="button" onClick={onClear}>
-          {notes ? "Clear filters" : "Clear search"}
-        </button>
-      )}
-    </div>
-  );
-}
-
-function NoteCards({
-  notes,
-  projects,
-  tasks,
-  onTagSelect,
-  emptyCopy = "No notes captured today."
-}: {
-  notes: Note[];
-  projects: Map<string, ProjectSummary>;
-  tasks: JournalTaskOption[];
-  onTagSelect?: (tag: string) => void;
-  emptyCopy?: string;
-}) {
-  const taskById = new Map(tasks.map((task) => [task.id, task]));
-  return (
-    <div className="note-list">
-      {notes.map((note) => {
-        const task = note.taskId ? taskById.get(note.taskId) : null;
-        const projectId = task?.projectId ?? note.projectId;
-        const details = [
-          note.taskId ? `Task: ${task?.title ?? "Linked task"}` : "",
-          projectId && projects.get(projectId)
-            ? projects.get(projectId)?.name ?? ""
-            : ""
-        ].filter(Boolean);
-        return (
-          <article className="note-card" key={note.id}>
-            <p>{note.content}</p>
-            {note.tags.length > 0 && (
-              <div className="note-tag-list" aria-label="Note tags">
-                {note.tags.map((tag) =>
-                  onTagSelect ? (
-                    <button
-                      className="note-tag"
-                      type="button"
-                      key={tag}
-                      onClick={() => onTagSelect(tag)}
-                    >
-                      #{tag}
-                    </button>
-                  ) : (
-                    <span className="note-tag" key={tag}>
-                      #{tag}
-                    </span>
-                  )
-                )}
-              </div>
-            )}
-            {details.length > 0 && <small>{details.join(" · ")}</small>}
-          </article>
-        );
-      })}
-      {!notes.length && emptyCopy && <p className="empty-copy">{emptyCopy}</p>}
-    </div>
-  );
-}
-
-function ReferenceCards({
-  materials,
-  projects,
-  tasks,
-  notes,
-  emptyCopy = "No references saved yet."
-}: {
-  materials: Material[];
-  projects: Map<string, ProjectSummary>;
-  tasks: JournalTaskOption[];
-  notes: Note[];
-  emptyCopy?: string;
-}) {
-  const taskById = new Map(tasks.map((task) => [task.id, task]));
-  const noteById = new Map(notes.map((note) => [note.id, note]));
-  return (
-    <div className="material-list">
-      {materials.map((material) => {
-        const task = material.taskId
-          ? taskById.get(material.taskId)
-          : null;
-        const note = material.noteId
-          ? noteById.get(material.noteId)
-          : null;
-        const projectId = task?.projectId ?? material.projectId;
-        const details = [
-          material.notes,
-          material.taskId ? `Task: ${task?.title ?? "Linked task"}` : "",
-          material.noteId
-            ? `Note: ${note ? noteOptionLabel(note) : "Linked note"}`
-            : "",
-          projectId && projects.get(projectId)
-            ? projects.get(projectId)?.name ?? ""
-            : ""
-        ].filter(Boolean);
-        return (
-          <a
-            className="material-item"
-            href={material.url}
-            target="_blank"
-            rel="noreferrer"
-            key={material.id}
-          >
-            <span>{material.type}</span>
-            <strong>{material.title}</strong>
-            {details.length > 0 && <small>{details.join(" · ")}</small>}
-            <ExternalLink size={13} />
-          </a>
-        );
-      })}
-      {!materials.length && emptyCopy && <p className="empty-copy">{emptyCopy}</p>}
-    </div>
-  );
-}
-
-/**
- * A tab count is only shown once it is actually known. These histories load on
- * demand, so promising a number and rendering an ellipsis forever is worse
- * than the plain name.
- */
-function countedLabel(name: string, count: number | null) {
-  return count === null ? name : `${name} · ${count}`;
-}
-
-function noteOptionLabel(note: Note) {
-  const summary = note.content.replace(/\s+/g, " ").trim();
-  return summary.length > 72 ? `${summary.slice(0, 71).trimEnd()}…` : summary;
-}
-
-function HistoryFooter<T>({
-  noun,
-  state,
-  onLoadMore,
-  onRetry
-}: {
-  noun: string;
-  state: JournalHistoryState<T>;
-  onLoadMore: () => void;
-  onRetry: () => void;
-}) {
-  if (state.error) {
-    return (
-      <div className="history-status" role="alert">
-        <span>{state.error}</span>
-        <button className="secondary-button" onClick={onRetry}>
-          Retry
-        </button>
-      </div>
-    );
-  }
-  if (state.loading) {
-    return (
-      <p className="history-status" role="status">
-        Loading {noun}…
-      </p>
-    );
-  }
-  if (state.nextCursor) {
-    return (
-      <div className="history-status">
-        <span>
-          Showing {state.items.length}
-          {state.totalCount === null ? "" : ` of ${state.totalCount}`} {noun}
-        </span>
-        <button className="secondary-button" onClick={onLoadMore}>
-          Load more
-        </button>
-      </div>
-    );
-  }
-  if (state.loaded && state.totalCount !== null) {
-    return (
-      <p className="history-status" role="status">
-        All {state.totalCount} {noun} loaded.
-      </p>
-    );
-  }
-  return null;
 }
 
 function suggestedTaskBlockDuration(

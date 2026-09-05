@@ -289,6 +289,75 @@ test("keeps each List row's drawer independent", async ({ page }) => {
   await expect(firstDrawerTask).toBeVisible();
 });
 
+test("keeps a completed Project's drawer tasks visible without mutating controls", async ({
+  page
+}) => {
+  const project = await createProject(page, "Completed drawer Project");
+  const phase = await page.request.post(`/api/projects/${project.id}/phases`, {
+    data: { name: "Preserved phase" }
+  });
+  expect(phase.status()).toBe(201);
+  const phaseId = ((await phase.json()) as { id: string }).id;
+
+  // Completion can be confirmed with unfinished work still in the plan.
+  // Exercise the Done, Backlog and scheduled rows, including Schedule/Focus.
+  for (const [title, status, date] of [
+    ["Finished evidence", "DONE", null],
+    ["Unfinished backlog", "TODO", null],
+    ["Unfinished scheduled", "TODO", "2026-09-05"]
+  ] as const) {
+    const task = await page.request.post("/api/tasks", {
+      data: { title, status, date, projectId: project.id, phaseId, estimateMinutes: 30 }
+    });
+    expect(task.status()).toBe(201);
+  }
+  const completed = await page.request.patch(`/api/projects/${project.id}`, {
+    data: { status: "COMPLETED", confirm: true }
+  });
+  expect(completed.ok()).toBe(true);
+
+  await openListProjects(page);
+  await page.getByRole("button", { name: /^Completed/ }).click();
+  await projectToggle(page, "Completed drawer Project").click();
+
+  const drawer = projectRowFor(page, "Completed drawer Project").locator(
+    ".project-row-drawer"
+  );
+  await expect(drawer.locator(".project-task")).toHaveCount(3);
+  // This assertion fails on the original code: Reopen is enabled and sends
+  // status: TODO, which the API rejects for a completed Project.
+  await expect(
+    drawer.getByRole("button", { name: "Reopen Finished evidence", exact: true })
+  ).toBeDisabled();
+
+  for (const title of ["Finished evidence", "Unfinished backlog", "Unfinished scheduled"]) {
+    const input = drawer.getByRole("textbox", { name: `Task title: ${title}`, exact: true });
+    await expect(input).toBeVisible();
+    await expect(input).toHaveValue(title);
+    await expect(input).toBeDisabled();
+    const phaseSelect = drawer.getByRole("combobox", { name: `Phase for ${title}`, exact: true });
+    await expect(phaseSelect).toBeDisabled();
+    await expect(phaseSelect).toHaveValue(phaseId);
+  }
+  for (const title of ["Unfinished backlog", "Unfinished scheduled"]) {
+    await expect(
+      drawer.getByRole("button", { name: `Complete ${title}`, exact: true })
+    ).toBeDisabled();
+  }
+  await expect(drawer.locator(".project-task-state.done")).toHaveText("Done");
+  await expect(drawer.locator(".project-task-state.backlog")).toHaveText("Backlog");
+  await expect(drawer.getByText("Preserved phase", { exact: true }).first()).toBeVisible();
+  await expect(drawer.getByLabel("Schedule Unfinished backlog", { exact: true })).toBeDisabled();
+  await expect(drawer.getByRole("button", { name: "Focus 30m", exact: true })).toBeDisabled();
+  await expect(drawer.locator(".project-task:not(.done):not(.backlog) .project-task-meta")).toBeVisible();
+  await expect(drawer.getByRole("button", { name: /^Delete task/ })).toHaveCount(0);
+  await expect(drawer.locator(".project-row-add-task")).toHaveCount(0);
+  await expect(drawer.locator("button:enabled, input:enabled, select:enabled")).toHaveCount(0);
+  await expect(
+    drawer.getByText("Reopen this Project before editing tasks or adding unfinished work.", { exact: true })
+  ).toBeVisible();
+});
+
 test("retries a failed task load in place instead of collapsing", async ({
   page
 }) => {

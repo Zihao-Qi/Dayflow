@@ -59,6 +59,8 @@ type ProjectsWorkspaceProps = {
 type ProjectView = "cards" | "list";
 
 const PROJECTS_VIEW_STORAGE_KEY = "dayflow-projects-view";
+const PROJECT_PLAN_READ_ONLY_MESSAGE =
+  "Reopen this Project before editing tasks or adding unfinished work.";
 const PROJECT_VIEW_OPTIONS: Array<[ProjectView, string]> = [
   ["cards", "Cards"],
   ["list", "List"]
@@ -1095,6 +1097,9 @@ function ProjectRowTasks({
       {emptyPlan && (
         <p className="project-row-drawer-state">No tasks yet.</p>
       )}
+      {!canManagePlan && (
+        <p className="project-row-drawer-state">{PROJECT_PLAN_READ_ONLY_MESSAGE}</p>
+      )}
       {filledGroups.map((group) => (
         <div key={group.key} className="project-row-task-group">
           {group.label && (
@@ -1762,7 +1767,7 @@ function ProjectDetailWorkspace({
               </button>
             </div>
           ) : (
-            <p>Reopen this Project before adding unfinished work.</p>
+            <p>{PROJECT_PLAN_READ_ONLY_MESSAGE}</p>
           )}
         </div>
 
@@ -2483,6 +2488,7 @@ function ProjectTaskItem({
     >
       <button
         className="check-button"
+        disabled={!canManagePlan}
         aria-label={done ? `Reopen ${task.title}` : `Complete ${task.title}`}
         onClick={() =>
           void onUpdate(task.id, { status: done ? "TODO" : "DONE" })
@@ -2493,9 +2499,12 @@ function ProjectTaskItem({
       <input
         className="project-task-title"
         value={title}
+        disabled={!canManagePlan}
         onChange={(event) => setTitle(event.target.value)}
         onBlur={() => {
-          if (title.trim() && title !== task.title) void onUpdate(task.id, { title: title.trim() });
+          if (canManagePlan && title.trim() && title !== task.title) {
+            void onUpdate(task.id, { title: title.trim() });
+          }
         }}
         aria-label={`Task title: ${task.title}`}
       />
@@ -2524,6 +2533,7 @@ function ProjectTaskItem({
       ) : (
         <button
           className="project-task-focus"
+          disabled={!canManagePlan}
           onClick={() =>
             onStartFocus({
               taskId: task.id,
@@ -2542,6 +2552,7 @@ function ProjectTaskItem({
           Schedule
           <input
             type="date"
+            disabled={!canManagePlan}
             aria-label={`Schedule ${task.title}`}
             onChange={(event) => {
               if (event.target.value) {
@@ -2580,7 +2591,7 @@ function ProjectTaskItem({
           <Trash2 size={14} />
         </button>
       )}
-      {deleteConfirmOpen && (
+      {canManagePlan && deleteConfirmOpen && (
         <div
           className="project-delete-confirm-overlay"
           role="presentation"

@@ -600,6 +600,57 @@ test("adds a task from the List drawer and updates the row summary", async ({
   await expect(row.locator(".project-row-tasks")).toContainText("0/1");
 });
 
+test("keeps an add draft mounted while another drawer task refreshes", async ({
+  page
+}) => {
+  const project = await createProject(page, "Draft-safe Project");
+  const created = await page.request.post("/api/tasks", {
+    data: {
+      title: "Existing task",
+      projectId: project.id,
+      date: null,
+      estimateMinutes: 30
+    }
+  });
+  expect(created.status()).toBe(201);
+
+  await openListProjects(page);
+  const row = projectRowFor(page, "Draft-safe Project");
+  await projectToggle(page, "Draft-safe Project").click();
+
+  const drawer = row.locator(".project-row-drawer");
+  const draft = drawer.getByRole("textbox", { name: "New Project task" });
+  await draft.fill("Do not lose this");
+
+  let releaseReload = () => {};
+  const reloadHeld = new Promise<void>((resolve) => {
+    releaseReload = resolve;
+  });
+  let reportReloadStarted = () => {};
+  const reloadStarted = new Promise<void>((resolve) => {
+    reportReloadStarted = resolve;
+  });
+  await page.route(`**/api/projects/${project.id}`, async (route) => {
+    reportReloadStarted();
+    await reloadHeld;
+    await route.continue();
+  });
+
+  await drawer.getByRole("button", { name: "Complete Existing task" }).click();
+  await reloadStarted;
+  try {
+    await expect(drawer.getByRole("status")).toContainText("Refreshing tasks");
+    await expect(draft).toHaveValue("Do not lose this");
+  } finally {
+    releaseReload();
+  }
+
+  await expect(drawer.locator(".project-task.done")).toHaveCount(1);
+  await expect(row.locator(".project-row-tasks")).toContainText("1/1");
+  await expect(drawer.getByRole("status")).toHaveCount(0);
+  await expect(draft).toHaveValue("Do not lose this");
+});
+
 test("deletes a task from the List drawer", async ({ page }) => {
   const project = await createProject(page, "Shrinking Project");
   const created = await page.request.post("/api/tasks", {
@@ -624,6 +675,54 @@ test("deletes a task from the List drawer", async ({ page }) => {
 
   await expect(drawer.getByText("No tasks yet.")).toBeVisible();
   await expect(row.locator(".project-row-tasks")).toContainText("No tasks yet");
+});
+
+test("reconciles a drawer delete whose response is lost", async ({ page }) => {
+  const project = await createProject(page, "Reconciled Project");
+  const created = await page.request.post("/api/tasks", {
+    data: {
+      title: "Deleted despite the disconnect",
+      projectId: project.id,
+      date: null,
+      estimateMinutes: 30
+    }
+  });
+  expect(created.status()).toBe(201);
+  const task = (await created.json()) as { id: string };
+
+  let dropped = false;
+  await page.route(`**/api/tasks/${task.id}`, async (route) => {
+    if (route.request().method() !== "DELETE" || dropped) {
+      return route.continue();
+    }
+    dropped = true;
+    const forwarded = await page.request.delete(`/api/tasks/${task.id}`, {
+      headers: route.request().headers()
+    });
+    expect(forwarded.status()).toBe(200);
+    return route.abort("connectionfailed");
+  });
+
+  await openListProjects(page);
+  const row = projectRowFor(page, "Reconciled Project");
+  await projectToggle(page, "Reconciled Project").click();
+
+  const drawer = row.locator(".project-row-drawer");
+  await drawer
+    .getByRole("button", { name: "Delete task Deleted despite the disconnect" })
+    .click();
+  await drawer
+    .getByRole("button", { name: "Delete task", exact: true })
+    .click();
+
+  // The failed response is ambiguous, so the drawer and overview reconcile
+  // with the server before asking the user to retry.
+  await expect(drawer.getByText("No tasks yet.")).toBeVisible();
+  await expect(row.locator(".project-row-tasks")).toContainText("No tasks yet");
+
+  const detail = await page.request.get(`/api/projects/${project.id}`);
+  const body = (await detail.json()) as { tasks: Array<{ id: string }> };
+  expect(body.tasks).toHaveLength(0);
 });
 
 test("replays a lost drawer create instead of adding the task twice", async ({

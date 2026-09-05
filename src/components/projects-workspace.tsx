@@ -735,17 +735,20 @@ function ProjectRow({
       if (!response.ok || !result || !Array.isArray(result.tasks)) {
         throw new Error("unavailable");
       }
-      if (token !== requestToken.current) return;
+      if (token !== requestToken.current) return null;
       loadedKey.current = requestedKey;
-      setPlan({
+      const nextPlan = {
         tasks: result.tasks as ProjectTaskRecord[],
         phases: Array.isArray(result.phases)
           ? (result.phases as ProjectPhaseRecord[])
           : []
-      });
+      };
+      setPlan(nextPlan);
+      return nextPlan;
     } catch {
-      if (token !== requestToken.current) return;
+      if (token !== requestToken.current) return null;
       setLoadError("These tasks could not be loaded. Try again.");
+      return null;
     } finally {
       if (token === requestToken.current) setLoading(false);
     }
@@ -812,8 +815,8 @@ function ProjectRow({
     ).then(() => undefined);
   }
 
-  function deleteTask(id: string) {
-    return mutate(
+  async function deleteTask(id: string) {
+    const deleted = await mutate(
       `/api/tasks/${id}`,
       { method: "DELETE" },
       (value) =>
@@ -821,6 +824,26 @@ function ProjectRow({
           value && typeof value === "object" && "ok" in value && value.ok === true
         )
     );
+    if (deleted) return true;
+
+    // DELETE may have committed even when its response was lost. Reconcile
+    // before inviting a retry: a second DELETE would receive 404 and could
+    // otherwise leave the already-removed Task stuck in this drawer forever.
+    const reconciledPlan = await loadPlan();
+    let overviewRefreshed = true;
+    try {
+      await onDataChanged();
+    } catch {
+      overviewRefreshed = false;
+      setEditError(
+        "The task may have been deleted, but the Project list could not be refreshed."
+      );
+    }
+    if (reconciledPlan && !reconciledPlan.tasks.some((task) => task.id === id)) {
+      if (overviewRefreshed) setEditError("");
+      return true;
+    }
+    return false;
   }
 
   /**
@@ -861,8 +884,12 @@ function ProjectRow({
   useEffect(() => {
     if (loadedKey.current === planKey) return;
     loadedKey.current = planKey;
-    setPlan(null);
+    // Keep an open drawer mounted while its data refreshes. In particular,
+    // ProjectRowAddTask owns an unsubmitted draft that must survive edits to
+    // neighbouring Tasks. A closed drawer can discard its cache and load on
+    // the next expansion.
     if (expanded) void loadPlan();
+    else setPlan(null);
   }, [planKey, expanded]);
 
   return (
@@ -957,8 +984,8 @@ type ProjectRowPlan = {
 };
 
 /**
- * Read-only on purpose. Editing, scheduling and phase management all live on
- * the Project page; repeating them here would mean two places to keep in step.
+ * Uses the Project page's own task row so both surfaces expose the same task
+ * editing, scheduling, focusing and deletion behavior.
  */
 function ProjectRowTasks({
   plan,
@@ -988,7 +1015,7 @@ function ProjectRowTasks({
   onAddTask: (title: string, phaseId: string | null) => Promise<boolean>;
   onStartFocus: ProjectsWorkspaceProps["onStartFocus"];
 }) {
-  if (loading) {
+  if (loading && !plan) {
     return (
       <p className="project-row-drawer-state" role="status">
         Loading tasks…
@@ -996,7 +1023,7 @@ function ProjectRowTasks({
     );
   }
 
-  if (error) {
+  if (error && !plan) {
     return (
       <p className="project-row-drawer-state" role="alert">
         {error}{" "}
@@ -1047,6 +1074,19 @@ function ProjectRowTasks({
 
   return (
     <>
+      {loading && (
+        <p className="project-row-drawer-state" role="status">
+          Refreshing tasks…
+        </p>
+      )}
+      {error && (
+        <p className="project-row-drawer-state" role="alert">
+          {error}{" "}
+          <button type="button" className="text-button" onClick={onRetry}>
+            Try again
+          </button>
+        </p>
+      )}
       {editError && (
         <p className="project-row-edit-error" role="alert">
           {editError}

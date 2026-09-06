@@ -1,6 +1,6 @@
 import { appErrorResponse } from "@/lib/http-errors";
 import { projectErrors } from "@/modules/projects/domain/project";
-import { validateProjectPlacement as validatePlacement, translateProjectPersistenceError, type ProjectMutationAction } from "@/modules/projects/services/projects";
+import { translateProjectPersistenceError, type ProjectMutationAction } from "@/modules/projects/services/projects";
 import { getProjectDetail as readDetail } from "@/server/read-models/project-detail";
 import { AppError } from "@/shared/kernel/errors";
 
@@ -12,9 +12,6 @@ export { deletePhase as deletePhaseSafely } from "@/server/workflows/delete-phas
 // Preserve the legacy argument order only at the compatibility boundary.
 export function getProjectDetail(id: string, database: Parameters<typeof readDetail>[0], period: Parameters<typeof readDetail>[2]) {
   return readDetail(database, id, period);
-}
-export function validateProjectPlacement(projectId: string | null, phaseId: string | null, options: { allowCompleted?: boolean } = {}, database: Parameters<typeof validatePlacement>[0]) {
-  return validatePlacement(database, projectId, phaseId, options);
 }
 
 export function projectMutationErrorResponse(error: unknown, action: ProjectMutationAction) {

@@ -16,9 +16,18 @@ contract pinned by the cited test. Key order is not part of the contract.
 `Keys` explicitly records whether `code` and `field` are present. “Existing”
 means a test already pinned the full status and parsed body before Phase 0;
 “New” means this characterization added that pin.
-Every row names its route and test explicitly. Shared mapper tests also execute
-the named handlers; a mapper-only assertion is not sufficient for a route row.
-Defensive injected branches are labeled separately from user-reachable errors.
+Every row names its route and test explicitly. Backup inventory rows use real
+invalid requests or disposable-storage route cases to establish reachability.
+Defensive injected backup, Project mutation Prisma (create and update),
+Focus, focus-queue, and fieldless Time Block serializers appear only in
+Appendix A; they are not part of the reachable HTTP inventory.
+
+Activity POST mutation-id, receipt, and attribution rows use real request inputs
+and transaction delegates that return missing relationships, conflicting attribution,
+or mismatched/corrupt receipts. Each cited guard test asserts the exact envelope,
+expected lookups, and no writes. The separate “Activity error mapping pins every
+typed and Prisma branch” test pins serializer behavior; its remaining injected
+POST/PUT failures characterize transaction-seam mapping, not guard reachability.
 
 ## Bootstrap, reads, and exports
 
@@ -36,10 +45,17 @@ and read invariants are pinned by `tests/integration/read-model-invariants.test.
 
 ## Backup boundaries
 
-Backup management mapper cases are injected at each named handler boundary to
-pin status, keys, and operation-label selection without touching storage. These
-serializer pins do not claim that every management failure arises naturally in
-every operation. Parser and guard cases use real invalid HTTP requests.
+Guard and parser rows use real invalid HTTP requests. Management rows use
+`backup routes expose selected-backup errors through disposable storage`:
+invalid/missing identifiers on restore and download, disabled restore, a staged
+restore, cancellation without a pending restore, and a corrupted managed artifact.
+The operation-running cases hold the real startup operation open on a live
+owner file in disposable storage; they differ from the pending-restore conflict.
+Fallback rows use a configured backup directory below a regular file (`ENOTDIR`).
+Corrupt download also proves its 500 fallback: download uses
+`openVerifiedManagedBackup`, whereas restore's `resolveVerifiedBackup` converts
+inspection failures into the specific 422 envelope. No reachable backup row
+uses an exception injected into `headers.get`. See Appendix A for those pins.
 
 | Route and method | Trigger | Status | Exact JSON body | Keys | Contract test | Pin |
 | --- | --- | ---: | --- | --- | --- | --- |
@@ -62,37 +78,25 @@ every operation. Parser and guard cases use real invalid HTTP requests.
 | `DELETE /api/backups/restore` | `Sec-Fetch-Site` is neither `same-origin` nor `none` | 403 | `{"error":"Cross-site local data requests are not allowed.","code":"FORBIDDEN"}` | `code`; no `field` | `tests/unit/backup-route-contracts.test.ts` — “every backup handler pins its applicable request guards” | New |
 | `GET /api/backups/automatic` | `Sec-Fetch-Site` is neither `same-origin` nor `none` | 403 | `{"error":"Cross-site local data requests are not allowed.","code":"FORBIDDEN"}` | `code`; no `field` | `tests/unit/backup-route-contracts.test.ts` — “every backup handler pins its applicable request guards” | New |
 | `GET /api/backups/:id/download` | `Sec-Fetch-Site` is neither `same-origin` nor `none` | 403 | `{"error":"Cross-site local data requests are not allowed.","code":"FORBIDDEN"}` | `code`; no `field` | `tests/unit/backup-route-contracts.test.ts` — “every backup handler pins its applicable request guards” | New |
-| `GET /api/backups` | `BackupManagementError(VALIDATION_ERROR)`; invalid backup id example | 400 | `{"error":"The backup identifier is invalid.","code":"VALIDATION_ERROR","field":"backupId"}` | `code`, `field` | `tests/unit/backup-route-contracts.test.ts` — “backup error mapping pins management statuses, optional fields, and fallback” | New |
-| `POST /api/backups` | `BackupManagementError(VALIDATION_ERROR)`; invalid backup id example | 400 | `{"error":"The backup identifier is invalid.","code":"VALIDATION_ERROR","field":"backupId"}` | `code`, `field` | `tests/unit/backup-route-contracts.test.ts` — “backup error mapping pins management statuses, optional fields, and fallback” | New |
-| `PUT /api/backups/automatic` | `BackupManagementError(VALIDATION_ERROR)`; invalid backup id example | 400 | `{"error":"The backup identifier is invalid.","code":"VALIDATION_ERROR","field":"backupId"}` | `code`, `field` | `tests/unit/backup-route-contracts.test.ts` — “backup error mapping pins management statuses, optional fields, and fallback” | New |
-| `POST /api/backups/restore` | `BackupManagementError(VALIDATION_ERROR)`; invalid backup id example | 400 | `{"error":"The backup identifier is invalid.","code":"VALIDATION_ERROR","field":"backupId"}` | `code`, `field` | `tests/unit/backup-route-contracts.test.ts` — “backup error mapping pins management statuses, optional fields, and fallback” | New |
-| `DELETE /api/backups/restore` | `BackupManagementError(VALIDATION_ERROR)`; invalid backup id example | 400 | `{"error":"The backup identifier is invalid.","code":"VALIDATION_ERROR","field":"backupId"}` | `code`, `field` | `tests/unit/backup-route-contracts.test.ts` — “backup error mapping pins management statuses, optional fields, and fallback” | New |
-| `GET /api/backups/automatic` | `BackupManagementError(VALIDATION_ERROR)`; invalid backup id example | 400 | `{"error":"The backup identifier is invalid.","code":"VALIDATION_ERROR","field":"backupId"}` | `code`, `field` | `tests/unit/backup-route-contracts.test.ts` — “backup error mapping pins management statuses, optional fields, and fallback” | New |
-| `GET /api/backups/:id/download` | `BackupManagementError(VALIDATION_ERROR)`; invalid backup id example | 400 | `{"error":"The backup identifier is invalid.","code":"VALIDATION_ERROR","field":"backupId"}` | `code`, `field` | `tests/unit/backup-route-contracts.test.ts` — “backup error mapping pins management statuses, optional fields, and fallback” | New |
-| `GET /api/backups` | `BackupManagementError(NOT_FOUND)` | 404 | `{"error":"The selected backup could not be found.","code":"NOT_FOUND","field":"backupId"}` | `code`, `field` | `tests/unit/backup-route-contracts.test.ts` — “backup error mapping pins management statuses, optional fields, and fallback” | New |
-| `POST /api/backups` | `BackupManagementError(NOT_FOUND)` | 404 | `{"error":"The selected backup could not be found.","code":"NOT_FOUND","field":"backupId"}` | `code`, `field` | `tests/unit/backup-route-contracts.test.ts` — “backup error mapping pins management statuses, optional fields, and fallback” | New |
-| `PUT /api/backups/automatic` | `BackupManagementError(NOT_FOUND)` | 404 | `{"error":"The selected backup could not be found.","code":"NOT_FOUND","field":"backupId"}` | `code`, `field` | `tests/unit/backup-route-contracts.test.ts` — “backup error mapping pins management statuses, optional fields, and fallback” | New |
-| `POST /api/backups/restore` | `BackupManagementError(NOT_FOUND)` | 404 | `{"error":"The selected backup could not be found.","code":"NOT_FOUND","field":"backupId"}` | `code`, `field` | `tests/unit/backup-route-contracts.test.ts` — “backup error mapping pins management statuses, optional fields, and fallback” | New |
-| `DELETE /api/backups/restore` | `BackupManagementError(NOT_FOUND)` | 404 | `{"error":"The selected backup could not be found.","code":"NOT_FOUND","field":"backupId"}` | `code`, `field` | `tests/unit/backup-route-contracts.test.ts` — “backup error mapping pins management statuses, optional fields, and fallback” | New |
-| `GET /api/backups/automatic` | `BackupManagementError(NOT_FOUND)` | 404 | `{"error":"The selected backup could not be found.","code":"NOT_FOUND","field":"backupId"}` | `code`, `field` | `tests/unit/backup-route-contracts.test.ts` — “backup error mapping pins management statuses, optional fields, and fallback” | New |
-| `GET /api/backups/:id/download` | `BackupManagementError(NOT_FOUND)` | 404 | `{"error":"The selected backup could not be found.","code":"NOT_FOUND","field":"backupId"}` | `code`, `field` | `tests/unit/backup-route-contracts.test.ts` — “backup error mapping pins management statuses, optional fields, and fallback” | New |
-| `GET /api/backups` | `BackupManagementError(CONFLICT)` | 409 | `{"error":"Another restore is already pending.","code":"CONFLICT"}` | `code`; no `field` | `tests/unit/backup-route-contracts.test.ts` — “backup error mapping pins management statuses, optional fields, and fallback” | New |
-| `POST /api/backups` | `BackupManagementError(CONFLICT)` | 409 | `{"error":"Another restore is already pending.","code":"CONFLICT"}` | `code`; no `field` | `tests/unit/backup-route-contracts.test.ts` — “backup error mapping pins management statuses, optional fields, and fallback” | New |
-| `PUT /api/backups/automatic` | `BackupManagementError(CONFLICT)` | 409 | `{"error":"Another restore is already pending.","code":"CONFLICT"}` | `code`; no `field` | `tests/unit/backup-route-contracts.test.ts` — “backup error mapping pins management statuses, optional fields, and fallback” | New |
-| `POST /api/backups/restore` | `BackupManagementError(CONFLICT)` | 409 | `{"error":"Another restore is already pending.","code":"CONFLICT"}` | `code`; no `field` | `tests/unit/backup-route-contracts.test.ts` — “backup error mapping pins management statuses, optional fields, and fallback” | New |
-| `DELETE /api/backups/restore` | `BackupManagementError(CONFLICT)` | 409 | `{"error":"Another restore is already pending.","code":"CONFLICT"}` | `code`; no `field` | `tests/unit/backup-route-contracts.test.ts` — “backup error mapping pins management statuses, optional fields, and fallback” | New |
-| `GET /api/backups/automatic` | `BackupManagementError(CONFLICT)` | 409 | `{"error":"Another restore is already pending.","code":"CONFLICT"}` | `code`; no `field` | `tests/unit/backup-route-contracts.test.ts` — “backup error mapping pins management statuses, optional fields, and fallback” | New |
-| `GET /api/backups/:id/download` | `BackupManagementError(CONFLICT)` | 409 | `{"error":"Another restore is already pending.","code":"CONFLICT"}` | `code`; no `field` | `tests/unit/backup-route-contracts.test.ts` — “backup error mapping pins management statuses, optional fields, and fallback” | New |
-| `POST /api/backups/restore` | Corrupt/incompatible managed backup | 422 | `{"error":"The selected backup is corrupt or incompatible and cannot be restored.","code":"CORRUPT_BACKUP","field":"backupId"}` | `code`, `field` | `tests/unit/backup-route-contracts.test.ts` — “backup error mapping pins management statuses, optional fields, and fallback” | New |
-| `GET /api/backups/:id/download` | Corrupt/incompatible managed backup | 422 | `{"error":"The selected backup is corrupt or incompatible and cannot be restored.","code":"CORRUPT_BACKUP","field":"backupId"}` | `code`, `field` | `tests/unit/backup-route-contracts.test.ts` — “backup error mapping pins management statuses, optional fields, and fallback” | New |
-| `POST /api/backups/restore` | Restore disabled in this process | 503 | `{"error":"Restore scheduling is disabled in this Dayflow process.","code":"RESTORE_DISABLED"}` | `code`; no `field` | `tests/unit/backup-route-contracts.test.ts` — “backup error mapping pins management statuses, optional fields, and fallback” | New |
-| `GET /api/backups` | Unexpected list failure | 500 | `{"error":"Backup list could not be completed.","code":"INTERNAL_ERROR"}` | `code`; no `field` | `tests/unit/backup-route-contracts.test.ts` — “backup handlers select their operation-specific fallback bodies” | New |
-| `POST /api/backups` | Unexpected creation failure | 500 | `{"error":"Backup creation could not be completed.","code":"INTERNAL_ERROR"}` | `code`; no `field` | `tests/unit/backup-route-contracts.test.ts` — “backup handlers select their operation-specific fallback bodies” | New |
-| `GET /api/backups/automatic` | Unexpected automatic-settings failure | 500 | `{"error":"Automatic backup settings could not be completed.","code":"INTERNAL_ERROR"}` | `code`; no `field` | `tests/unit/backup-route-contracts.test.ts` — “backup handlers select their operation-specific fallback bodies” | New |
-| `PUT /api/backups/automatic` | Unexpected automatic-settings failure | 500 | `{"error":"Automatic backup settings could not be completed.","code":"INTERNAL_ERROR"}` | `code`; no `field` | `tests/unit/backup-route-contracts.test.ts` — “backup handlers select their operation-specific fallback bodies” | New |
-| `GET /api/backups/:id/download` | Unexpected download failure | 500 | `{"error":"Backup download could not be completed.","code":"INTERNAL_ERROR"}` | `code`; no `field` | `tests/unit/backup-route-contracts.test.ts` — “backup handlers select their operation-specific fallback bodies” | New |
-| `POST /api/backups/restore` | Unexpected scheduling failure | 500 | `{"error":"Restore scheduling could not be completed.","code":"INTERNAL_ERROR"}` | `code`; no `field` | `tests/unit/backup-route-contracts.test.ts` — “backup handlers select their operation-specific fallback bodies” | New |
-| `DELETE /api/backups/restore` | Unexpected cancellation failure | 500 | `{"error":"Restore cancellation could not be completed.","code":"INTERNAL_ERROR"}` | `code`; no `field` | `tests/unit/backup-route-contracts.test.ts` — “backup handlers select their operation-specific fallback bodies” | New |
+| `POST /api/backups/restore` | Invalid backup identifier; `invalid` example | 400 | `{"error":"The backup identifier is invalid.","code":"VALIDATION_ERROR","field":"backupId"}` | `code`, `field` | `tests/unit/backup-route-contracts.test.ts` — “backup routes expose selected-backup errors through disposable storage” | New |
+| `GET /api/backups/:id/download` | Invalid backup identifier; `invalid` example | 400 | `{"error":"The backup identifier is invalid.","code":"VALIDATION_ERROR","field":"backupId"}` | `code`, `field` | `tests/unit/backup-route-contracts.test.ts` — “backup routes expose selected-backup errors through disposable storage” | New |
+| `POST /api/backups/restore` | Valid backup identifier absent from managed storage | 404 | `{"error":"The selected backup could not be found.","code":"NOT_FOUND","field":"backupId"}` | `code`, `field` | `tests/unit/backup-route-contracts.test.ts` — “backup routes expose selected-backup errors through disposable storage” | New |
+| `GET /api/backups/:id/download` | Valid backup identifier absent from managed storage | 404 | `{"error":"The selected backup could not be found.","code":"NOT_FOUND","field":"backupId"}` | `code`, `field` | `tests/unit/backup-route-contracts.test.ts` — “backup routes expose selected-backup errors through disposable storage” | New |
+| `POST /api/backups/restore` | Another restore has already been staged | 409 | `{"error":"Another restore is already pending.","code":"CONFLICT"}` | `code`; no `field` | `tests/unit/backup-route-contracts.test.ts` — “backup routes expose selected-backup errors through disposable storage” | New |
+| `POST /api/backups/restore` | Corrupt/incompatible managed backup | 422 | `{"error":"The selected backup is corrupt or incompatible and cannot be restored.","code":"CORRUPT_BACKUP","field":"backupId"}` | `code`, `field` | `tests/unit/backup-route-contracts.test.ts` — “backup routes expose selected-backup errors through disposable storage” | New |
+| `POST /api/backups/restore` | Restore disabled in this process | 503 | `{"error":"Restore scheduling is disabled in this Dayflow process.","code":"RESTORE_DISABLED"}` | `code`; no `field` | `tests/unit/backup-route-contracts.test.ts` — “backup routes expose selected-backup errors through disposable storage” | New |
+| `DELETE /api/backups/restore` | No restore is pending (cancellation does not select a backup) | 404 | `{"error":"No restore is currently pending.","code":"NOT_FOUND"}` | `code`; no `field` | `tests/unit/backup-route-contracts.test.ts` — “backup routes expose selected-backup errors through disposable storage” | New |
+| `POST /api/backups` | Another backup operation is running (startup restore waits on a live owner) | 409 | `{"error":"Another backup operation is already running.","code":"CONFLICT"}` | `code`; no `field` | `tests/unit/backup-route-contracts.test.ts` — “backup routes expose selected-backup errors through disposable storage” | New |
+| `PUT /api/backups/automatic` | Another backup operation is running (startup restore waits on a live owner) | 409 | `{"error":"Another backup operation is already running.","code":"CONFLICT"}` | `code`; no `field` | `tests/unit/backup-route-contracts.test.ts` — “backup routes expose selected-backup errors through disposable storage” | New |
+| `POST /api/backups/restore` | Another backup operation is running (startup restore waits on a live owner) | 409 | `{"error":"Another backup operation is already running.","code":"CONFLICT"}` | `code`; no `field` | `tests/unit/backup-route-contracts.test.ts` — “backup routes expose selected-backup errors through disposable storage” | New |
+| `DELETE /api/backups/restore` | Another backup operation is running (startup restore waits on a live owner) | 409 | `{"error":"Another backup operation is already running.","code":"CONFLICT"}` | `code`; no `field` | `tests/unit/backup-route-contracts.test.ts` — “backup routes expose selected-backup errors through disposable storage” | New |
+| `GET /api/backups` | Unexpected list failure | 500 | `{"error":"Backup list could not be completed.","code":"INTERNAL_ERROR"}` | `code`; no `field` | `tests/unit/backup-route-contracts.test.ts` — “backup handlers select their operation-specific fallback bodies from storage failures” | New |
+| `POST /api/backups` | Unexpected creation failure | 500 | `{"error":"Backup creation could not be completed.","code":"INTERNAL_ERROR"}` | `code`; no `field` | `tests/unit/backup-route-contracts.test.ts` — “backup handlers select their operation-specific fallback bodies from storage failures” | New |
+| `GET /api/backups/automatic` | Unexpected automatic-settings failure | 500 | `{"error":"Automatic backup settings could not be completed.","code":"INTERNAL_ERROR"}` | `code`; no `field` | `tests/unit/backup-route-contracts.test.ts` — “backup handlers select their operation-specific fallback bodies from storage failures” | New |
+| `PUT /api/backups/automatic` | Unexpected automatic-settings failure | 500 | `{"error":"Automatic backup settings could not be completed.","code":"INTERNAL_ERROR"}` | `code`; no `field` | `tests/unit/backup-route-contracts.test.ts` — “backup handlers select their operation-specific fallback bodies from storage failures” | New |
+| `GET /api/backups/:id/download` | Unexpected download failure | 500 | `{"error":"Backup download could not be completed.","code":"INTERNAL_ERROR"}` | `code`; no `field` | `tests/unit/backup-route-contracts.test.ts` — “backup handlers select their operation-specific fallback bodies from storage failures” | New |
+| `POST /api/backups/restore` | Unexpected scheduling failure | 500 | `{"error":"Restore scheduling could not be completed.","code":"INTERNAL_ERROR"}` | `code`; no `field` | `tests/unit/backup-route-contracts.test.ts` — “backup handlers select their operation-specific fallback bodies from storage failures” | New |
+| `DELETE /api/backups/restore` | Unexpected cancellation failure | 500 | `{"error":"Restore cancellation could not be completed.","code":"INTERNAL_ERROR"}` | `code`; no `field` | `tests/unit/backup-route-contracts.test.ts` — “backup handlers select their operation-specific fallback bodies from storage failures” | New |
 | `POST /api/backups` | Malformed JSON | 400 | `{"error":"The request body must be valid JSON.","code":"INVALID_JSON"}` | `code`; no `field` | `tests/unit/backup-route-contracts.test.ts` — “every backup parser method pins malformed JSON and non-object bodies” | New |
 | `PUT /api/backups/automatic` | Malformed JSON | 400 | `{"error":"The request body must be valid JSON.","code":"INVALID_JSON"}` | `code`; no `field` | `tests/unit/backup-route-contracts.test.ts` — “every backup parser method pins malformed JSON and non-object bodies” | New |
 | `POST /api/backups/restore` | Malformed JSON | 400 | `{"error":"The request body must be valid JSON.","code":"INVALID_JSON"}` | `code`; no `field` | `tests/unit/backup-route-contracts.test.ts` — “every backup parser method pins malformed JSON and non-object bodies” | New |
@@ -161,7 +165,6 @@ every operation. Parser and guard cases use real invalid HTTP requests.
 | `PUT /api/time-blocks/:id` | Unexpected failure | 500 | `{"error":"Time Block could not be saved.","code":"INTERNAL_ERROR"}` | `code`; no `field` | `tests/unit/time-block-route-contracts.test.ts` — “Time Block error mapping pins idempotency, domain, Prisma, and fallback envelopes” | New |
 | `DELETE /api/time-blocks/:id` | Unexpected failure | 500 | `{"error":"Time Block could not be deleted.","code":"INTERNAL_ERROR"}` | `code`; no `field` | `tests/unit/time-block-route-contracts.test.ts` — “Time Block error mapping pins idempotency, domain, Prisma, and fallback envelopes” | New |
 | `POST /api/focus-queue` | Invalid placement | 400 | `{"error":"Queue placement must be next or end.","code":"VALIDATION_ERROR","field":"placement"}` | `code`, `field` | `tests/unit/workflow-route-contracts.test.ts` — “workflow routes expose typed validation fields before persistence” | Existing |
-| `POST /api/focus-queue` | Defensive `FocusQueueError`; bad placement example | 400 | `{"error":"Queue placement must be next or end.","code":"VALIDATION_ERROR"}` | `code`; no `field` | `tests/unit/workflow-route-contracts.test.ts` — “Focus queue pins not-found, conflict, and fallback envelopes” | New |
 | `POST /api/focus-queue` | Task missing | 404 | `{"error":"Task not found.","code":"NOT_FOUND","field":"taskId"}` | `code`, `field` | `tests/unit/workflow-route-contracts.test.ts` — “Focus queue pins not-found, conflict, and fallback envelopes” | New |
 | `POST /api/focus-queue` | Task already completed | 409 | `{"error":"Completed tasks cannot be queued.","code":"CONFLICT"}` | `code`; no `field` | `tests/unit/workflow-route-contracts.test.ts` — “Focus queue pins not-found, conflict, and fallback envelopes” | New |
 | `PATCH /api/focus-queue` | Expected queue order is stale | 409 | `{"error":"Queue order is out of date. Refresh and try again.","code":"CONFLICT"}` | `code`; no `field` | `tests/unit/workflow-route-contracts.test.ts` — “Focus queue pins not-found, conflict, and fallback envelopes” | New |
@@ -178,17 +181,15 @@ every operation. Parser and guard cases use real invalid HTTP requests.
 | `POST /api/projects` | Receipt mismatch | 409 | `{"error":"This mutation identifier was already used for a different request.","code":"MUTATION_ID_CONFLICT"}` | `code`; no `field` | `tests/unit/project-route-contracts.test.ts` — “Project and Phase create pin their own mismatch and corrupt receipt bodies” | New |
 | `POST /api/projects` | Invalid stored receipt | 500 | `{"error":"The saved mutation receipt could not be read.","code":"INVALID_MUTATION_RECEIPT"}` | `code`; no `field` | `tests/unit/project-route-contracts.test.ts` — “Project and Phase create pin their own mismatch and corrupt receipt bodies” | New |
 | `POST /api/projects` | Invalid body; negative weekly budget example | 400 | `{"error":"Weekly effort budget must be a whole number from 1 to 10080 minutes.","code":"VALIDATION_ERROR","field":"weeklyMinutesBudget"}` | `code`, `field` | `tests/unit/project-route-contracts.test.ts` — “Project and Phase routes expose typed validation fields” | Existing |
-| `POST /api/projects` | Prisma `P2003` | 409 | `{"error":"A related record changed before the Project could be created.","code":"CONFLICT"}` | `code`; no `field` | `tests/unit/project-route-contracts.test.ts` — “Project and Phase create pin Prisma and internal envelopes” | New |
 | `POST /api/projects` | Unexpected failure | 500 | `{"error":"Project could not be created.","code":"INTERNAL_ERROR"}` | `code`; no `field` | `tests/unit/project-route-contracts.test.ts` — “Project and Phase create pin Prisma and internal envelopes” | New |
 | `PATCH /api/projects/:id` | Invalid body or id | 400 | `{"error":"Project identifier is invalid.","code":"VALIDATION_ERROR","field":"id"}` | `code`, `field` | `tests/unit/project-route-contracts.test.ts` — “Project and Phase path identifiers are validated before querying” | Existing |
 | `PATCH /api/projects/:id` | Project absent or Prisma `P2025` | 404 | `{"error":"Project not found.","code":"NOT_FOUND"}` | `code`; no `field` | `tests/unit/project-route-contracts.test.ts` — “Project and Phase item routes pin P2025, P2003, confirmation, and fallbacks” | New |
 | `PATCH /api/projects/:id` | Unfinished Tasks and no completion confirmation | 409 | `{"error":"Confirm completion while unfinished tasks remain.","code":"CONFLICT","field":"status","requiresConfirmation":true}` | `code`, `field`, plus `requiresConfirmation` | `tests/integration/transactional-workflows.test.ts` — “Project completion with unfinished Tasks requires confirmation and changes nothing” | New |
-| `PATCH /api/projects/:id` | Prisma `P2003` | 409 | `{"error":"A related record changed before the Project could be saved.","code":"CONFLICT"}` | `code`; no `field` | `tests/unit/project-route-contracts.test.ts` — “Project and Phase item routes pin P2025, P2003, confirmation, and fallbacks” | New |
 | `PATCH /api/projects/:id` | Unexpected failure | 500 | `{"error":"Project could not be saved.","code":"INTERNAL_ERROR"}` | `code`; no `field` | `tests/unit/project-route-contracts.test.ts` — “Project and Phase item routes pin P2025, P2003, confirmation, and fallbacks” | New |
 | `DELETE /api/projects/:id` | Missing `confirm=true` | 400 | `{"error":"Project deletion requires confirmation.","code":"VALIDATION_ERROR","field":"confirm"}` | `code`, `field` | `tests/unit/project-route-contracts.test.ts` — “Project deletion requires a typed confirmation response” | Existing |
 | `DELETE /api/projects/:id` | Project absent or Prisma `P2025` | 404 | `{"error":"Project not found.","code":"NOT_FOUND"}` | `code`; no `field` | `tests/unit/project-route-contracts.test.ts` — “Project and Phase item routes pin P2025, P2003, confirmation, and fallbacks” | New |
 | `DELETE /api/projects/:id` | Prisma `P2003` | 409 | `{"error":"A related record changed before the Project could be saved.","code":"CONFLICT"}` | `code`; no `field` | `tests/unit/project-route-contracts.test.ts` — “Project and Phase item routes pin P2025, P2003, confirmation, and fallbacks” | New |
-| `DELETE /api/projects/:id` | Unexpected failure | 500 | `{"error":"Project could not be deleted.","code":"INTERNAL_ERROR"}` | `code`; no `field` | `tests/unit/project-route-contracts.test.ts` — “Project and Phase item routes pin P2025, P2003, confirmation, and fallbacks” | New |
+| `DELETE /api/projects/:id` | Unexpected failure | 500 | `{"error":"Project could not be deleted.","code":"INTERNAL_ERROR"}` | `code`; no `field` | `tests/unit/project-route-contracts.test.ts` — “Project and Phase item routes pin P2025, P2003, confirmation, and fallbacks”; `tests/integration/transactional-workflows.test.ts` — “Project deletion rolls back every detachment when the final delete fails” (real final-delete constraint failure) | New |
 | `POST /api/projects/:id/phases` | Invalid mutation id | 400 | `{"error":"X-Dayflow-Mutation-Id must contain 1 to 128 characters.","code":"INVALID_MUTATION_ID"}` | `code`; no `field` | `tests/unit/project-route-contracts.test.ts` — “Project and Phase creates validate mutation identifiers before writing” | Existing |
 | `POST /api/projects/:id/phases` | Parent Project absent | 404 | `{"error":"The selected project could not be found.","code":"NOT_FOUND","field":"projectId"}` | `code`, `field` | `tests/unit/project-route-contracts.test.ts` — “Project and Phase create pin Prisma and internal envelopes” | New |
 | `POST /api/projects/:id/phases` | Parent Project completed | 409 | `{"error":"Reopen the completed project before adding unfinished work.","code":"RELATIONSHIP_CONFLICT","field":"projectId"}` | `code`, `field` | `tests/unit/project-route-contracts.test.ts` — “Project and Phase create pin Prisma and internal envelopes” | New |
@@ -221,13 +222,13 @@ every operation. Parser and guard cases use real invalid HTTP requests.
 | `PATCH /api/focus-session/:id` | State transition conflict | 409 | `{"error":"Only a running timer can be paused.","code":"CONFLICT"}` | `code`; no `field` | `tests/unit/workflow-route-contracts.test.ts` — “Focus transition pins not-found, conflict, Prisma, and fallback envelopes” | New |
 | `PATCH /api/focus-session/:id` | Prisma `P2003` or `P2025` | 409 | `{"error":"The Focus session changed before it could be saved.","code":"CONFLICT"}` | `code`; no `field` | `tests/unit/workflow-route-contracts.test.ts` — “Focus transition pins not-found, conflict, Prisma, and fallback envelopes” | New |
 | `PATCH /api/focus-session/:id` | Unexpected failure | 500 | `{"error":"Focus timer could not be saved.","code":"INTERNAL_ERROR"}` | `code`; no `field` | `tests/unit/workflow-route-contracts.test.ts` — “Focus transition pins not-found, conflict, Prisma, and fallback envelopes” | New |
-| `POST /api/activities` | Invalid mutation id | 400 | `{"error":"X-Dayflow-Mutation-Id must contain 1 to 128 characters.","code":"INVALID_MUTATION_ID"}` | `code`; no `field` | `tests/unit/evidence-route-contracts.test.ts` — “Activity error mapping pins every typed and Prisma branch” | New |
-| `POST /api/activities` | Receipt mismatch | 409 | `{"error":"This mutation identifier was already used for a different request.","code":"MUTATION_ID_CONFLICT"}` | `code`; no `field` | `tests/unit/evidence-route-contracts.test.ts` — “Activity error mapping pins every typed and Prisma branch” | New |
-| `POST /api/activities` | Invalid stored receipt | 500 | `{"error":"The saved mutation receipt could not be read.","code":"INVALID_MUTATION_RECEIPT"}` | `code`; no `field` | `tests/unit/evidence-route-contracts.test.ts` — “Activity error mapping pins every typed and Prisma branch” | New |
+| `POST /api/activities` | Invalid mutation id | 400 | `{"error":"X-Dayflow-Mutation-Id must contain 1 to 128 characters.","code":"INVALID_MUTATION_ID"}` | `code`; no `field` | `tests/unit/evidence-route-contracts.test.ts` — “Activity POST reaches invalid mutation id through its own guards” | New |
+| `POST /api/activities` | Receipt mismatch | 409 | `{"error":"This mutation identifier was already used for a different request.","code":"MUTATION_ID_CONFLICT"}` | `code`; no `field` | `tests/unit/evidence-route-contracts.test.ts` — “Activity POST reaches receipt mismatch through its own guards” | New |
+| `POST /api/activities` | Invalid stored receipt | 500 | `{"error":"The saved mutation receipt could not be read.","code":"INVALID_MUTATION_RECEIPT"}` | `code`; no `field` | `tests/unit/evidence-route-contracts.test.ts` — “Activity POST reaches invalid stored receipt through its own guards” | New |
 | `POST /api/activities` | Malformed JSON | 400 | `{"error":"Request body must be valid JSON.","code":"INVALID_JSON","field":"body"}` | `code`, `field` | `tests/unit/evidence-route-contracts.test.ts` — “evidence routes return typed malformed-JSON responses” | Existing |
-| `POST /api/activities` | Linked Task missing | 404 | `{"error":"The linked task could not be found.","code":"RELATIONSHIP_NOT_FOUND","field":"taskId"}` | `code`, `field` | `tests/unit/evidence-route-contracts.test.ts` — “Activity error mapping pins every typed and Prisma branch” | New |
-| `POST /api/activities` | Linked Project missing | 404 | `{"error":"The linked project could not be found.","code":"RELATIONSHIP_NOT_FOUND","field":"projectId"}` | `code`, `field` | `tests/unit/evidence-route-contracts.test.ts` — “Activity error mapping pins every typed and Prisma branch” | New |
-| `POST /api/activities` | Attribution conflict | 409 | `{"error":"The selected task belongs to a different project.","code":"ATTRIBUTION_CONFLICT","field":"projectId"}` | `code`, `field` | `tests/unit/evidence-route-contracts.test.ts` — “Activity error mapping pins every typed and Prisma branch” | New |
+| `POST /api/activities` | Linked Task missing | 404 | `{"error":"The linked task could not be found.","code":"RELATIONSHIP_NOT_FOUND","field":"taskId"}` | `code`, `field` | `tests/unit/evidence-route-contracts.test.ts` — “Activity POST reaches linked Task missing through its own guards” | New |
+| `POST /api/activities` | Linked Project missing | 404 | `{"error":"The linked project could not be found.","code":"RELATIONSHIP_NOT_FOUND","field":"projectId"}` | `code`, `field` | `tests/unit/evidence-route-contracts.test.ts` — “Activity POST reaches linked Project missing through its own guards” | New |
+| `POST /api/activities` | Attribution conflict | 409 | `{"error":"The selected task belongs to a different project.","code":"ATTRIBUTION_CONFLICT","field":"projectId"}` | `code`, `field` | `tests/unit/evidence-route-contracts.test.ts` — “Activity POST reaches attribution conflict through its own guards” | New |
 | `POST /api/activities` | Prisma `P2003` or `P2025` | 409 | `{"error":"The linked Activity relationship is no longer available.","code":"RELATIONSHIP_CONFLICT"}` | `code`; no `field` | `tests/unit/evidence-route-contracts.test.ts` — “Activity error mapping pins every typed and Prisma branch” | New |
 | `POST /api/activities` | Unexpected failure | 500 | `{"error":"Activity could not be saved.","code":"INTERNAL_ERROR"}` | `code`; no `field` | `tests/unit/evidence-route-contracts.test.ts` — “Activity error mapping pins every typed and Prisma branch” | New |
 | `PUT /api/activities/:id` | Invalid input/id | 400 | `{"error":"Activity identifier is invalid.","code":"VALIDATION_ERROR","field":"id"}` | `code`, `field` | `tests/unit/evidence-route-contracts.test.ts` — “Activity replacement route validates the path and full body before writing” | Existing |
@@ -319,9 +320,6 @@ when a relationship or validation condition is field-specific.
 | `GET /api/materials` | Invalid cursor | 400 | `{"code":"INVALID_CURSOR","error":"The pagination cursor is invalid."}` | `code`; no `field` | `tests/unit/journal-route-contracts.test.ts` — “Journal GET routes pin Notes validation and Materials cursor errors” | New |
 | `GET /api/review/history` | limit=0 | 400 | `{"error":"Page limit must be a whole number between 1 and 100.","code":"VALIDATION_ERROR"}` | `code`; no `field` | `tests/unit/review-route-contracts.test.ts` — “Review History GET pins query validation without a field” | New |
 | `POST /api/materials` | Selected Task belongs to another Project | 409 | `{"code":"ATTRIBUTION_CONFLICT","error":"The selected task belongs to a different project."}` | `code`; no `field` | `tests/unit/journal-route-contracts.test.ts` — “Materials POST pins receipt and attribution bodies through its handler” | New |
-| `PUT /api/time-blocks/:id` | Injected fieldless TimeBlockError (defensive mapper branch) | 404 | `{"error":"Time Block not found.","code":"NOT_FOUND"}` | `code`; no `field` | `tests/unit/time-block-route-contracts.test.ts` — “Time Block error mapping pins idempotency, domain, Prisma, and fallback envelopes” | New |
-| `POST /api/focus-session` | Injected FocusSessionError (preempted by request validation) | 400 | `{"error":"Timer duration must be between 1 and 240 minutes.","code":"VALIDATION_ERROR"}` | `code`; no `field` | `tests/unit/workflow-route-contracts.test.ts` — “Focus handlers preserve defensive fieldless validation envelopes” | New |
-| `PATCH /api/focus-session/:id` | Injected FocusSessionError (preempted by request validation) | 400 | `{"error":"Unknown timer action.","code":"VALIDATION_ERROR"}` | `code`; no `field` | `tests/unit/workflow-route-contracts.test.ts` — “Focus handlers preserve defensive fieldless validation envelopes” | New |
 | `PATCH /api/focus-queue` | Duplicate ids | 400 | `{"error":"Task identifiers must not contain duplicates.","code":"VALIDATION_ERROR","field":"ids"}` | `code`, `field` | `tests/unit/workflow-route-contracts.test.ts` — “Focus queue PATCH and DELETE pin their validation and fallback bodies” | New |
 | `DELETE /api/focus-queue` | Empty taskId | 400 | `{"error":"Task identifier is invalid.","code":"VALIDATION_ERROR","field":"taskId"}` | `code`, `field` | `tests/unit/workflow-route-contracts.test.ts` — “Focus queue PATCH and DELETE pin their validation and fallback bodies” | New |
 | `POST /api/tasks` | Completed Project with unfinished Task | 409 | `{"error":"Reopen the completed project before adding unfinished work.","code":"RELATIONSHIP_CONFLICT","field":"projectId"}` | `code`, `field` | `tests/unit/task-route-contracts.test.ts` — “Task POST and PATCH pin each placement error independently” | New |
@@ -331,11 +329,11 @@ when a relationship or validation condition is field-specific.
 
 ## Findings
 
-- `GET /api/agent-export` is a complete-data export and currently returns a
-  directly planted future-dated Activity, while bootstrap and day reads filter
-  future evidence. Phase 0 pins that current behavior in
-  `tests/integration/read-model-invariants.test.ts`; production behavior was
-  not changed.
+- `GET /api/agent-export` includes every stored Activity with no date cutoff,
+  preserving README's complete-export contract and the route's metadata.
+  The read-model fixture pins historical, current-day, and tomorrow's Activities
+  in ascending order. Bootstrap returns only the current half-open local day,
+  including its last millisecond and excluding tomorrow at midnight.
 - `GET /api/projects/:id` and two `DELETE /api/activities/:id` branches omit
   both `code` and `field`. This is intentional characterization, not a
   normalization.
@@ -346,14 +344,117 @@ when a relationship or validation condition is field-specific.
   409 conflicts. Prisma `P2025` likewise means 404 for Task/Project/Phase/Time
   Block item writes but 409 for Focus transitions, Activity deletes, Task
   reorder, and schedule undo.
-- Bootstrap filters evidence by local calendar day, not by the current instant.
-  The invariant fixture now fixes September 4 at noon in America/Chicago, so
-  its existing timestamp assertion is deterministic even before 09:00.
+- Bootstrap bounds Activity evidence by local calendar day, not by the current
+  instant. The invariant fixture fixes September 4 at noon in America/Chicago
+  and retains later-today evidence. Agent export has no date cutoff.
 - Notes reject `limit=0` with “Page limit must be a positive whole number.”;
   Review History uses “Page limit must be a whole number between 1 and 100.”
   Both omit `field`. Their distinct HTTP bodies are pinned above.
-- The fieldless Time Block domain-error arm and the two fieldless Focus
-  validation arms are defensive serializer contracts. Current Time Block
-  throw sites supply fields, and Focus request validation normally preempts
-  its domain validation. Injected errors pin these arms without claiming a
-  new user-triggerable failure.
+- The fieldless Time Block domain-error arm, two fieldless Focus validation
+  arms, fieldless focus-queue validation arm, and Project create/update Prisma
+  P2003 arms are defensive serializer contracts documented in Appendix A.
+  Their mapper tests remain unchanged.
+
+## Appendix A — Defensive serializers (not reachable inventory)
+
+### Focus, focus queue, and neighboring Time Block serializer
+
+These four rows are serializer pins, not reachable HTTP envelopes:
+
+- Focus POST calls `parseFocusSessionStartMutation` before `startFocusSession`.
+  Its integer range check rejects invalid `plannedMinutes` with a field-bearing
+  `WorkflowMutationRequestError`; the service's same range check is preempted.
+  The mapper test instead makes `$transaction` throw a constructed error.
+- Focus PATCH calls `parseFocusSessionTransitionMutation` before
+  `transitionFocusSession`. Its action enum rejects unknown actions with
+  `field: "action"`; every accepted action has a service branch (`record` aliases
+  `enrich`). The mapper test injects the fieldless error through `findUnique`.
+- Focus-queue POST calls `parseFocusQueueAddMutation`, whose placement enum
+  produces `field: "placement"`. The only production `new FocusQueueError`
+  is in `parseQueuePlacement`, which no handler calls. The mapper test replaces
+  `$transaction` with a thrower. Neighboring missing-Task and completed-Task
+  responses come from real guards in `addToFocusQueue`; stale order comes from
+  `reorderFocusQueue`. Those reachable rows remain above.
+- The neighboring Time Block PUT fieldless 404 has the same problem. All
+  `TimeBlockError` constructors in `time-blocks.ts` and
+  `time-block-persistence.ts` supply fields; the missing-row guard uses `id`,
+  as does the `P2025` mapper in `time-block-http.ts`. The cited test constructs
+  a fieldless error and injects it via the transaction. Field-bearing missing
+  row, relationship, parser, and overlap responses remain reachable.
+
+| Route and method | Injected error (not an HTTP trigger) | Status | Exact JSON body | Keys | Contract test | Pin |
+| --- | --- | ---: | --- | --- | --- | --- |
+| `POST /api/focus-queue` | Defensive `FocusQueueError`; bad placement example | 400 | `{"error":"Queue placement must be next or end.","code":"VALIDATION_ERROR"}` | `code`; no `field` | `tests/unit/workflow-route-contracts.test.ts` — “Focus queue pins not-found, conflict, and fallback envelopes” | New |
+| `PUT /api/time-blocks/:id` | Injected fieldless TimeBlockError (defensive mapper branch) | 404 | `{"error":"Time Block not found.","code":"NOT_FOUND"}` | `code`; no `field` | `tests/unit/time-block-route-contracts.test.ts` — “Time Block error mapping pins idempotency, domain, Prisma, and fallback envelopes” | New |
+| `POST /api/focus-session` | Injected FocusSessionError (preempted by request validation) | 400 | `{"error":"Timer duration must be between 1 and 240 minutes.","code":"VALIDATION_ERROR"}` | `code`; no `field` | `tests/unit/workflow-route-contracts.test.ts` — “Focus handlers preserve defensive fieldless validation envelopes” | New |
+| `PATCH /api/focus-session/:id` | Injected FocusSessionError (preempted by request validation) | 400 | `{"error":"Unknown timer action.","code":"VALIDATION_ERROR"}` | `code`; no `field` | `tests/unit/workflow-route-contracts.test.ts` — “Focus handlers preserve defensive fieldless validation envelopes” | New |
+
+### Project creation and update
+
+Neither `POST /api/projects` nor `PATCH /api/projects/:id` can produce `P2003`
+through current writes:
+
+- `POST /api/projects`: `parseProjectCreateMutation` returns scalar Project fields,
+  `project.create` writes no foreign keys or nested relations, and
+  `getProjectDetail` only reads. The optional `MutationReceipt` created by
+  `runIdempotentCreate` has no relations in `prisma/schema.prisma`.
+- `PATCH /api/projects/:id`: `parseProjectPatchMutation` permits only scalar
+  Project fields (`name`, `desiredOutcome`, `targetDate`, `weeklyMinutesBudget`,
+  `targetDurationValue`, `targetDurationUnit`, `status`). The transaction does reads
+  (`findUnique` and optional `task.count`), a scalar `project.update`, and
+  `getProjectDetail` (which only reads).
+- `Project` itself has no foreign key references to any other model in
+  `prisma/schema.prisma`.
+
+In each case, these envelopes exist in the mapper as defence in depth, they are
+exercised only by fault injection where the test replaces `$transaction` with a
+function that throws, and they are not reachable through the current handler and
+schema. Keep them as defensive serializer coverage.
+
+The other rows on these routes remain applicable and reachable: malformed JSON,
+invalid mutation id or route id, and invalid body are request validation;
+mismatched and corrupt stored receipts have explicit guards; missing Project or
+P2025 race returns 404; unfinished task completion conflict returns 409; and
+unexpected persistence/readback failures reach the generic 500. None requires a
+nonexistent foreign-key write.
+
+| Route and method | Injected error (not an HTTP trigger) | Status | Exact JSON body | Keys | Contract test | Pin |
+| --- | --- | ---: | --- | --- | --- | --- |
+| `POST /api/projects` | Injected Prisma `P2003` (no foreign-key write) | 409 | `{"error":"A related record changed before the Project could be created.","code":"CONFLICT"}` | `code`; no `field` | `tests/unit/project-route-contracts.test.ts` — “Project and Phase create pin Prisma and internal envelopes” | New |
+| `PATCH /api/projects/:id` | Injected Prisma `P2003` (no foreign-key write) | 409 | `{"error":"A related record changed before the Project could be saved.","code":"CONFLICT"}` | `code`; no `field` | `tests/unit/project-route-contracts.test.ts` — “Project and Phase item routes pin P2025, P2003, confirmation, and fallbacks” | New |
+
+### Backup boundaries
+
+These 17 rows were moved out of the reachable inventory. The cited test throws
+constructed `BackupManagementError` instances from `request.headers.get` to pin
+the shared serializer at each handler. This deliberately bypasses operation
+inputs and storage: it proves status/body serialization, not HTTP reachability.
+GET automatic settings has no backup identifier; cancellation has its own
+fieldless 404; only restore scheduling emits the pending-restore conflict and
+the restore-specific corrupt-backup 422. Keep these defensive mapper tests even
+though the following operation/envelope combinations are not reachable.
+
+| Route and method | Injected error (not an HTTP trigger) | Status | Exact JSON body | Keys | Contract test | Pin |
+| --- | --- | ---: | --- | --- | --- | --- |
+| `GET /api/backups` | `BackupManagementError(VALIDATION_ERROR)`; invalid backup id example | 400 | `{"error":"The backup identifier is invalid.","code":"VALIDATION_ERROR","field":"backupId"}` | `code`, `field` | `tests/unit/backup-route-contracts.test.ts` — “defensive backup serializers pin injected management statuses, optional fields, and fallback” | New |
+| `POST /api/backups` | `BackupManagementError(VALIDATION_ERROR)`; invalid backup id example | 400 | `{"error":"The backup identifier is invalid.","code":"VALIDATION_ERROR","field":"backupId"}` | `code`, `field` | `tests/unit/backup-route-contracts.test.ts` — “defensive backup serializers pin injected management statuses, optional fields, and fallback” | New |
+| `PUT /api/backups/automatic` | `BackupManagementError(VALIDATION_ERROR)`; invalid backup id example | 400 | `{"error":"The backup identifier is invalid.","code":"VALIDATION_ERROR","field":"backupId"}` | `code`, `field` | `tests/unit/backup-route-contracts.test.ts` — “defensive backup serializers pin injected management statuses, optional fields, and fallback” | New |
+| `DELETE /api/backups/restore` | `BackupManagementError(VALIDATION_ERROR)`; invalid backup id example | 400 | `{"error":"The backup identifier is invalid.","code":"VALIDATION_ERROR","field":"backupId"}` | `code`, `field` | `tests/unit/backup-route-contracts.test.ts` — “defensive backup serializers pin injected management statuses, optional fields, and fallback” | New |
+| `GET /api/backups/automatic` | `BackupManagementError(VALIDATION_ERROR)`; invalid backup id example | 400 | `{"error":"The backup identifier is invalid.","code":"VALIDATION_ERROR","field":"backupId"}` | `code`, `field` | `tests/unit/backup-route-contracts.test.ts` — “defensive backup serializers pin injected management statuses, optional fields, and fallback” | New |
+| `GET /api/backups` | `BackupManagementError(NOT_FOUND)` | 404 | `{"error":"The selected backup could not be found.","code":"NOT_FOUND","field":"backupId"}` | `code`, `field` | `tests/unit/backup-route-contracts.test.ts` — “defensive backup serializers pin injected management statuses, optional fields, and fallback” | New |
+| `POST /api/backups` | `BackupManagementError(NOT_FOUND)` | 404 | `{"error":"The selected backup could not be found.","code":"NOT_FOUND","field":"backupId"}` | `code`, `field` | `tests/unit/backup-route-contracts.test.ts` — “defensive backup serializers pin injected management statuses, optional fields, and fallback” | New |
+| `PUT /api/backups/automatic` | `BackupManagementError(NOT_FOUND)` | 404 | `{"error":"The selected backup could not be found.","code":"NOT_FOUND","field":"backupId"}` | `code`, `field` | `tests/unit/backup-route-contracts.test.ts` — “defensive backup serializers pin injected management statuses, optional fields, and fallback” | New |
+| `DELETE /api/backups/restore` | `BackupManagementError(NOT_FOUND)` | 404 | `{"error":"The selected backup could not be found.","code":"NOT_FOUND","field":"backupId"}` | `code`, `field` | `tests/unit/backup-route-contracts.test.ts` — “defensive backup serializers pin injected management statuses, optional fields, and fallback” | New |
+| `GET /api/backups/automatic` | `BackupManagementError(NOT_FOUND)` | 404 | `{"error":"The selected backup could not be found.","code":"NOT_FOUND","field":"backupId"}` | `code`, `field` | `tests/unit/backup-route-contracts.test.ts` — “defensive backup serializers pin injected management statuses, optional fields, and fallback” | New |
+| `GET /api/backups` | `BackupManagementError(CONFLICT)` | 409 | `{"error":"Another restore is already pending.","code":"CONFLICT"}` | `code`; no `field` | `tests/unit/backup-route-contracts.test.ts` — “defensive backup serializers pin injected management statuses, optional fields, and fallback” | New |
+| `POST /api/backups` | `BackupManagementError(CONFLICT)` | 409 | `{"error":"Another restore is already pending.","code":"CONFLICT"}` | `code`; no `field` | `tests/unit/backup-route-contracts.test.ts` — “defensive backup serializers pin injected management statuses, optional fields, and fallback” | New |
+| `PUT /api/backups/automatic` | `BackupManagementError(CONFLICT)` | 409 | `{"error":"Another restore is already pending.","code":"CONFLICT"}` | `code`; no `field` | `tests/unit/backup-route-contracts.test.ts` — “defensive backup serializers pin injected management statuses, optional fields, and fallback” | New |
+| `DELETE /api/backups/restore` | `BackupManagementError(CONFLICT)` | 409 | `{"error":"Another restore is already pending.","code":"CONFLICT"}` | `code`; no `field` | `tests/unit/backup-route-contracts.test.ts` — “defensive backup serializers pin injected management statuses, optional fields, and fallback” | New |
+| `GET /api/backups/automatic` | `BackupManagementError(CONFLICT)` | 409 | `{"error":"Another restore is already pending.","code":"CONFLICT"}` | `code`; no `field` | `tests/unit/backup-route-contracts.test.ts` — “defensive backup serializers pin injected management statuses, optional fields, and fallback” | New |
+| `GET /api/backups/:id/download` | `BackupManagementError(CONFLICT)` | 409 | `{"error":"Another restore is already pending.","code":"CONFLICT"}` | `code`; no `field` | `tests/unit/backup-route-contracts.test.ts` — “defensive backup serializers pin injected management statuses, optional fields, and fallback” | New |
+| `GET /api/backups/:id/download` | Corrupt/incompatible managed backup | 422 | `{"error":"The selected backup is corrupt or incompatible and cannot be restored.","code":"CORRUPT_BACKUP","field":"backupId"}` | `code`, `field` | `tests/unit/backup-route-contracts.test.ts` — “defensive backup serializers pin injected management statuses, optional fields, and fallback” | New |
+
+The mapper test additionally injects the restore-specific 422 and 503 into every
+handler, including operations never listed above. Those cross-operation probes
+are also defensive serializer coverage only. Reachable versions of the same
+bodies require the real route cases cited in the Backup boundaries table.

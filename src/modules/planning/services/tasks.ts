@@ -102,6 +102,46 @@ export async function readDayTasks(database: { task: Pick<Prisma.TransactionClie
   return tasks.map(serializeTask);
 }
 
+type TaskListReadDatabase = { task: Pick<Prisma.TransactionClient["task"], "findMany"> };
+
+/** Scheduled window plus overdue, backlog and queued Tasks, retaining raw records. */
+export function readTaskWindow(tx: TaskListReadDatabase, range: { start: Date; end: Date }, today: Date) {
+  return tx.task.findMany({
+    where: {
+      OR: [
+        { date: { gte: range.start, lt: range.end } },
+        { date: { lt: today }, status: { not: "DONE" } },
+        { date: null },
+        { focusQueuePosition: { not: null } }
+      ]
+    },
+    orderBy: [{ date: "asc" }, { sortOrder: "asc" }, { createdAt: "asc" }]
+  });
+}
+
+export function readOpenTaskPalette(tx: TaskListReadDatabase) {
+  return tx.task.findMany({
+    where: { status: { not: "DONE" } },
+    select: {
+      id: true,
+      title: true,
+      date: true,
+      estimateMinutes: true,
+      sortOrder: true,
+      focusQueuePosition: true,
+      projectId: true
+    }
+  });
+}
+
+/** All statuses within the exact half-open scheduled-date range. */
+export function readTasksInDateRange(tx: TaskListReadDatabase, range: { start: Date; end: Date }) {
+  return tx.task.findMany({
+    where: { date: { gte: range.start, lt: range.end } },
+    orderBy: { date: "asc" }
+  });
+}
+
 export type TaskMutationAction = "create" | "save" | "delete" | "reorder" | "undo";
 
 /** Also used by server transaction roots for failures raised while committing. */
@@ -146,4 +186,19 @@ export async function detachPhaseTasks(tx: Prisma.TransactionClient, phaseId: st
 /** Narrow relationship snapshot for evidence attribution. */
 export function readTaskAttribution(database: TaskReadDatabase, id: string) {
   return database.task.findUnique({ where: { id }, select: { id: true, projectId: true } });
+}
+
+/** Focus snapshots only the Task identity, title and current Project attribution. */
+export function readFocusTask(database: TaskReadDatabase, id: string) {
+  return database.task.findUnique({ where: { id }, select: { id: true, title: true, projectId: true } });
+}
+
+/** Explicit completion handoff; preserve an already completed Task's timestamp. */
+export function completeFocusTask(tx: Prisma.TransactionClient, id: string, now: Date) {
+  return tx.task.updateMany({ where: { id, status: { not: "DONE" } }, data: { status: "DONE", completedAt: now } });
+}
+
+/** Review counts completions using the evidence period's exact half-open bounds. */
+export function readReviewCompletedTasks(database: { task: Pick<Prisma.TransactionClient["task"], "findMany"> }, range: { start: Date; end: Date }) {
+  return database.task.findMany({ where: { completedAt: { gte: range.start, lt: range.end } }, select: { id: true } });
 }

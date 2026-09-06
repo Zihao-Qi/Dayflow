@@ -1,6 +1,6 @@
 import { readProjectActivitySummaries } from "@/modules/evidence/services/activities";
 import type { Prisma } from "@prisma/client";
-import { summarizeProject } from "@/modules/projects/domain/project";
+import { summarizeProjects } from "@/modules/projects/domain/project";
 import { readProjects } from "@/modules/projects/services/projects";
 import { readProjectTasks } from "@/modules/planning/services/tasks";
 
@@ -19,9 +19,5 @@ export async function listProjectSummaries(database: SummaryDatabase, reviewPeri
     readProjectTasks(database, ids),
     readProjectActivitySummaries(database, ids)
   ]);
-  return projects.map(project => summarizeProject({
-    ...project,
-    tasks: tasks.filter(task => task.projectId === project.id),
-    attributedActivities: activities.filter(activity => activity.attributedProjectId === project.id)
-  }, reviewPeriod));
+  return summarizeProjects(projects, tasks, activities, reviewPeriod);
 }

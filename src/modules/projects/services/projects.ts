@@ -84,6 +84,10 @@ export function readProject(database: { project: Pick<Prisma.TransactionClient["
   return database.project.findUnique({ where: { id }, include: { phases: { orderBy: [...phases.orderBy] } } });
 }
 
+export function readProjectName(database: { project: Pick<Prisma.TransactionClient["project"], "findUnique"> }, id: string) {
+  return database.project.findUnique({ where: { id }, select: { name: true } });
+}
+
 export function projectExists(database: { project: Pick<Prisma.TransactionClient["project"], "findUnique"> }, id: string) {
   return database.project.findUnique({ where: { id }, select: { id: true } });
 }

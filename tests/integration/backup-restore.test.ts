@@ -12,10 +12,71 @@ import {
   truncateSync
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import test from "node:test";
 
 const repositoryRoot = process.cwd();
+
+/**
+ * The engine takes its instant from the caller, so a frozen clock must produce a
+ * filename stem and a manifest createdAt that agree. Before mandatory injection
+ * the restore path sampled `new Date()` twice — once for the safety backup's
+ * filename and once for its manifest — so the two could straddle a second.
+ */
+test(
+  "a frozen instant gives the safety backup one timestamp in both its name and its manifest",
+  { timeout: 120_000 },
+  async () => {
+    const { createDatabaseBackup, restoreDatabaseBackup, inspectDatabaseBackup } =
+      await import("../../src/modules/data-ops/services/sqlite-backup-engine");
+    const directory = mkdtempSync(join(tmpdir(), "dayflow-shared-instant-"));
+    const activeDatabase = join(directory, "active.db");
+    const source = join(directory, "source.dayflow-backup");
+    const frozen = new Date("2026-09-06T23:59:59.500Z");
+
+    try {
+      migrate(activeDatabase);
+      createDatabaseBackup({
+        databasePath: activeDatabase,
+        outputPath: source,
+        repositoryRoot,
+        now: frozen
+      });
+
+      // No safetyBackupPath: the engine names the safety backup itself, which is
+      // the path where the two samples used to diverge.
+      const result = await restoreDatabaseBackup({
+        databasePath: activeDatabase,
+        backupPath: source,
+        repositoryRoot,
+        now: frozen
+      });
+
+      assert.ok(result.safetyBackupPath, "a safety backup must have been taken");
+      const { manifest } = inspectDatabaseBackup(result.safetyBackupPath);
+      assert.equal(
+        stemTimestamp(result.safetyBackupPath),
+        fileTimestamp(manifest.createdAt),
+        "the safety backup's filename stamp must equal its manifest createdAt"
+      );
+      assert.equal(manifest.createdAt, frozen.toISOString());
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }
+);
+
+/** dayflow-safety-before-restore-<stamp>-<uuid8>.dayflow-backup */
+function stemTimestamp(backupPath: string) {
+  const parts = basename(backupPath).replace(/\.dayflow-backup$/, "").split("-");
+  return parts[parts.length - 2];
+}
+
+/** The same shape timestampForFile produces: millis stripped, ":" and "-" removed. */
+function fileTimestamp(isoInstant: string) {
+  return isoInstant.replace(/\.\d{3}Z$/, "Z").replaceAll(":", "").replaceAll("-", "");
+}
+
 
 test(
   "backup and restore round-trip all records and reject a corrupt artifact safely",

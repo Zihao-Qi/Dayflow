@@ -2,12 +2,15 @@ import {
   formatRecordCounts,
   resolveActiveDatabase,
   restoreDatabaseBackup
-} from "./database-backup";
+} from "../src/modules/data-ops/services/sqlite-backup-engine";
+import { systemClock } from "../src/shared/kernel/calendar";
 
 void main();
 
 async function main() {
   try {
+    // Sample once at entry: the engine takes the instant, it does not read a clock.
+    const now = systemClock.now();
     const options = parseArguments(process.argv.slice(2));
     if (!options.confirmReplace) {
       throw new Error(
@@ -22,6 +25,7 @@ async function main() {
       databasePath,
       backupPath: options.backupPath,
       safetyBackupPath: options.safetyBackupPath,
+      now,
       onProgress: (message) => console.log(message)
     });
 

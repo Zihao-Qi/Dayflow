@@ -186,8 +186,10 @@ violation remains.
   run `test:architecture` immediately after `prisma:generate` in `check`.
 - Replace whole-payload snapshots of bootstrap and agent export with
   explicit assertions on the current top-level key set and the named
-  invariants: no future evidence, unfinished tasks keep their date, tags
-  decode to arrays.
+  invariants: unfinished tasks keep their date and tags decode to arrays.
+  Bootstrap bounds Activity evidence to the half-open local day, from local
+  midnight (inclusive) to next local midnight (exclusive).
+  Agent export includes all stored Activities with no date cutoff.
 
 Exit: every current envelope and workflow has a test that fails on drift; the
 architecture test reports the baseline and passes.

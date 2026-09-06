@@ -15,7 +15,10 @@ import { ActivityPersistenceError } from "../../src/lib/activity-persistence";
 import { addDays, localDateKey } from "../../src/lib/dates";
 import { EvidenceAttributionError } from "../../src/lib/evidence-attribution";
 import { EvidenceMutationRequestError } from "../../src/lib/evidence-mutations";
-import { IdempotentMutationError } from "../../src/lib/idempotent-mutations";
+import {
+  IdempotentMutationError,
+  mutationRequestHash
+} from "../../src/lib/idempotent-mutations";
 import { prisma } from "../../src/lib/prisma";
 
 test("evidence routes return typed malformed-JSON responses", async () => {
@@ -201,6 +204,158 @@ test("Note and Material routes validate mutation identifiers before writing", as
   }
 });
 
+const activityCreateBody = {
+  startTime: "09:30",
+  durationMinutes: 30,
+  category: "Deep Work",
+  note: "Contract",
+  taskId: null,
+  projectId: null
+};
+
+type ActivityCreateGuardCase = {
+  name: string;
+  body?: Record<string, unknown>;
+  mutationId?: string;
+  receipt?: { kind: string; requestHash: string; responseJson: string };
+  task?: { id: string; projectId: string | null };
+  status: number;
+  envelope: Record<string, unknown>;
+  lookups: string[];
+};
+
+const activityCreateGuardCases: ActivityCreateGuardCase[] = [
+  {
+    name: "invalid mutation id",
+    mutationId: "x".repeat(129),
+    status: 400,
+    envelope: {
+      error: "X-Dayflow-Mutation-Id must contain 1 to 128 characters.",
+      code: "INVALID_MUTATION_ID"
+    },
+    lookups: []
+  },
+  {
+    name: "receipt mismatch",
+    mutationId: "activity-receipt",
+    receipt: {
+      kind: "activity.create",
+      requestHash: mutationRequestHash("activity.create", { ...activityCreateBody, note: "Earlier request" }),
+      responseJson: JSON.stringify({ id: "earlier-activity" })
+    },
+    status: 409,
+    envelope: {
+      error: "This mutation identifier was already used for a different request.",
+      code: "MUTATION_ID_CONFLICT"
+    },
+    lookups: ["receipt:activity-receipt"]
+  },
+  {
+    name: "invalid stored receipt",
+    mutationId: "activity-receipt",
+    receipt: {
+      kind: "activity.create",
+      requestHash: mutationRequestHash("activity.create", activityCreateBody),
+      responseJson: "{"
+    },
+    status: 500,
+    envelope: {
+      error: "The saved mutation receipt could not be read.",
+      code: "INVALID_MUTATION_RECEIPT"
+    },
+    lookups: ["receipt:activity-receipt"]
+  },
+  {
+    name: "linked Task missing",
+    body: { ...activityCreateBody, taskId: "missing-task" },
+    status: 404,
+    envelope: {
+      error: "The linked task could not be found.",
+      code: "RELATIONSHIP_NOT_FOUND",
+      field: "taskId"
+    },
+    lookups: ["task:missing-task"]
+  },
+  {
+    name: "linked Project missing",
+    body: { ...activityCreateBody, projectId: "missing-project" },
+    status: 404,
+    envelope: {
+      error: "The linked project could not be found.",
+      code: "RELATIONSHIP_NOT_FOUND",
+      field: "projectId"
+    },
+    lookups: ["project:missing-project"]
+  },
+  {
+    name: "attribution conflict",
+    body: { ...activityCreateBody, taskId: "task", projectId: "selected-project" },
+    task: { id: "task", projectId: "task-project" },
+    status: 409,
+    envelope: {
+      error: "The selected task belongs to a different project.",
+      code: "ATTRIBUTION_CONFLICT",
+      field: "projectId"
+    },
+    lookups: ["task:task"]
+  }
+];
+
+for (const fixture of activityCreateGuardCases) {
+  test(`Activity POST reaches ${fixture.name} through its own guards`, async () => {
+    const originalTransaction = prisma.$transaction;
+    const lookups: string[] = [];
+    let transactions = 0;
+    let writes = 0;
+    const transaction = {
+      mutationReceipt: {
+        findUnique: async ({ where }: { where: { id: string } }) => {
+          lookups.push(`receipt:${where.id}`);
+          return fixture.receipt ?? null;
+        },
+        create: async () => { writes += 1; }
+      },
+      task: {
+        findUnique: async ({ where }: { where: { id: string } }) => {
+          lookups.push(`task:${where.id}`);
+          return fixture.task ?? null;
+        }
+      },
+      project: {
+        findUnique: async ({ where }: { where: { id: string } }) => {
+          lookups.push(`project:${where.id}`);
+          return null;
+        }
+      },
+      // Allow success when a guard is removed, so missing guards fail the envelope assertion.
+      activityEntry: {
+        create: async () => { writes += 1; return { id: "created-activity" }; }
+      }
+    };
+    try {
+      (prisma as unknown as { $transaction: unknown }).$transaction = async (
+        callback: (client: typeof transaction) => Promise<unknown>
+      ) => {
+        transactions += 1;
+        return callback(transaction);
+      };
+      const response = await createActivity(jsonRequest(
+        "http://localhost/api/activities",
+        "POST",
+        fixture.body ?? activityCreateBody,
+        fixture.mutationId ? { "X-Dayflow-Mutation-Id": fixture.mutationId } : {}
+      ));
+      assert.equal(response.status, fixture.status);
+      assert.deepEqual(await response.json(), fixture.envelope);
+      assert.deepEqual(lookups, fixture.lookups);
+      assert.equal(transactions, fixture.name === "invalid mutation id" ? 0 : 1);
+      assert.equal(writes, 0);
+    } finally {
+      (prisma as unknown as { $transaction: unknown }).$transaction = originalTransaction;
+    }
+  });
+}
+
 test("Activity error mapping pins every typed and Prisma branch", async () => {
   const cases: Array<[unknown, number, Record<string, unknown>]> = [
     [
@@ -357,7 +512,10 @@ test("Activity error mapping pins every typed and Prisma branch", async () => {
       assert.equal(response.status, status);
       assert.deepEqual(await response.json(), body);
       (prisma as unknown as { $transaction: unknown }).$transaction = async () => { throw error; };
-      const methods = error instanceof IdempotentMutationError ? ["POST"] as const
+      // POST mutation-id, receipt, and attribution reachability is covered above.
+      // These remaining injected failures characterize mapping at the transaction seam.
+      const methods = error instanceof IdempotentMutationError ? [] as const
+        : error instanceof EvidenceAttributionError ? ["PUT"] as const
         : error instanceof ActivityPersistenceError || status === 500 ? ["PUT"] as const
           : ["POST", "PUT"] as const;
       for (const method of methods) {

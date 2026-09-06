@@ -222,6 +222,19 @@ test("Today's navigation count survives every inactive destination and historica
   }
 });
 
+test("a bootstrap failure after an accepted create leaves the badge counting the visible rows", async ({ page }) => {
+  await openToday(page);
+  const badge = page.locator('[data-nav-id="today"] small');
+  await expect(badge).toHaveText("0");
+  await page.route("**/api/bootstrap", (route) => route.fulfill({ status: 503, json: { error: "Bootstrap offline" } }));
+  await page.locator("#new-task").fill("Counted despite bootstrap failure");
+  await page.locator("#new-task").press("Enter");
+  await expect(page.locator(".today-page").getByRole("textbox", { name: "Task title: Counted despite bootstrap failure", exact: true })).toHaveValue("Counted despite bootstrap failure");
+  await expect(page.locator(".app-error-toast")).toContainText("Your change was saved");
+  // The row is on screen from the coarse day read; the badge must not disagree.
+  await expect(badge).toHaveText("1");
+});
+
 test("Focus pause and resume each refresh bootstrap and the active Today read", async ({ page }) => {
   const { todayKey } = await (await page.request.get("/api/bootstrap")).json();
   expect((await page.request.post("/api/focus-session", {

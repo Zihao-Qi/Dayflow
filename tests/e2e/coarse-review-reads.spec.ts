@@ -146,6 +146,32 @@ for (const selection of ["saved period", "window"] as const) {
   });
 }
 
+test("a rollover whose new period cannot be read stops offering the previous editor", async ({ page }) => {
+  await openReview(page);
+  const { todayKey } = await (await page.request.get("/api/bootstrap")).json();
+  const next = new Date(`${todayKey}T12:00:00`);
+  next.setDate(next.getDate() + 1);
+  const tomorrow = next.toLocaleDateString("en-CA");
+  await page.route("**/api/bootstrap", async (route) => {
+    const response = await route.fetch();
+    await route.fulfill({ response, json: { ...(await response.json()), todayKey: tomorrow } });
+  });
+  await page.route("**/api/review/window?current=1", (route) =>
+    route.fulfill({ status: 503, json: { error: "Window offline" } }));
+  // A global capture is a confirmed mutation, so it refreshes bootstrap and Review.
+  await page.getByRole("button", { name: /Search or add/ }).click();
+  const palette = page.getByRole("dialog", { name: "Search or add", exact: true });
+  await palette.getByRole("option", { name: /Log an activity by hand/ }).click();
+  const dialog = page.getByRole("dialog", { name: /Log activity/i });
+  await dialog.getByLabel("Activity note", { exact: true }).fill("Roll the calendar day over");
+  await dialog.getByRole("button", { name: "Add activity", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.locator(".review-page").getByRole("alert")).toContainText("The current Review could not be loaded");
+  // The previous period's writing surface must not remain open behind that alert.
+  await expect(page.locator("#review-narrative")).toHaveCount(0);
+  await expect(page.locator(".review-page textarea")).toHaveCount(0);
+});
+
 test("a saving caller follows a newer whole refresh after one earlier required read failed", async ({ page }) => {
   await page.clock.install();
   await openReview(page);

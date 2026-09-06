@@ -7,18 +7,19 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 export function useCurrentReview(todayKey: string) {
   const owner = useRef(createReadGeneration()).current;
-  const [payload, setPayload] = useState<CurrentReviewWindow | null>(null);
+  const [loaded, setLoaded] = useState<{ key: string; window: CurrentReviewWindow } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const refresh = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      return await owner.run(loadCurrentReviewWindow, setPayload,
+      return await owner.run(loadCurrentReviewWindow,
+        (window) => setLoaded({ key: todayKey, window }),
         () => setError("The current Review could not be loaded. Try again."),
         () => setLoading(false));
     } catch { return false; }
-  }, [owner]);
+  }, [owner, todayKey]);
 
   useEffect(() => {
     owner.invalidate();
@@ -28,9 +29,13 @@ export function useCurrentReview(todayKey: string) {
 
   function acceptReview(review: Review) {
     owner.invalidate();
-    setPayload((current) => current &&
-      current.periodStart === review.periodStart && current.periodEnd === review.periodEnd
-      ? { ...current, review } : current);
+    setLoaded((current) => current &&
+      current.window.periodStart === review.periodStart && current.window.periodEnd === review.periodEnd
+      ? { ...current, window: { ...current.window, review } } : current);
   }
+  // Only a window read taken for the calendar day now in effect may be shown. A
+  // failed read on the same day keeps what is on screen; a failed read after
+  // rollover must not leave the previous period's editor open.
+  const payload = loaded && loaded.key === todayKey ? loaded.window : null;
   return { payload, loading, error, refresh, acceptReview };
 }

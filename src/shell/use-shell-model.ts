@@ -97,9 +97,14 @@ export function useShellModel() {
     ? (viewedDay.payload?.tasks ?? [])
     : [];
   const openTodayTasks = todayTasks.filter((task) => task.status !== "DONE");
-  const todayTaskCount = (data?.tasks ?? []).filter((task) =>
-    task.status !== "DONE" && task.date && localDateKey(new Date(task.date)) === data?.todayKey
-  ).length;
+  // The badge counts the rows Today actually renders. Bootstrap stays the source
+  // only until the coarse day read for today exists, so an accepted create or
+  // delete whose following bootstrap refresh fails cannot leave the two apart.
+  const todayTaskCount = viewedDay.dayKey === data?.todayKey && viewedDay.payload
+    ? openTodayTasks.length
+    : (data?.tasks ?? []).filter((task) =>
+        task.status !== "DONE" && task.date && localDateKey(new Date(task.date)) === data?.todayKey
+      ).length;
   const activityKnownTasks = useMemo(
     () => [...(data?.tasks ?? []), ...(data?.paletteTasks ?? [])],
     [data?.paletteTasks, data?.tasks]

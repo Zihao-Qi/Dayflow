@@ -78,8 +78,7 @@ const LEGACY_GLOBAL_CLIENT_CALL_BASELINE = [
   legacyClientCalls("src/lib/activity-persistence.ts", 1, "Phase 3: evidence services"),
   legacyClientCalls("src/lib/focus-queue.ts", 3, "Phase 2: planning"),
   legacyClientCalls("src/lib/focus-sessions.ts", 7, "Phase 3: focus services"),
-  legacyClientCalls("src/lib/projects.ts", 2, "Phase 3: projects services"),
-  legacyClientCalls("src/lib/time-block-persistence.ts", 2, "Phase 2: planning")
+  legacyClientCalls("src/lib/projects.ts", 2, "Phase 3: projects services")
 ] as const;
 
 function legacyClientCalls(file: string, count: number, migration: string) {
@@ -99,7 +98,6 @@ const BASELINE: ReadonlyArray<Violation & { migration: string }> = [
   baseline(6, "src/lib/journal-history.ts", 140, "Phase 3: journal services"),
   baseline(6, "src/lib/projects.ts", 148, "Phase 3: projects services"),
   baseline(6, "src/lib/projects.ts", 158, "Phase 3: projects services"),
-  baseline(6, "src/lib/time-block-persistence.ts", 53, "Phase 2: planning"),
   baseline(6, "src/lib/workspace-readiness.ts", 4, "Phase 3: read models"),
   baseline(8, "src/lib/backup-management.ts", 42, "Phase 4: backup engine")
 ];

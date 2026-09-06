@@ -1,7 +1,6 @@
 import { addDays, localDateKey, parseLocalDate, sameDayRange, startOfLocalDay } from "@/lib/dates";
 import { dayErrors } from "@/lib/day-errors";
-import { serializeTimeBlock } from "@/lib/time-block-persistence";
-import { isTimeBlockRecord } from "@/lib/time-blocks";
+import { readTimeBlocks } from "@/modules/planning/services/time-blocks";
 import { AppError } from "@/shared/kernel/errors";
 import type { Prisma, PrismaClient } from "@prisma/client";
 
@@ -105,18 +104,7 @@ export async function readViewedDay(
       where: { date: { gte: start, lt: end } },
       orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }]
     }),
-    database.timeBlock.findMany({
-      where: { date: { gte: start, lt: end } },
-      orderBy: [
-        { startTime: "asc" },
-        { endTime: "asc" },
-        { createdAt: "asc" },
-        { id: "asc" }
-      ],
-      include: {
-        task: { select: { id: true, title: true, estimateMinutes: true } }
-      }
-    }),
+    readTimeBlocks(database, { start, end }, "day"),
     kind === "future"
       ? Promise.resolve([])
       : database.activityEntry.findMany({
@@ -129,7 +117,7 @@ export async function readViewedDay(
     dateKey: localDateKey(date),
     kind,
     tasks,
-    timeBlocks: timeBlocks.map(serializeTimeBlock).filter(isTimeBlockRecord),
+    timeBlocks,
     activities
   };
 }

@@ -30,9 +30,10 @@ const focusSessionInclude = {
 };
 
 export async function getFocusSnapshot(
-  database: Prisma.TransactionClient | typeof prisma
+  database: Prisma.TransactionClient | typeof prisma,
+  now: Date
 ) {
-  const { start, end } = sameDayRange();
+  const { start, end } = sameDayRange(now);
   const [active, pendingCompletion, completed, focused] = await Promise.all([
     database.focusSession.findFirst({
       where: { status: { in: ["RUNNING", "PAUSED"] } },
@@ -188,9 +189,9 @@ export async function transitionFocusSession(
     note?: unknown;
     category?: unknown;
     taskCompleted?: unknown;
-  } = {}
+  } = {},
+  now: Date
 ) {
-  const now = new Date();
   const session = await prisma.focusSession.findUnique({
     where: { id },
     include: focusSessionInclude

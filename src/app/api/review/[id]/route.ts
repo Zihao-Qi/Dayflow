@@ -1,3 +1,4 @@
+import { clock } from "@/lib/time";
 import { appErrorResponse } from "@/lib/http-errors";
 import { prisma } from "@/lib/prisma";
 import { reviewErrors } from "@/lib/review-errors";
@@ -11,9 +12,10 @@ export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const now = clock.now();
   try {
     const { id } = await params;
-    return NextResponse.json(await readPastReviewPeriod(prisma, id));
+    return NextResponse.json(await readPastReviewPeriod(prisma, id, now));
   } catch (error) {
     if (error instanceof AppError) return appErrorResponse(error);
 

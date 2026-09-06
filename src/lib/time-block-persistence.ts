@@ -8,6 +8,7 @@ import {
   type TimeBlockDraft
 } from "@/lib/time-blocks";
 import { AppError } from "@/shared/kernel/errors";
+import type { Clock } from "@/shared/kernel/calendar";
 import { Prisma } from "@prisma/client";
 
 type TimeBlockDatabase = Prisma.TransactionClient | typeof prisma;
@@ -46,7 +47,8 @@ export async function createTimeBlock(
 
 export async function replaceTimeBlock(
   id: string,
-  input: TimeBlockDraft
+  input: TimeBlockDraft,
+  clock: Clock
 ) {
   return prisma.$transaction(async (transaction) => {
     const current = await transaction.timeBlock.findUnique({
@@ -57,7 +59,8 @@ export async function replaceTimeBlock(
       throw new AppError(timeBlockErrors.timeBlockNotFound);
     }
     if (input.date.getTime() !== current.date.getTime()) {
-      assertTimeBlockIsNotPast(input);
+      // The stored-block read may cross midnight; validate the transition now.
+      assertTimeBlockIsNotPast(input, clock.now());
     }
     await validatePersistedTimeBlock(
       input,

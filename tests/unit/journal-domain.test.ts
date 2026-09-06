@@ -1,3 +1,4 @@
+import { frozenClock } from "../../src/shared/kernel/calendar";
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
@@ -15,7 +16,7 @@ import {
 
 test("Note input requires content and normalizes bounded tags", () => {
   assert.throws(
-    () => parseNoteCreateInput({ content: "   " }),
+    () => parseNoteCreateInput({ content: "   " }, testClock.now()),
     (error) =>
       error instanceof JournalRequestError &&
       error.code === "VALIDATION_ERROR"
@@ -163,3 +164,5 @@ test("Journal page parsing caps large limits and rejects ambiguous input", () =>
       error.code === "INVALID_CURSOR"
   );
 });
+
+const testClock = frozenClock(new Date("2026-07-27T12:00:00-05:00"));

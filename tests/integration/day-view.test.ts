@@ -64,7 +64,7 @@ test("a future day excludes Activity even when a row exists for it", async (cont
       data: { title: "Planned ahead", date: future }
     });
 
-    const day = await dayView.readViewedDay(prisma, future);
+    const day = await dayView.readViewedDay(prisma, future, new Date());
     assert.equal(day.kind, "future");
     assert.equal(day.tasks.length, 1, "a future day still shows scheduled Tasks");
     assert.deepEqual(
@@ -100,7 +100,7 @@ test("a past day carries its own evidence and nothing from a neighbour", async (
       });
     }
 
-    const day = await dayView.readViewedDay(prisma, yesterday);
+    const day = await dayView.readViewedDay(prisma, yesterday, new Date());
     assert.equal(day.kind, "past");
     assert.deepEqual(day.activities.map((a) => a.note), ["yesterday"]);
   });
@@ -128,7 +128,7 @@ test("reading a day mutates no stored record", async (context) => {
 
     const before = await snapshot();
     for (const offset of [-2, -1, 0, 1, 5]) {
-      await dayView.readViewedDay(prisma, addDays(today, offset));
+      await dayView.readViewedDay(prisma, addDays(today, offset), new Date());
     }
     await dayView.earliestRecordedDay(prisma);
     assert.equal(await snapshot(), before, "a day read must not write");

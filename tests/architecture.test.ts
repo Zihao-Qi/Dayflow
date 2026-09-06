@@ -65,11 +65,11 @@ const MODULE_EDGES: Readonly<Record<string, ReadonlySet<string>>> = {
 // and scripts/** are intentionally excluded instead of allowlisted.
 const ACTIVITY_WRITE_ALLOWLIST = new Set([
   "src/app/api/activities/[id]/route.ts:62:activityEntry.deleteMany",
-  "src/app/api/activities/route.ts:34:activityEntry.create",
+  "src/app/api/activities/route.ts:36:activityEntry.create",
   "src/lib/activity-persistence.ts:79:activityEntry.updateMany",
-  "src/lib/focus-sessions.ts:267:activityEntry.upsert",
-  "src/lib/focus-sessions.ts:372:activityEntry.upsert",
-  "src/lib/projects.ts:164:activityEntry.updateMany"
+  "src/lib/focus-sessions.ts:268:activityEntry.upsert",
+  "src/lib/focus-sessions.ts:373:activityEntry.upsert",
+  "src/lib/projects.ts:163:activityEntry.updateMany"
 ]);
 
 // Legacy src/lib call counts are ratcheted per file so line movement is harmless,
@@ -93,15 +93,15 @@ const BASELINE: ReadonlyArray<Violation & { migration: string }> = [
   baseline(6, "src/lib/focus-queue.ts", 29, "Phase 2: planning"),
   baseline(6, "src/lib/focus-queue.ts", 54, "Phase 2: planning"),
   baseline(6, "src/lib/focus-queue.ts", 70, "Phase 2: planning"),
-  baseline(6, "src/lib/focus-sessions.ts", 180, "Phase 3: focus services"),
-  baseline(6, "src/lib/focus-sessions.ts", 264, "Phase 3: focus services"),
-  baseline(6, "src/lib/focus-sessions.ts", 347, "Phase 3: focus services"),
+  baseline(6, "src/lib/focus-sessions.ts", 181, "Phase 3: focus services"),
+  baseline(6, "src/lib/focus-sessions.ts", 265, "Phase 3: focus services"),
+  baseline(6, "src/lib/focus-sessions.ts", 348, "Phase 3: focus services"),
   baseline(6, "src/lib/journal-history.ts", 140, "Phase 3: journal services"),
-  baseline(6, "src/lib/projects.ts", 149, "Phase 3: projects services"),
-  baseline(6, "src/lib/projects.ts", 159, "Phase 3: projects services"),
-  baseline(6, "src/lib/time-block-persistence.ts", 51, "Phase 2: planning"),
+  baseline(6, "src/lib/projects.ts", 148, "Phase 3: projects services"),
+  baseline(6, "src/lib/projects.ts", 158, "Phase 3: projects services"),
+  baseline(6, "src/lib/time-block-persistence.ts", 53, "Phase 2: planning"),
   baseline(6, "src/lib/workspace-readiness.ts", 4, "Phase 3: read models"),
-  baseline(8, "src/lib/backup-management.ts", 41, "Phase 4: backup engine")
+  baseline(8, "src/lib/backup-management.ts", 42, "Phase 4: backup engine")
 ];
 
 function baseline(rule: Rule, file: string, line: number, migration: string) {

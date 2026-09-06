@@ -1,3 +1,4 @@
+import { systemClock, type Clock } from "@/shared/kernel/calendar";
 import type {
   AutomaticBackupAttempt,
   AutomaticBackupPolicy,
@@ -113,6 +114,8 @@ export type BackupManagementOptions = {
   repositoryRoot?: string;
   environment?: NodeJS.ProcessEnv;
   now?: Date;
+  /** Live clock for startup completion and ownership deadlines; now only anchors the artifact. */
+  clock?: Clock;
 };
 
 type BackupContext = {
@@ -150,7 +153,7 @@ export function getManagedBackupIndex(
   const backups = listBackupFiles(context);
   return {
     directory: context.directory,
-    automatic: automaticStateFor(context, backups, options.now),
+    automatic: automaticStateFor(context, backups, options.now ?? (options.clock ?? systemClock).now()),
     backups,
     pendingRestore: readMetadataForDisplay(
       join(context.directory, PENDING_FILE),
@@ -167,7 +170,7 @@ export function getAutomaticBackupState(
   options: BackupManagementOptions = {}
 ): AutomaticBackupState {
   const context = resolveBackupContext(options, "read");
-  return automaticStateFor(context, listBackupFiles(context), options.now);
+  return automaticStateFor(context, listBackupFiles(context), options.now ?? (options.clock ?? systemClock).now());
 }
 
 /**
@@ -188,7 +191,7 @@ export function setAutomaticBackupPolicy(
       version: METADATA_VERSION,
       ...policy
     });
-    return automaticStateFor(context, listBackupFiles(context), options.now);
+    return automaticStateFor(context, listBackupFiles(context), options.now ?? (options.clock ?? systemClock).now());
   });
 }
 
@@ -202,7 +205,7 @@ export function setAutomaticBackupPolicy(
 export function runDueAutomaticBackup(
   options: BackupManagementOptions = {}
 ): AutomaticBackupAttempt {
-  const now = options.now ?? new Date();
+  const now = options.now ?? (options.clock ?? systemClock).now();
   let context: BackupContext;
   try {
     context = resolveBackupContext(options, "read");
@@ -270,7 +273,7 @@ export function runDueAutomaticBackup(
 function automaticStateFor(
   context: BackupContext,
   backups: ManagedBackupSummary[],
-  now = new Date()
+  now: Date
 ): AutomaticBackupState {
   const policy = readAutomaticPolicy(context);
   const automatic = backups.filter((backup) => backup.purpose === "automatic");
@@ -404,7 +407,7 @@ export function createManagedBackup(
 ): ManagedBackupSummary {
   return withOperation(() => {
     const context = resolveBackupContext(options, "mutation");
-    const now = options.now ?? new Date();
+    const now = options.now ?? (options.clock ?? systemClock).now();
     const outputPath = join(
       context.directory,
       basename(defaultBackupPath(context.databasePath, "manual", now))
@@ -454,7 +457,7 @@ export function stageManagedRestore(
       backupId: backup.id,
       fileName: backup.fileName,
       expectedPayloadSha256: input.expectedPayloadSha256,
-      scheduledAt: (options.now ?? new Date()).toISOString()
+      scheduledAt: (options.now ?? (options.clock ?? systemClock).now()).toISOString()
     };
     writeJsonAtomically(pendingPath, pending);
     return pending;
@@ -493,6 +496,7 @@ export function resolveManagedBackupDownload(
 export async function applyPendingManagedRestore(
   options: BackupManagementOptions = {}
 ): Promise<RestoreStatus | null> {
+  const clock = options.clock ?? systemClock;
   const context = resolveBackupContext(options, "read");
   if (context.environment.DAYFLOW_DISABLE_RESTORE === "1") return null;
   if (!context.directoryExists) return null;
@@ -505,7 +509,7 @@ export async function applyPendingManagedRestore(
       return null;
     }
 
-    const owner = await acquireRestoreOwnership(context.directory);
+    const owner = await acquireRestoreOwnership(context.directory, clock);
     try {
       if (pathEntryExists(applyingPath)) {
         let interrupted: PendingRestore;
@@ -516,7 +520,7 @@ export async function applyPendingManagedRestore(
             "[Dayflow restore] Interrupted restore metadata was invalid.",
             error
           );
-          interrupted = fallbackPendingRestore();
+          interrupted = fallbackPendingRestore(clock.now());
         }
 
         const completed = readRestoreStatus(statusPath);
@@ -537,7 +541,8 @@ export async function applyPendingManagedRestore(
           verifiedSafetyPath
             ? "A previous restore stopped before completion could be confirmed. Verify the active data before choosing whether to recover from the verified safety backup."
             : "A previous restore stopped before completion could be confirmed. Verify the active data before scheduling another restore.",
-          verifiedSafetyPath
+          verifiedSafetyPath,
+          clock.now()
         );
         writeJsonAtomically(statusPath, status);
         clearRestoreMarkers(context.directory);
@@ -557,11 +562,12 @@ export async function applyPendingManagedRestore(
           "[Dayflow restore] Scheduled restore metadata was invalid.",
           error
         );
-        const fallback = fallbackPendingRestore();
+        const fallback = fallbackPendingRestore(clock.now());
         const status = failedRestoreStatus(
           fallback,
           "The scheduled restore metadata was invalid and was discarded. The active database was not intentionally replaced.",
-          null
+          null,
+          clock.now()
         );
         writeJsonAtomically(statusPath, status);
         clearRestoreMarkers(context.directory);
@@ -574,7 +580,7 @@ export async function applyPendingManagedRestore(
           defaultBackupPath(
             context.databasePath,
             "restore-safety",
-            options.now ?? new Date()
+            options.now ?? (options.clock ?? systemClock).now()
           )
         )
       );
@@ -605,7 +611,7 @@ export async function applyPendingManagedRestore(
           backupId: pending.backupId,
           fileName: pending.fileName,
           requestedAt: pending.scheduledAt,
-          completedAt: new Date().toISOString(),
+          completedAt: clock.now().toISOString(),
           safetyBackupPath: result.safetyBackupPath,
           schemaVersion: result.schemaVersion,
           recordCounts: result.restoredRecordCounts
@@ -625,7 +631,8 @@ export async function applyPendingManagedRestore(
         const status = failedRestoreStatus(
           pending,
           persistedRestoreError(error, Boolean(safetyPath)),
-          safetyPath
+          safetyPath,
+          clock.now()
         );
         writeJsonAtomically(statusPath, status);
         clearRestoreMarkers(context.directory);
@@ -924,21 +931,22 @@ function readMetadataForDisplay(path: string, failureMessage: string) {
   }
 }
 
-function fallbackPendingRestore(): PendingRestore {
+function fallbackPendingRestore(now: Date): PendingRestore {
   return {
     version: METADATA_VERSION,
     status: "pending_restart",
     backupId: "unknown",
     fileName: "Unknown backup",
     expectedPayloadSha256: "",
-    scheduledAt: new Date().toISOString()
+    scheduledAt: now.toISOString()
   };
 }
 
 function failedRestoreStatus(
   pending: PendingRestore,
   error: string,
-  safetyBackupPath: string | null
+  safetyBackupPath: string | null,
+  now: Date
 ): RestoreStatus {
   return {
     version: METADATA_VERSION,
@@ -946,24 +954,25 @@ function failedRestoreStatus(
     backupId: pending.backupId,
     fileName: pending.fileName,
     requestedAt: pending.scheduledAt,
-    completedAt: new Date().toISOString(),
+    completedAt: now.toISOString(),
     safetyBackupPath,
     error: boundPersistedError(error)
   };
 }
 
 async function acquireRestoreOwnership(
-  directory: string
+  directory: string,
+  clock: Clock
 ): Promise<RestoreOwner> {
   const ownerPath = join(directory, OWNER_FILE);
-  const deadline = Date.now() + RESTORE_OWNER_WAIT_MS;
+  const deadline = clock.now().getTime() + RESTORE_OWNER_WAIT_MS;
 
   for (; ;) {
     const owner: RestoreOwner = {
       version: METADATA_VERSION,
       token: randomUUID(),
       pid: process.pid,
-      startedAt: new Date().toISOString()
+      startedAt: clock.now().toISOString()
     };
     let descriptor: number | null = null;
     try {
@@ -983,12 +992,12 @@ async function acquireRestoreOwnership(
       if (errorCode(error) !== "EEXIST") throw error;
     }
 
-    const ownerState = inspectRestoreOwner(ownerPath);
+    const ownerState = inspectRestoreOwner(ownerPath, clock);
     if (ownerState === "stale") {
       quarantineStaleRestoreOwner(ownerPath, directory);
       continue;
     }
-    if (Date.now() >= deadline) {
+    if (clock.now().getTime() >= deadline) {
       throw new Error(
         "Timed out waiting for another Dayflow process to finish startup restore coordination."
       );
@@ -997,7 +1006,7 @@ async function acquireRestoreOwnership(
   }
 }
 
-function inspectRestoreOwner(path: string): "active" | "stale" {
+function inspectRestoreOwner(path: string, clock: Clock): "active" | "stale" {
   let stats: ReturnType<typeof lstatSync>;
   try {
     stats = lstatSync(path);
@@ -1005,7 +1014,7 @@ function inspectRestoreOwner(path: string): "active" | "stale" {
     return errorCode(error) === "ENOENT" ? "stale" : "active";
   }
   if (stats.isSymbolicLink() || !stats.isFile()) return "stale";
-  const age = Date.now() - stats.mtimeMs;
+  const age = clock.now().getTime() - stats.mtimeMs;
   if (age > RESTORE_OWNER_STALE_MS) return "stale";
 
   try {
@@ -1023,7 +1032,7 @@ function inspectRestoreOwner(path: string): "active" | "stale" {
       return age < 2_000 ? "active" : "stale";
     }
     if (
-      Date.now() - Date.parse(value.startedAt) >
+      clock.now().getTime() - Date.parse(value.startedAt) >
       RESTORE_OWNER_STALE_MS
     ) {
       return "stale";

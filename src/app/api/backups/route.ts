@@ -1,3 +1,4 @@
+import { clock } from "@/lib/time";
 import { backupErrors } from "@/lib/backup-errors";
 import {
   assertLocalBackupMutation,
@@ -18,15 +19,17 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
+  const now = clock.now();
   try {
     assertLocalBackupRead(request);
-    return jsonNoStore(getManagedBackupIndex());
+    return jsonNoStore(getManagedBackupIndex({ now }));
   } catch (error) {
     return backupErrorResponse(error, "Backup list");
   }
 }
 
 export async function POST(request: NextRequest) {
+  const now = clock.now();
   try {
     assertLocalBackupMutation(request);
     const body = await readBackupJsonObject(request);
@@ -34,7 +37,7 @@ export async function POST(request: NextRequest) {
       return appErrorResponse(new AppError(backupErrors.backupCreationDoesNotAcceptADestinationPath), true);
     }
     return jsonNoStore(
-      { backup: createManagedBackup() },
+      { backup: createManagedBackup({ now }) },
       { status: 201 }
     );
   } catch (error) {

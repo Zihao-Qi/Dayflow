@@ -1,3 +1,4 @@
+import { clock } from "@/lib/time";
 import { backupErrors } from "@/lib/backup-errors";
 import {
   assertLocalBackupMutation,
@@ -18,6 +19,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
+  const now = clock.now();
   try {
     assertLocalBackupMutation(request);
     const body = await readBackupJsonObject(request);
@@ -46,9 +48,9 @@ export async function POST(request: NextRequest) {
       backupId: body.backupId,
       expectedPayloadSha256: body.expectedPayloadSha256,
       confirmation: body.confirmation
-    });
+    }, { now });
     return jsonNoStore(
-      { ...getManagedBackupIndex(), pendingRestore },
+      { ...getManagedBackupIndex({ now }), pendingRestore },
       { status: 202 }
     );
   } catch (error) {
@@ -57,6 +59,7 @@ export async function POST(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
+  const now = clock.now();
   try {
     assertLocalBackupMutation(request);
     const body = await readBackupJsonObject(request);
@@ -64,7 +67,7 @@ export async function DELETE(request: NextRequest) {
       return appErrorResponse(new AppError(backupErrors.cancelingARestoreDoesNotAcceptAnyFields), true);
     }
     cancelManagedRestore();
-    return jsonNoStore(getManagedBackupIndex());
+    return jsonNoStore(getManagedBackupIndex({ now }));
   } catch (error) {
     return backupErrorResponse(error, "Restore cancellation");
   }

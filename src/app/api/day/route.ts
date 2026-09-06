@@ -1,3 +1,4 @@
+import { clock } from "@/lib/time";
 import { dayErrors } from "@/lib/day-errors";
 import {
   DAY_VIEW_FORWARD_WEEKS,
@@ -16,13 +17,14 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
+  const now = clock.now();
   try {
-    const { date } = parseViewedDay(request.nextUrl.searchParams);
+    const { date } = parseViewedDay(request.nextUrl.searchParams, now);
     const earliestDayKey = resolveEarliestNavigableDayKey(
-      await earliestRecordedDay(prisma)
+      await earliestRecordedDay(prisma), now
     );
     assertViewedDayOnOrAfter(date, earliestDayKey);
-    const day = await readViewedDay(prisma, date);
+    const day = await readViewedDay(prisma, date, now);
     return NextResponse.json({
       ...day,
       earliestDayKey,

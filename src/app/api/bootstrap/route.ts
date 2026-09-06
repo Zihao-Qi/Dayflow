@@ -1,11 +1,10 @@
+import { clock, calendar } from "@/lib/time";
 import { buildActivityCategorySuggestions } from "@/lib/activity-categories";
 import { bootstrapErrors } from "@/lib/bootstrap-errors";
 import {
   addDays,
   localDateKey,
-  reviewPeriodRange,
-  sameDayRange,
-  startOfLocalDay
+  sameDayRange
 } from "@/lib/dates";
 import {
   DAY_VIEW_FORWARD_WEEKS,
@@ -26,8 +25,9 @@ const DATABASE_MIGRATION_REQUIRED_MESSAGE =
   "Dayflow's local database needs an update. Stop Dayflow, run `npm run db:migrate`, then start Dayflow again.";
 
 export async function GET() {
+  const now = clock.now();
   try {
-    return await loadBootstrap();
+    return await loadBootstrap(now);
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -41,9 +41,9 @@ export async function GET() {
   }
 }
 
-async function loadBootstrap() {
-  const today = startOfLocalDay();
-  const reviewPeriod = reviewPeriodRange(today);
+async function loadBootstrap(now: Date) {
+  const today = calendar.startOf(calendar.dayOf(now));
+  const reviewPeriod = calendar.reviewPeriodEnding(calendar.dayOf(now));
   const weekStart = reviewPeriod.start;
   const weekEnd = addDays(today, 2);
   const reviewEnd = reviewPeriod.end;

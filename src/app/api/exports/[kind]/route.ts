@@ -1,3 +1,4 @@
+import { clock } from "@/lib/time";
 import {
   createCsvExport,
   parseCsvExportKind
@@ -14,9 +15,10 @@ export const dynamic = "force-dynamic";
 type Params = { params: Promise<{ kind: string }> };
 
 export async function GET(_request: Request, { params }: Params) {
+  const now = clock.now();
   try {
     const kind = parseCsvExportKind((await params).kind);
-    const result = await createCsvExport(kind, new Date(), prisma);
+    const result = await createCsvExport(kind, now, prisma);
     return new Response(result.body, {
       status: 200,
       headers: csvExportResponseHeaders(result)

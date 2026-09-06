@@ -196,7 +196,7 @@ export function parseCsvExportKind(value: unknown): CsvExportKind {
 
 export async function createCsvExport(
   kind: CsvExportKind,
-  now = new Date(),
+  now: Date,
   database: CsvExportDatabase
 ): Promise<CsvExportResult> {
   const fileDate = localDateKey(now);

@@ -80,7 +80,7 @@ export async function readEvidenceMutationBody(request: {
 
 export function parseActivityCreateMutation(
   value: unknown,
-  now = new Date()
+  now: Date
 ): ActivityCreateMutation {
   const body = requireObject(value);
   const date = parseActivityDate(body.date, now);
@@ -126,7 +126,7 @@ export function parseActivityReplaceMutation(
 
 export function parseDiaryUpsertMutation(
   value: unknown,
-  now = new Date()
+  now: Date
 ): DiaryUpsertMutation {
   const body = requireObject(value);
   return {

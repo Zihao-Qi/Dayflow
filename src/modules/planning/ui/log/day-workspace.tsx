@@ -85,7 +85,9 @@ export function DayPage({
   earliestDayKey,
   forwardWeeks,
   dayLoading,
+  dayReady,
   dayError,
+  onRetry,
   onChangeDay,
   onGoToToday,
   tasks,
@@ -115,7 +117,9 @@ export function DayPage({
   earliestDayKey: string | null;
   forwardWeeks: number;
   dayLoading: boolean;
+  dayReady: boolean;
   dayError: string;
+  onRetry: () => void;
   onChangeDay: (dayKey: string) => void;
   onGoToToday: () => void;
   tasks: Task[];
@@ -175,9 +179,11 @@ export function DayPage({
       {dayError && (
         <p className="day-error" role="alert">
           {dayError}
+          <button className="secondary-button" onClick={onRetry}>Retry day</button>
         </p>
       )}
 
+      {dayReady && <>
       {isFuture ? (
         <div className="log-totals" aria-label="Planned totals">
           <strong>{formatMinutes(blockedMinutes)} planned</strong>
@@ -232,6 +238,7 @@ export function DayPage({
           onEditBlock={onEditTimeBlock}
         />
       )}
+      </>}
     </div>
   );
 }

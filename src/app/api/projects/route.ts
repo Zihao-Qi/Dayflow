@@ -1,80 +1,34 @@
-import { Prisma } from "@prisma/client";
+import { clock, calendar } from "@/lib/time";
+import { prisma } from "@/lib/prisma";
+import { parseMutationId, runOnce } from "@/server/prisma/run-once";
+import { parseProjectCreateMutation, readProjectMutationBody } from "@/modules/projects/domain/project";
+import { createProject, getProjectDetail, listProjectSummaries, projectMutationErrorResponse } from "@/server/projects";
 import { NextRequest, NextResponse } from "next/server";
-import {
-  IdempotentMutationError,
-  parseMutationId,
-  runIdempotentCreate
-} from "@/lib/idempotent-mutations";
-import {
-  ProjectMutationRequestError,
-  parseProjectCreateMutation,
-  readProjectMutationBody
-} from "@/lib/project-mutations";
-import { getProjectDetail, listProjectSummaries } from "@/lib/projects";
 
 export async function GET() {
-  return NextResponse.json(await listProjectSummaries());
+  const now = clock.now();
+  return NextResponse.json(await prisma.$transaction(tx => listProjectSummaries(tx, calendar.reviewPeriodEnding(calendar.dayOf(now)))));
 }
 
 export async function POST(request: NextRequest) {
+  const now = clock.now();
   try {
     const body = await readProjectMutationBody(request);
-    const mutationId = parseMutationId(
-      request.headers.get("X-Dayflow-Mutation-Id")
-    );
+    const mutationId = parseMutationId(request.headers.get("X-Dayflow-Mutation-Id"));
     const input = parseProjectCreateMutation(body);
-
-    const detail = await runIdempotentCreate({
+    const detail = await runOnce({
       mutationId,
       kind: "project.create",
       payload: body,
-      create: async (transaction) => {
-        const project = await transaction.project.create({
-          data: input
-        });
-        const createdDetail = await getProjectDetail(project.id, transaction);
-        if (!createdDetail) {
-          throw new Error("Created Project could not be read back.");
-        }
+      create: async tx => {
+        const project = await createProject(tx, input);
+        const createdDetail = await getProjectDetail(project.id, tx, calendar.reviewPeriodEnding(calendar.dayOf(now)));
+        if (!createdDetail) throw new Error("Created Project could not be read back.");
         return createdDetail;
       }
     });
-
     return NextResponse.json(detail, { status: 201 });
   } catch (error) {
-    return projectCreateErrorResponse(error);
+    return projectMutationErrorResponse(error, "create");
   }
-}
-
-function projectCreateErrorResponse(error: unknown) {
-  if (error instanceof IdempotentMutationError) {
-    return NextResponse.json(
-      { error: error.message, code: error.code },
-      { status: error.status }
-    );
-  }
-  if (error instanceof ProjectMutationRequestError) {
-    return NextResponse.json(
-      { error: error.message, code: error.code, field: error.field },
-      { status: error.status }
-    );
-  }
-  if (
-    error instanceof Prisma.PrismaClientKnownRequestError &&
-    error.code === "P2003"
-  ) {
-    return NextResponse.json(
-      {
-        error: "A related record changed before the Project could be created.",
-        code: "CONFLICT"
-      },
-      { status: 409 }
-    );
-  }
-
-  console.error("Project creation failed.", error);
-  return NextResponse.json(
-    { error: "Project could not be created.", code: "INTERNAL_ERROR" },
-    { status: 500 }
-  );
 }

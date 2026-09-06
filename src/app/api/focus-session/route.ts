@@ -1,23 +1,10 @@
-import { Prisma } from "@prisma/client";
-import { NextRequest, NextResponse } from "next/server";
+import { clock } from "@/lib/time";
 import { prisma } from "@/lib/prisma";
-import {
-  FocusSessionConflictError,
-  FocusSessionError,
-  FocusSessionNotFoundError,
-  getFocusSnapshot,
-  startFocusSession
-} from "@/lib/focus-sessions";
-import {
-  IdempotentMutationError,
-  parseMutationId,
-  runIdempotentCreate
-} from "@/lib/idempotent-mutations";
-import {
-  WorkflowMutationRequestError,
-  parseFocusSessionStartMutation,
-  readWorkflowMutationBody
-} from "@/lib/workflow-mutations";
+import { readWorkflowMutationBody } from "@/lib/workflow-mutations";
+import { parseFocusSessionStartMutation } from "@/modules/focus/domain/session";
+import { readSnapshot, startSession, focusErrorResponse } from "@/server/focus";
+import { parseMutationId, runOnce } from "@/server/prisma/run-once";
+import { NextRequest, NextResponse } from "next/server";
 
 // SQLite allows one writer at a time. Queue local starts so competing Prisma
 // transactions reach the active-session guard without timing out; the unique
@@ -27,89 +14,30 @@ const globalForFocusSessionStart = globalThis as typeof globalThis & {
 };
 
 export async function GET() {
-  try {
-    return NextResponse.json(await getFocusSnapshot(prisma));
-  } catch (error) {
-    console.error("Focus snapshot load failed.", error);
-    return NextResponse.json(
-      { error: "Focus timer could not be loaded.", code: "INTERNAL_ERROR" },
-      { status: 500 }
-    );
-  }
+  const now = clock.now();
+  try { return NextResponse.json(await readSnapshot(prisma, now)); }
+  catch (error) { return focusErrorResponse(error, "read"); }
 }
 
 export async function POST(request: NextRequest) {
+  const now = clock.now();
   try {
     const body = await readWorkflowMutationBody(request);
-    const mutationId = parseMutationId(
-      request.headers.get("X-Dayflow-Mutation-Id")
-    );
+    const mutationId = parseMutationId(request.headers.get("X-Dayflow-Mutation-Id"));
     const input = parseFocusSessionStartMutation(body);
     const result = await serializeFocusSessionStart(() =>
-      runIdempotentCreate({
+      runOnce({
         mutationId,
         kind: "focus-session.start",
         payload: input,
-        create: async (transaction) => {
-          const session = await startFocusSession(input, transaction);
-          return {
-            session,
-            snapshot: await getFocusSnapshot(transaction)
-          };
+        create: async (tx) => {
+          const session = await startSession(tx, input, clock.now());
+          return { session, snapshot: await readSnapshot(tx, now) };
         }
       })
     );
     return NextResponse.json(result, { status: 201 });
-  } catch (error) {
-    if (error instanceof IdempotentMutationError) {
-      return NextResponse.json(
-        { error: error.message, code: error.code },
-        { status: error.status }
-      );
-    }
-    if (error instanceof WorkflowMutationRequestError) {
-      return NextResponse.json(
-        { error: error.message, code: error.code, field: error.field },
-        { status: 400 }
-      );
-    }
-    if (error instanceof FocusSessionNotFoundError) {
-      return NextResponse.json(
-        { error: error.message, code: "NOT_FOUND" },
-        { status: 404 }
-      );
-    }
-    if (error instanceof FocusSessionError) {
-      return NextResponse.json(
-        {
-          error: error.message,
-          code:
-            error instanceof FocusSessionConflictError
-              ? "CONFLICT"
-              : "VALIDATION_ERROR"
-        },
-        { status: error instanceof FocusSessionConflictError ? 409 : 400 }
-      );
-    }
-    if (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === "P2003"
-    ) {
-      return NextResponse.json(
-        {
-          error: "A selected Focus relationship changed before the timer started.",
-          code: "CONFLICT"
-        },
-        { status: 409 }
-      );
-    }
-
-    console.error("Focus session start failed.", error);
-    return NextResponse.json(
-      { error: "Focus timer could not be started.", code: "INTERNAL_ERROR" },
-      { status: 500 }
-    );
-  }
+  } catch (error) { return focusErrorResponse(error, "start"); }
 }
 
 function serializeFocusSessionStart<T>(operation: () => Promise<T>) {

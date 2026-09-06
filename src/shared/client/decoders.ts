@@ -1,3 +1,5 @@
+"use client";
+
 import type { ActivityEntry } from "@/components/activity-records";
 import type { JournalMaterialRecord, JournalNoteRecord } from "@/lib/journal-records";
 import type {
@@ -110,7 +112,7 @@ export function isActivityResponse(value: unknown): value is ActivityEntry {
     Number.isInteger(activity.durationMinutes) &&
     typeof activity.category === "string" &&
     typeof activity.note === "string" &&
-    ["MANUAL", "FOCUS"].includes(String(activity.origin)) &&
+    (activity.origin === "MANUAL" || activity.origin === "FOCUS") &&
     (activity.taskId === null || typeof activity.taskId === "string") &&
     (activity.projectId === null || typeof activity.projectId === "string") &&
     (activity.attributedProjectId === null ||
@@ -263,18 +265,49 @@ const isIsoDate = (value: unknown): value is string =>
   value.length > 0 &&
   !Number.isNaN(new Date(value).getTime());
 
-const isLocalDate = (value: unknown): value is string => {
+const isCalendarDate = (value: unknown): value is string => {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
     return false;
   }
-  const [year, month, day] = value.split("-").map(Number);
-  const parsed = new Date(year, month - 1, day);
-  return (
-    parsed.getFullYear() === year &&
-    parsed.getMonth() === month - 1 &&
-    parsed.getDate() === day
-  );
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 };
+
+const isReviewBoundary = (value: unknown): value is string => {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) {
+    return false;
+  }
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString() === value;
+};
+
+function hasReviewWindowGeometry(detail: Record<string, unknown>): boolean {
+  if (!isCalendarDate(detail.ending) ||
+      !isReviewBoundary(detail.periodStart) || !isReviewBoundary(detail.periodEnd)) {
+    return false;
+  }
+  const start = Date.parse(detail.periodStart);
+  const end = Date.parse(detail.periodEnd);
+  if (end <= start) return false;
+
+  const minute = 60_000;
+  const day = 24 * 60 * minute;
+  // Treat ending as a server calendar label, using UTC only for date arithmetic.
+  // The exclusive end is the following midnight; the start is seven days earlier.
+  const endDay = Date.parse(`${detail.ending}T00:00:00.000Z`) + day;
+  const startDay = endDay - 7 * day;
+  const startOffset = (startDay - start) / minute;
+  const endOffset = (endDay - end) / minute;
+  const isPossibleOffset = (offset: number) =>
+    Number.isInteger(offset) && offset >= -12 * 60 && offset <= 14 * 60;
+
+  // The payload omits the server zone. Check consistency with minute-resolution
+  // UTC offsets and a fixed offset or a 30/60/120-minute seasonal change, not
+  // whether a transition occurs in the browser's zone. After offset correction,
+  // the span is exactly seven whole calendar days, including DST weeks.
+  return isPossibleOffset(startOffset) && isPossibleOffset(endOffset) &&
+    [0, 30, 60, 120].includes(Math.abs(endOffset - startOffset));
+}
 
 const isCount = (value: unknown): value is number =>
   Number.isInteger(value) && Number(value) >= 0;
@@ -369,11 +402,7 @@ export function isReviewWindowDetail(
   if (!value || typeof value !== "object") return false;
   const detail = value as Record<string, unknown>;
   if (
-    !isLocalDate(detail.ending) ||
-    !isIsoDate(detail.periodStart) ||
-    !isIsoDate(detail.periodEnd) ||
-    new Date(detail.periodStart).getTime() >=
-      new Date(detail.periodEnd).getTime() ||
+    !hasReviewWindowGeometry(detail) ||
     !isPastReviewSummary(detail.reviewSummary) ||
     !Array.isArray(detail.projects) ||
     !detail.projects.every(isPastReviewProject)
@@ -388,20 +417,26 @@ export function isReviewWindowDetail(
   );
 }
 
+export type CurrentReviewWindow = Omit<ReviewWindowDetail, "review"> & { review: Review };
+
+export function isCurrentReviewWindow(value: unknown): value is CurrentReviewWindow {
+  if (!value || typeof value !== "object") return false;
+  const detail = value as CurrentReviewWindow;
+  // Reuse the evidence/bounds contract without widening historical review:null.
+  if (!isReviewWindowDetail({ ...detail, review: null })) return false;
+  const review = detail.review;
+  if (!review || review.periodStart !== detail.periodStart || review.periodEnd !== detail.periodEnd) return false;
+  return isPersistedReviewResponse(review) || (
+    review.id === null && review.persisted === false &&
+    review.narrative === "" && review.nextPeriodIntention === ""
+  );
+}
+
 export type ViewedDayKind = "past" | "today" | "future";
 
-export type ViewedDayTask = {
-  id: string;
-  title: string;
-  date: string | null;
-  status: "TODO" | "IN_PROGRESS" | "DONE";
-};
+export type ViewedDayTask = Task;
 
-export type ViewedDayActivity = {
-  id: string;
-  startedAt: string;
-  durationMinutes: number;
-};
+export type ViewedDayActivity = ActivityEntry;
 
 export type ViewedDayPayload = {
   dateKey: string;
@@ -420,29 +455,13 @@ const isIsoTimestamp = (value: unknown): value is string =>
   typeof value === "string" && !Number.isNaN(new Date(value).getTime());
 
 function isTask(value: unknown): value is ViewedDayTask {
-  if (!value || typeof value !== "object") return false;
-  const task = value as Record<string, unknown>;
-  return (
-    typeof task.id === "string" &&
-    task.id.length > 0 &&
-    typeof task.title === "string" &&
-    (task.date === null || isIsoTimestamp(task.date)) &&
-    (task.status === "TODO" ||
-      task.status === "IN_PROGRESS" ||
-      task.status === "DONE")
-  );
+  return isTaskResponse(value) && value.id.length > 0 &&
+    (value.date === null || isIsoTimestamp(value.date));
 }
 
 function isActivity(value: unknown): value is ViewedDayActivity {
-  if (!value || typeof value !== "object") return false;
-  const activity = value as Record<string, unknown>;
-  return (
-    typeof activity.id === "string" &&
-    activity.id.length > 0 &&
-    isIsoTimestamp(activity.startedAt) &&
-    Number.isInteger(activity.durationMinutes) &&
-    Number(activity.durationMinutes) >= 0
-  );
+  return isActivityResponse(value) && value.id.length > 0 &&
+    isIsoTimestamp(value.startedAt) && value.durationMinutes >= 0;
 }
 
 export function isViewedDayPayload(value: unknown): value is ViewedDayPayload {

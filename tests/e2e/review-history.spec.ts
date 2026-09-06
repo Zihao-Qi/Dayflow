@@ -18,6 +18,9 @@ async function openReview(page: Page) {
   await expect(
     page.getByRole("heading", { name: "Review", exact: true, level: 1 })
   ).toBeVisible();
+  // The heading also renders while the independent current-period read loads.
+  // Wait for the editor before callers capture its resolved period label.
+  await expect(page.getByLabel("What moved forward?")).toBeVisible();
 }
 
 const historyPanel = (page: Page) =>
@@ -297,9 +300,9 @@ async function controlBootstrapPeriodShift(page: Page) {
         periodEnd: string;
       };
     };
-    bootstrapLoads += 1;
     if (shouldShift) {
       payload.today = shiftLocalDay(payload.today as string);
+      payload.todayKey = new Date(payload.today as string).toLocaleDateString("en-CA");
       payload.review = {
         id: null,
         periodStart: shiftLocalDay(payload.review.periodStart),
@@ -307,6 +310,26 @@ async function controlBootstrapPeriodShift(page: Page) {
         narrative: "",
         nextPeriodIntention: "",
         persisted: false
+      };
+    }
+    await route.fulfill({ response, json: payload });
+    bootstrapLoads += 1;
+  });
+  // Current writing/evidence now comes from its own read. The server clock
+  // stays real, so shift that response together with bootstrap's calendar.
+  await page.route("**/api/review/window?current=1", async (route) => {
+    const shouldShift = shiftPeriod;
+    const response = await route.fetch();
+    const payload = await response.json();
+    if (shouldShift) {
+      payload.periodStart = shiftLocalDay(payload.periodStart);
+      payload.periodEnd = shiftLocalDay(payload.periodEnd);
+      const ending = new Date(payload.periodEnd);
+      ending.setDate(ending.getDate() - 1);
+      payload.ending = ending.toLocaleDateString("en-CA");
+      payload.review = {
+        id: null, periodStart: payload.periodStart, periodEnd: payload.periodEnd,
+        narrative: "", nextPeriodIntention: "", persisted: false
       };
     }
     await route.fulfill({ response, json: payload });
@@ -346,6 +369,9 @@ test("a local-day rollover keeps an open Past Review Period on screen", async ({
   await expect(pastCard).toBeVisible();
   const pastEyebrow = await page.locator(".page-eyebrow").textContent();
 
+  const windowEnding = historyPanel(page).getByLabel("Review window ending");
+  const latestEndingBefore = await windowEnding.getAttribute("max");
+  expect(latestEndingBefore).toBeTruthy();
   const loadsBeforeRollover = bootstrapPeriod.loadCount();
   bootstrapPeriod.armShift();
   await page.clock.pauseAt(lateToday);
@@ -353,6 +379,16 @@ test("a local-day rollover keeps an open Past Review Period on screen", async ({
   await expect
     .poll(bootstrapPeriod.loadCount)
     .toBeGreaterThan(loadsBeforeRollover);
+
+  // The selected past card can stay visible throughout the refresh. Its
+  // presence alone does not prove that the new current period was consumed.
+  await expect(windowEnding).toHaveAttribute(
+    "max", addLocalDays(latestEndingBefore!, 1)
+  );
+  await expect(page.getByText("Loading current Review…", { exact: true })).toHaveCount(0);
+  // Calendar publication can start another current-period read. Finish all
+  // intercepted reads before checking preservation and disposing the context.
+  await page.unrouteAll({ behavior: "wait" });
 
   // The past window is absolute, so the rollover must not move it or discard
   // the reader's place in history.

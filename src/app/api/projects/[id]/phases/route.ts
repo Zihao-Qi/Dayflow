@@ -1,16 +1,14 @@
-import { Prisma } from "@prisma/client";
-import { NextRequest, NextResponse } from "next/server";
 import {
-  IdempotentMutationError,
   parseMutationId,
-  runIdempotentCreate
-} from "@/lib/idempotent-mutations";
+  runOnce
+} from "@/server/prisma/run-once";
 import {
-  ProjectMutationRequestError,
   parsePhaseCreateMutation,
   parseProjectPathId,
   readProjectMutationBody
-} from "@/lib/project-mutations";
+} from "@/modules/projects/domain/project";
+import { createPhase, projectMutationErrorResponse } from "@/server/projects";
+import { NextRequest, NextResponse } from "next/server";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -28,85 +26,15 @@ export async function POST(request: NextRequest, { params }: Params) {
     );
     const input = parsePhaseCreateMutation(body);
 
-    const phase = await runIdempotentCreate({
+    const phase = await runOnce({
       mutationId,
       kind: "phase.create",
       payload: { projectId, ...body },
-      create: async (transaction) => {
-        const project = await transaction.project.findUnique({
-          where: { id: projectId },
-          select: { status: true }
-        });
-        if (!project) {
-          throw new ProjectMutationRequestError(
-            "The selected project could not be found.",
-            "projectId",
-            "NOT_FOUND",
-            404
-          );
-        }
-        if (project.status === "COMPLETED") {
-          throw new ProjectMutationRequestError(
-            "Reopen the completed project before adding unfinished work.",
-            "projectId",
-            "RELATIONSHIP_CONFLICT",
-            409
-          );
-        }
-
-        const lastPhase = await transaction.projectPhase.findFirst({
-          where: { projectId },
-          orderBy: { sortOrder: "desc" }
-        });
-        return transaction.projectPhase.create({
-          data: {
-            projectId,
-            name: input.name,
-            sortOrder: (lastPhase?.sortOrder ?? 0) + 1
-          }
-        });
-      }
+      create: (transaction) => createPhase(transaction, projectId, input)
     });
 
     return NextResponse.json(phase, { status: 201 });
   } catch (error) {
-    return phaseCreateErrorResponse(error);
+    return projectMutationErrorResponse(error, "phase-create");
   }
-}
-
-function phaseCreateErrorResponse(error: unknown) {
-  if (error instanceof IdempotentMutationError) {
-    return NextResponse.json(
-      { error: error.message, code: error.code },
-      { status: error.status }
-    );
-  }
-  if (error instanceof ProjectMutationRequestError) {
-    return NextResponse.json(
-      { error: error.message, code: error.code, field: error.field },
-      { status: error.status }
-    );
-  }
-  if (
-    error instanceof Prisma.PrismaClientKnownRequestError &&
-    error.code === "P2003"
-  ) {
-    return NextResponse.json(
-      {
-        error: "The selected Project is no longer available.",
-        code: "CONFLICT",
-        field: "projectId"
-      },
-      { status: 409 }
-    );
-  }
-
-  console.error("Phase creation failed.", error);
-  return NextResponse.json(
-    {
-      error: "Phase could not be created.",
-      code: "INTERNAL_ERROR"
-    },
-    { status: 500 }
-  );
 }

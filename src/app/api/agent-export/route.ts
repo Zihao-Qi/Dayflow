@@ -1,7 +1,9 @@
+import { clock } from "@/lib/time";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
 export async function GET() {
+  const now = clock.now();
   const [
     projects,
     phases,
@@ -14,25 +16,25 @@ export async function GET() {
     materials,
     timeBlocks,
     activities
-  ] = await Promise.all([
-    prisma.project.findMany({ orderBy: { updatedAt: "desc" } }),
-    prisma.projectPhase.findMany({ orderBy: [{ projectId: "asc" }, { sortOrder: "asc" }] }),
-    prisma.focusSession.findMany({ orderBy: { startedAt: "desc" } }),
-    prisma.task.findMany({ orderBy: [{ date: "asc" }, { sortOrder: "asc" }] }),
-    prisma.taskScheduleChange.findMany({ orderBy: { createdAt: "desc" } }),
-    prisma.note.findMany({ orderBy: { createdAt: "desc" } }),
-    prisma.diaryEntry.findMany({ orderBy: { date: "desc" } }),
-    prisma.review.findMany({ orderBy: { periodStart: "desc" } }),
-    prisma.material.findMany({ orderBy: { createdAt: "desc" } }),
-    prisma.timeBlock.findMany({ orderBy: { date: "asc" } }),
-    prisma.activityEntry.findMany({ orderBy: { startedAt: "asc" } })
-  ]);
+  ] = await prisma.$transaction(async (tx) => Promise.all([
+    tx.project.findMany({ orderBy: { updatedAt: "desc" } }),
+    tx.projectPhase.findMany({ orderBy: [{ projectId: "asc" }, { sortOrder: "asc" }] }),
+    tx.focusSession.findMany({ orderBy: { startedAt: "desc" } }),
+    tx.task.findMany({ orderBy: [{ date: "asc" }, { sortOrder: "asc" }] }),
+    tx.taskScheduleChange.findMany({ orderBy: { createdAt: "desc" } }),
+    tx.note.findMany({ orderBy: { createdAt: "desc" } }),
+    tx.diaryEntry.findMany({ orderBy: { date: "desc" } }),
+    tx.review.findMany({ orderBy: { periodStart: "desc" } }),
+    tx.material.findMany({ orderBy: { createdAt: "desc" } }),
+    tx.timeBlock.findMany({ orderBy: { date: "asc" } }),
+    tx.activityEntry.findMany({ orderBy: { startedAt: "asc" } })
+  ]), { timeout: 60000 });
 
   return NextResponse.json({
     app: "Dayflow",
     exportFormat: "dayflow-json",
     exportVersion: 1,
-    exportedAt: new Date().toISOString(),
+    exportedAt: now.toISOString(),
     purpose: "Complete local-first productivity data for analysis and external agents.",
     schemaVersion: 6,
     projects,
@@ -51,7 +53,8 @@ export async function GET() {
 
 function parseTags(tags: string) {
   try {
-    return JSON.parse(tags);
+    const value = JSON.parse(tags);
+    return Array.isArray(value) ? value : [];
   } catch {
     return [];
   }

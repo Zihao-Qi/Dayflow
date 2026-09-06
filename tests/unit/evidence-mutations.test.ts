@@ -1,3 +1,4 @@
+import { frozenClock } from "../../src/shared/kernel/calendar";
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
@@ -89,7 +90,7 @@ test("Activity duration, date, and time are strict and bounded", () => {
         parseActivityCreateMutation({
           durationMinutes,
           note: "Invalid duration"
-        }),
+        }, testClock.now()),
       "durationMinutes"
     );
   }
@@ -101,7 +102,7 @@ test("Activity duration, date, and time are strict and bounded", () => {
           date,
           durationMinutes: 25,
           note: "Invalid date"
-        }),
+        }, testClock.now()),
       "date"
     );
   }
@@ -126,7 +127,7 @@ test("Activity duration, date, and time are strict and bounded", () => {
           startTime,
           durationMinutes: 25,
           note: "Invalid time"
-        }),
+        }, testClock.now()),
       "startTime"
     );
   }
@@ -140,7 +141,7 @@ test("Activity text and relationship identifiers are bounded", () => {
           durationMinutes: 25,
           note: "Valid note",
           category
-        }),
+        }, testClock.now()),
       "category"
     );
   }
@@ -149,7 +150,7 @@ test("Activity text and relationship identifiers are bounded", () => {
       parseActivityCreateMutation({
         durationMinutes: 25,
         note: " "
-      }),
+      }, testClock.now()),
     "note"
   );
   expectRequestError(
@@ -157,7 +158,7 @@ test("Activity text and relationship identifiers are bounded", () => {
       parseActivityCreateMutation({
         durationMinutes: 25,
         note: "x".repeat(ACTIVITY_NOTE_MAX_LENGTH + 1)
-      }),
+      }, testClock.now()),
     "note"
   );
   expectRequestError(
@@ -166,7 +167,7 @@ test("Activity text and relationship identifiers are bounded", () => {
         durationMinutes: 25,
         note: "Valid note",
         category: "x".repeat(ACTIVITY_CATEGORY_MAX_LENGTH + 1)
-      }),
+      }, testClock.now()),
     "category"
   );
   expectRequestError(
@@ -175,7 +176,7 @@ test("Activity text and relationship identifiers are bounded", () => {
         durationMinutes: 25,
         note: "Valid note",
         taskId: "x".repeat(EVIDENCE_RELATION_ID_MAX_LENGTH + 1)
-      }),
+      }, testClock.now()),
     "taskId"
   );
   expectRequestError(
@@ -184,7 +185,7 @@ test("Activity text and relationship identifiers are bounded", () => {
         durationMinutes: 25,
         note: "Valid note",
         projectId: 42
-      }),
+      }, testClock.now()),
     "projectId"
   );
 });
@@ -269,37 +270,37 @@ test("Diary input applies canonical defaults without trimming writing", () => {
 
 test("Diary date, ratings, and writing are strict and bounded", () => {
   expectRequestError(
-    () => parseDiaryUpsertMutation({ date: "2026-02-30" }),
+    () => parseDiaryUpsertMutation({ date: "2026-02-30" }, testClock.now()),
     "date"
   );
   expectRequestError(
-    () => parseDiaryUpsertMutation({ date: false }),
+    () => parseDiaryUpsertMutation({ date: false }, testClock.now()),
     "date"
   );
 
   for (const mood of [0, 1.5, 6, "4"]) {
-    expectRequestError(() => parseDiaryUpsertMutation({ mood }), "mood");
+    expectRequestError(() => parseDiaryUpsertMutation({ mood }, testClock.now()), "mood");
   }
   for (const energy of [-1, 3.5, 10, "3"]) {
-    expectRequestError(() => parseDiaryUpsertMutation({ energy }), "energy");
+    expectRequestError(() => parseDiaryUpsertMutation({ energy }, testClock.now()), "energy");
   }
 
   expectRequestError(
-    () => parseDiaryUpsertMutation({ content: 42 }),
+    () => parseDiaryUpsertMutation({ content: 42 }, testClock.now()),
     "content"
   );
   expectRequestError(
     () =>
       parseDiaryUpsertMutation({
         content: "x".repeat(DIARY_CONTENT_MAX_LENGTH + 1)
-      }),
+      }, testClock.now()),
     "content"
   );
   expectRequestError(
     () =>
       parseDiaryUpsertMutation({
         reflection: "x".repeat(DIARY_REFLECTION_MAX_LENGTH + 1)
-      }),
+      }, testClock.now()),
     "reflection"
   );
 });
@@ -332,3 +333,5 @@ test("Malformed and non-object evidence bodies produce typed errors", async () =
     );
   }
 });
+
+const testClock = frozenClock(new Date("2026-07-27T12:00:00-05:00"));

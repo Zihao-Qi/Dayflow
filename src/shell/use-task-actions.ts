@@ -11,6 +11,7 @@ import {
 } from "@/modules/planning/ui/api";
 import { ApiError } from "@/shared/client/api-client";
 import { mutationIdFor } from "@/shared/client/mutation-ids";
+import { useRef } from "react";
 
 import { type ShellState } from "./use-shell-state";
 
@@ -28,6 +29,9 @@ export function useTaskActions({
   taskCreateWasInError,
   taskCreateMutation,
   openTodayTasks,
+  patchTask,
+  acceptTask,
+  removeTask,
   refresh,
   refreshAfterConfirmedMutation,
   openFocus
@@ -47,10 +51,15 @@ export function useTaskActions({
   | "taskCreateMutation"
 > & {
   openTodayTasks: Task[];
+  patchTask: (id: string, patch: Partial<Task>) => void;
+  acceptTask: (task: Task) => void;
+  removeTask: (id: string) => void;
   refresh: () => Promise<void>;
   refreshAfterConfirmedMutation: () => Promise<boolean>;
   openFocus: (target: FocusTarget) => void;
 }) {
+  const refreshSucceeded = useRef(true);
+
   async function addTask(date: string | null = data?.todayKey ?? null) {
     const title = newTask.trim();
     if (!title || taskCreatePending) return false;
@@ -59,6 +68,7 @@ export function useTaskActions({
     setTaskCreatePending(true);
     try {
       const result = await createTaskRequest(payload, mutationId);
+      acceptTask(result);
 
       setNewTask((current) => (current.trim() === title ? "" : current));
       taskCreateMutation.current = null;
@@ -100,6 +110,7 @@ export function useTaskActions({
     setTaskCreatePending(true);
     try {
       const result = await createFirstTaskRequest(payload, mutationId);
+      acceptTask(result);
 
       window.localStorage.setItem("dayflow-first-run-seen", "1");
       taskCreateMutation.current = null;
@@ -139,6 +150,7 @@ export function useTaskActions({
     patch: Partial<Task> & { scheduleSource?: string }
   ) {
     const { scheduleSource: _scheduleSource, ...taskPatch } = patch;
+    patchTask(id, taskPatch);
     setData((current) =>
       current
         ? {
@@ -151,8 +163,10 @@ export function useTaskActions({
     );
     try {
       const result = await updateTaskRequest(id, patch);
+      acceptTask(result);
+      setAppError("");
 
-      await refreshAfterConfirmedMutation();
+      refreshSucceeded.current = await refreshAfterConfirmedMutation();
       return true;
     } catch {
       return false;
@@ -168,6 +182,7 @@ export function useTaskActions({
   function reportTaskSaveRecovery() {
     if (!taskSaveWasInError.current) return;
     taskSaveWasInError.current = false;
+    if (!refreshSucceeded.current) return;
     setAppError("");
     setAppAnnouncement("Saved.");
   }
@@ -178,7 +193,6 @@ export function useTaskActions({
   ) {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       if (await saveTaskAttempt(id, patch)) {
-        setAppError("");
         reportTaskSaveRecovery();
         return true;
       }
@@ -195,6 +209,7 @@ export function useTaskActions({
   async function deleteTask(id: string) {
     try {
       const result = await deleteTaskRequest(id);
+      removeTask(id);
 
       setAppError("");
       await refreshAfterConfirmedMutation();
@@ -235,6 +250,7 @@ export function useTaskActions({
     );
     try {
       const result = await reorderTasksRequest(reordered);
+      result.tasks.forEach(acceptTask);
 
       setAppError("");
       if (announce) {

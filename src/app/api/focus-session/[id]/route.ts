@@ -1,79 +1,22 @@
-import { Prisma } from "@prisma/client";
-import { NextRequest, NextResponse } from "next/server";
+import { clock } from "@/lib/time";
 import { prisma } from "@/lib/prisma";
-import {
-  FocusSessionConflictError,
-  FocusSessionError,
-  FocusSessionNotFoundError,
-  getFocusSnapshot,
-  transitionFocusSession
-} from "@/lib/focus-sessions";
-import {
-  WorkflowMutationRequestError,
-  parseFocusSessionTransitionMutation,
-  parseWorkflowId,
-  readWorkflowMutationBody
-} from "@/lib/workflow-mutations";
+import { readWorkflowMutationBody } from "@/lib/workflow-mutations";
+import { parseFocusSessionId, parseFocusSessionTransitionMutation } from "@/modules/focus/domain/session";
+import { readSnapshot, transitionSession, enrichSession, focusErrorResponse } from "@/server/focus";
+import { NextRequest, NextResponse } from "next/server";
 
 type Params = { params: Promise<{ id: string }> };
 
 export async function PATCH(request: NextRequest, { params }: Params) {
+  const now = clock.now();
   try {
     const routeParams = await params;
-    const id = parseWorkflowId(
-      routeParams.id,
-      "id",
-      "Focus session identifier is invalid."
-    );
+    const id = parseFocusSessionId(routeParams.id, "id");
     const body = await readWorkflowMutationBody(request);
     const input = parseFocusSessionTransitionMutation(body);
-    const result = await transitionFocusSession(id, input.action, input);
-    return NextResponse.json({
-      ...result,
-      snapshot: await getFocusSnapshot(prisma)
-    });
-  } catch (error) {
-    if (error instanceof WorkflowMutationRequestError) {
-      return NextResponse.json(
-        { error: error.message, code: error.code, field: error.field },
-        { status: 400 }
-      );
-    }
-    if (error instanceof FocusSessionNotFoundError) {
-      return NextResponse.json(
-        { error: error.message, code: "NOT_FOUND", field: "id" },
-        { status: 404 }
-      );
-    }
-    if (error instanceof FocusSessionError) {
-      return NextResponse.json(
-        {
-          error: error.message,
-          code:
-            error instanceof FocusSessionConflictError
-              ? "CONFLICT"
-              : "VALIDATION_ERROR"
-        },
-        { status: error instanceof FocusSessionConflictError ? 409 : 400 }
-      );
-    }
-    if (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      (error.code === "P2003" || error.code === "P2025")
-    ) {
-      return NextResponse.json(
-        {
-          error: "The Focus session changed before it could be saved.",
-          code: "CONFLICT"
-        },
-        { status: 409 }
-      );
-    }
-
-    console.error("Focus session transition failed.", error);
-    return NextResponse.json(
-      { error: "Focus timer could not be saved.", code: "INTERNAL_ERROR" },
-      { status: 500 }
-    );
-  }
+    const result = await prisma.$transaction(tx => input.action === "enrich" || input.action === "record"
+      ? enrichSession(tx, id, input, now)
+      : transitionSession(tx, id, input.action, now));
+    return NextResponse.json({ ...result, snapshot: await readSnapshot(prisma, now) });
+  } catch (error) { return focusErrorResponse(error, "save"); }
 }

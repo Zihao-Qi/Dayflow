@@ -3,7 +3,8 @@ import test from "node:test";
 import {
   createCsvExport,
   CsvExportError,
-  parseCsvExportKind
+  parseCsvExportKind,
+  readCsvExport
 } from "../../src/lib/csv-export";
 import {
   activityHeaders,
@@ -12,7 +13,7 @@ import {
 } from "../csv-test-helpers";
 
 type CsvExportDatabase = NonNullable<
-  Parameters<typeof createCsvExport>[2]
+  Parameters<typeof readCsvExport>[1]
 >;
 
 test("Task CSV has stable columns, calendar dates, relationships, and formula safety", async () => {
@@ -49,10 +50,9 @@ test("Task CSV has stable columns, calendar dates, relationships, and formula sa
     activityEntry: { findMany: async () => [] }
   } as unknown as CsvExportDatabase;
 
-  const result = await createCsvExport(
-    "tasks",
-    new Date("2026-07-28T17:00:00.000Z"),
-    database
+  const result = createCsvExport(
+    await readCsvExport("tasks", database),
+    new Date("2026-07-28T17:00:00.000Z")
   );
 
   assert.equal(result.kind, "tasks");
@@ -120,10 +120,9 @@ test("Activity CSV represents exact and local time with safe related names", asy
     }
   } as unknown as CsvExportDatabase;
 
-  const result = await createCsvExport(
-    "activities",
-    new Date("2026-07-28T17:00:00.000Z"),
-    database
+  const result = createCsvExport(
+    await readCsvExport("activities", database),
+    new Date("2026-07-28T17:00:00.000Z")
   );
   const records = parseCsv(result.body);
 
@@ -162,15 +161,13 @@ test("empty CSV exports keep exact headers and unsupported kinds are typed", asy
     activityEntry: { findMany: async () => [] }
   } as unknown as CsvExportDatabase;
 
-  const tasks = await createCsvExport(
-    "tasks",
-    new Date("2026-07-28T17:00:00.000Z"),
-    database
+  const tasks = createCsvExport(
+    await readCsvExport("tasks", database),
+    new Date("2026-07-28T17:00:00.000Z")
   );
-  const activities = await createCsvExport(
-    "activities",
-    new Date("2026-07-28T17:00:00.000Z"),
-    database
+  const activities = createCsvExport(
+    await readCsvExport("activities", database),
+    new Date("2026-07-28T17:00:00.000Z")
   );
   assert.deepEqual(parseCsv(tasks.body), [taskHeaders]);
   assert.deepEqual(parseCsv(activities.body), [activityHeaders]);

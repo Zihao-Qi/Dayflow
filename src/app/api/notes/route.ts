@@ -1,17 +1,17 @@
-import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { clock } from "@/lib/time";
 import {
-  IdempotentMutationError,
   parseMutationId,
-  runIdempotentCreate
-} from "@/lib/idempotent-mutations";
+  runOnce
+} from "@/server/prisma/run-once";
 import {
-  JournalRequestError,
   parseNoteCreateInput,
   parseStoredTags
-} from "@/lib/journal-domain";
-import { readJournalHistory } from "@/lib/journal-history";
-import { resolveJournalAttribution } from "@/lib/journal-relations";
+} from "@/modules/journal/domain/journal";
+import { journalErrors } from "@/modules/journal/domain/journal";
+import { createNote, readJournalHistory, journalErrorResponse } from "@/server/journal";
+import { prisma } from "@/lib/prisma";
+import { AppError } from "@/shared/kernel/errors";
+import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(request: NextRequest) {
   try {
@@ -19,33 +19,23 @@ export async function GET(request: NextRequest) {
       await readJournalHistory(prisma, "note", request.nextUrl.searchParams)
     );
   } catch (error) {
-    return journalErrorResponse(error, "Notes could not be loaded.");
+    return journalErrorResponse(error, journalErrors.notesCouldNotBeLoaded);
   }
 }
 
 export async function POST(request: NextRequest) {
+  const now = clock.now();
   try {
     const mutationId = parseMutationId(
       request.headers.get("X-Dayflow-Mutation-Id")
     );
     const body = await parseJson(request);
-    const input = parseNoteCreateInput(body);
-    const note = await runIdempotentCreate({
+    const input = parseNoteCreateInput(body, now);
+    const note = await runOnce({
       mutationId,
       kind: "note.create",
       payload: body,
-      create: async (transaction) => {
-        const attribution = await resolveJournalAttribution(transaction, input);
-        return transaction.note.create({
-          data: {
-            content: input.content,
-            tags: JSON.stringify(input.tags),
-            taskId: attribution.taskId,
-            projectId: attribution.projectId,
-            date: input.date
-          }
-        });
-      }
+      create: (transaction) => createNote(transaction, input)
     });
 
     return NextResponse.json(
@@ -53,7 +43,7 @@ export async function POST(request: NextRequest) {
       { status: 201 }
     );
   } catch (error) {
-    return journalErrorResponse(error, "The note could not be saved.");
+    return journalErrorResponse(error, journalErrors.theNoteCouldNotBeSaved);
   }
 }
 
@@ -61,29 +51,6 @@ async function parseJson(request: NextRequest) {
   try {
     return await request.json();
   } catch {
-    throw new JournalRequestError(
-      "INVALID_JSON",
-      "Request body must be valid JSON."
-    );
+    throw new AppError(journalErrors.requestBodyMustBeValidJSON);
   }
-}
-
-function journalErrorResponse(error: unknown, fallback: string) {
-  if (error instanceof IdempotentMutationError) {
-    return NextResponse.json(
-      { code: error.code, error: error.message },
-      { status: error.status }
-    );
-  }
-  if (error instanceof JournalRequestError) {
-    return NextResponse.json(
-      { code: error.code, error: error.message },
-      { status: error.status }
-    );
-  }
-  console.error(fallback, error);
-  return NextResponse.json(
-    { code: "INTERNAL_ERROR", error: fallback },
-    { status: 500 }
-  );
 }

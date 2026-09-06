@@ -352,8 +352,8 @@ export function sqlitePathFromDatabaseUrl(
 
 export function defaultBackupPath(
   databasePath: string,
-  purpose: BackupPurpose = "manual",
-  now = new Date()
+  purpose: BackupPurpose,
+  now: Date
 ) {
   const label: Record<BackupPurpose, string> = {
     manual: "dayflow",
@@ -372,13 +372,15 @@ export function createDatabaseBackup(options: {
   databasePath: string;
   outputPath?: string;
   repositoryRoot?: string;
-  now?: Date;
+  /** Required: the caller owns the instant. The filename stem and
+   * manifest.createdAt are both derived from it, so they cannot disagree. */
+  now: Date;
 }): BackupResult {
   const repositoryRoot = options.repositoryRoot ?? process.cwd();
   const sourcePath = resolve(options.databasePath);
   const destinationPath = resolve(
     options.outputPath ??
-      defaultBackupPath(sourcePath, "manual", options.now ?? new Date())
+      defaultBackupPath(sourcePath, "manual", options.now)
   );
 
   assertExistingRegularFile(sourcePath, "active database");
@@ -404,7 +406,7 @@ export function createDatabaseBackup(options: {
     const manifest: BackupManifest = {
       format: BACKUP_FORMAT,
       formatVersion: BACKUP_FORMAT_VERSION,
-      createdAt: (options.now ?? new Date()).toISOString(),
+      createdAt: options.now.toISOString(),
       applicationVersion: readApplicationVersion(repositoryRoot),
       schemaVersion: metadata.schemaVersion,
       schemaMigrations: metadata.schemaMigrations,
@@ -498,6 +500,9 @@ export async function restoreDatabaseBackup(options: {
   repositoryRoot?: string;
   safetyBackupPath?: string;
   expectedPayloadSha256?: string;
+  /** Required: the safety backup's filename stem and its manifest.createdAt
+   * are both derived from this one instant. */
+  now: Date;
   onProgress?: (message: string) => void;
 }): Promise<RestoreResult> {
   const repositoryRoot = options.repositoryRoot ?? process.cwd();
@@ -505,7 +510,7 @@ export async function restoreDatabaseBackup(options: {
   const sourceBackupPath = resolve(options.backupPath);
   const safetyBackupPath = resolve(
     options.safetyBackupPath ??
-      defaultBackupPath(activeDatabasePath, "restore-safety")
+      defaultBackupPath(activeDatabasePath, "restore-safety", options.now)
   );
   const progress = options.onProgress ?? (() => undefined);
 
@@ -552,7 +557,8 @@ export async function restoreDatabaseBackup(options: {
     ? createDatabaseBackup({
         databasePath: activeDatabasePath,
         outputPath: safetyBackupPath,
-        repositoryRoot
+        repositoryRoot,
+        now: options.now
       })
     : null;
   if (safetyBackup) {

@@ -3,10 +3,32 @@ node_modules
 .DS_Store
 .env
 .env.local
+.env*.local
+
+# SQLite databases and their sidecars. The named paths below are the historical
+# defaults, but DATABASE_URL is configurable and the backup directory is derived
+# from the database's own location, so match by shape rather than by path. A -wal
+# file holds recent un-checkpointed writes, which for this application means the
+# newest journal and diary entries.
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
 dev.db
 prisma/dev.db
+
+# Backup artifacts are full copies of the database.
+*.dayflow-backup
+backups/
 prisma/backups/
+
 *.log
 *.tsbuildinfo
 playwright-report
 test-results
+
+# Local working notes, deliberately not published.
+AGENTS.md
+docs/research/

@@ -1,3 +1,4 @@
+import { frozenClock } from "../../src/shared/kernel/calendar";
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
@@ -15,7 +16,7 @@ import {
 
 test("Note input requires content and normalizes bounded tags", () => {
   assert.throws(
-    () => parseNoteCreateInput({ content: "   " }),
+    () => parseNoteCreateInput({ content: "   " }, testClock.now()),
     (error) =>
       error instanceof JournalRequestError &&
       error.code === "VALIDATION_ERROR"
@@ -162,4 +163,29 @@ test("Journal page parsing caps large limits and rejects ambiguous input", () =>
       error instanceof JournalRequestError &&
       error.code === "INVALID_CURSOR"
   );
+});
+
+const testClock = frozenClock(new Date("2026-07-27T12:00:00-05:00"));
+
+test("browser-safe Journal cursors preserve legacy UTF-8 bytes and decoder edge cases", () => {
+  const value = { createdAt: new Date("2026-07-27T17:25:31.123Z"), id: "笔记-📔" };
+  for (const scope of ["", "query-scope"]) {
+    const payload = scope
+      ? { version: 2, kind: "note", scope, createdAt: value.createdAt.toISOString(), id: value.id }
+      : { version: 1, kind: "note", createdAt: value.createdAt.toISOString(), id: value.id };
+    const encoded = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+    assert.equal(encodeJournalCursor("note", value, scope), encoded);
+    assert.deepEqual(decodeJournalCursor(encoded, "note", scope), value);
+    // Buffer decoding preserves a BOM; JSON parsing must continue to reject it.
+    const bom = Buffer.from(`\ufeff${JSON.stringify(payload)}`, "utf8").toString("base64url");
+    assert.throws(() => decodeJournalCursor(bom, "note", scope), /pagination cursor is invalid/);
+  }
+  // Legacy Buffer silently ignores one trailing sextet with no complete byte.
+  let id = "legacy";
+  let encoded = encodeJournalCursor("note", { ...value, id });
+  while (encoded.length % 4 !== 0) {
+    id += "x";
+    encoded = encodeJournalCursor("note", { ...value, id });
+  }
+  assert.deepEqual(decodeJournalCursor(`${encoded}A`, "note"), { ...value, id });
 });

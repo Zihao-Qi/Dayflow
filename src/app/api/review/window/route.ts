@@ -1,27 +1,23 @@
-import { NextRequest, NextResponse } from "next/server";
+import { clock } from "@/lib/time";
+import { appErrorResponse } from "@/lib/http-errors";
 import { prisma } from "@/lib/prisma";
+import { reviewErrors } from "@/lib/review-errors";
 import {
-  readReviewWindow,
-  ReviewHistoryRequestError
-} from "@/lib/review-history";
+  loadReviewWindow
+} from "@/server/review";
+import { AppError } from "@/shared/kernel/errors";
+import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(request: NextRequest) {
+  const now = clock.now();
   try {
     return NextResponse.json(
-      await readReviewWindow(prisma, request.nextUrl.searchParams)
+      await loadReviewWindow(prisma, request.nextUrl.searchParams, now)
     );
   } catch (error) {
-    if (error instanceof ReviewHistoryRequestError) {
-      return NextResponse.json(
-        { error: error.message, code: error.code },
-        { status: error.status }
-      );
-    }
+    if (error instanceof AppError) return appErrorResponse(error);
 
     console.error("Review Window could not be read.", error);
-    return NextResponse.json(
-      { error: "Review Window could not be read.", code: "INTERNAL_ERROR" },
-      { status: 500 }
-    );
+    return appErrorResponse(new AppError(reviewErrors.reviewWindowCouldNotBeRead));
   }
 }

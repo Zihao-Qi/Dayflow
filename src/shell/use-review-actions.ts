@@ -3,6 +3,7 @@
 import { saveReview as saveReviewRequest } from "@/components/dashboard-api";
 import { ApiError } from "@/shared/client/api-client";
 import type { Review } from "@/shared/client/decoders";
+import { useRef } from "react";
 
 import { type ShellState } from "./use-shell-state";
 
@@ -23,7 +24,9 @@ export function useReviewActions({
   refresh: () => Promise<void>;
   refreshAfterConfirmedMutation: () => Promise<boolean>;
 }) {
-  async function saveReview(review: Review) {
+  const refreshSucceeded = useRef(true);
+
+  async function saveReview(review: Review, acceptReview?: (saved: Review) => void) {
     const payload = {
       periodStart: review.periodStart,
       periodEnd: review.periodEnd,
@@ -32,11 +35,13 @@ export function useReviewActions({
     };
     try {
       const result = await saveReviewRequest(payload);
+      acceptReview?.(result);
 
       setData((current) =>
         current ? { ...current, review: result } : current
       );
-      await refreshAfterConfirmedMutation();
+      setAppError("");
+      refreshSucceeded.current = await refreshAfterConfirmedMutation();
       return true;
     } catch (error) {
       if (error instanceof ApiError && error.status === 409 && error.code === "REVIEW_PERIOD_CHANGED") {
@@ -70,6 +75,7 @@ export function useReviewActions({
   function reportReviewSaveRecovery() {
     if (!reviewSaveWasInError.current) return;
     reviewSaveWasInError.current = false;
+    if (!refreshSucceeded.current) return;
     setAppAnnouncement("Saved.");
     setAppError("");
   }

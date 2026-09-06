@@ -1,7 +1,9 @@
+import { clock } from "@/lib/time";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
 export async function GET() {
+  const now = clock.now();
   const [
     projects,
     phases,
@@ -32,7 +34,7 @@ export async function GET() {
     app: "Dayflow",
     exportFormat: "dayflow-json",
     exportVersion: 1,
-    exportedAt: new Date().toISOString(),
+    exportedAt: now.toISOString(),
     purpose: "Complete local-first productivity data for analysis and external agents.",
     schemaVersion: 6,
     projects,

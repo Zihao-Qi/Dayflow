@@ -1,3 +1,4 @@
+import { clock } from "@/lib/time";
 import { focusErrors } from "@/lib/focus-errors";
 import {
   getFocusSnapshot,
@@ -18,6 +19,7 @@ import { NextRequest, NextResponse } from "next/server";
 type Params = { params: Promise<{ id: string }> };
 
 export async function PATCH(request: NextRequest, { params }: Params) {
+  const now = clock.now();
   try {
     const routeParams = await params;
     const id = parseWorkflowId(
@@ -27,10 +29,10 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     );
     const body = await readWorkflowMutationBody(request);
     const input = parseFocusSessionTransitionMutation(body);
-    const result = await transitionFocusSession(id, input.action, input);
+    const result = await transitionFocusSession(id, input.action, input, now);
     return NextResponse.json({
       ...result,
-      snapshot: await getFocusSnapshot(prisma)
+      snapshot: await getFocusSnapshot(prisma, now)
     });
   } catch (error) {
     if (error instanceof AppError) return appErrorResponse(error);

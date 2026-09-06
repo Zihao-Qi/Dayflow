@@ -24,7 +24,7 @@ export type DayViewErrorCode = "VALIDATION_ERROR";
 /** @deprecated Compatibility constructor for existing callers; returns AppError. */
 export { AppError as DayViewRequestError };
 
-export function classifyDay(date: Date, now = new Date()): DayViewKind {
+export function classifyDay(date: Date, now: Date): DayViewKind {
   const today = startOfLocalDay(now).getTime();
   const day = startOfLocalDay(date).getTime();
   if (day < today) return "past";
@@ -40,7 +40,7 @@ export function classifyDay(date: Date, now = new Date()): DayViewKind {
  */
 export function parseViewedDay(
   searchParams: URLSearchParams,
-  now = new Date()
+  now: Date
 ) {
   const values = searchParams.getAll("date");
   if (values.length > 1) {
@@ -68,7 +68,7 @@ export function parseViewedDay(
 
 export function resolveEarliestNavigableDayKey(
   earliestRecordedDayKey: string | null,
-  now = new Date()
+  now: Date
 ) {
   const todayKey = localDateKey(startOfLocalDay(now));
   return earliestRecordedDayKey && earliestRecordedDayKey < todayKey
@@ -95,7 +95,7 @@ export function assertViewedDayOnOrAfter(
 export async function readViewedDay(
   database: PrismaClient,
   date: Date,
-  now = new Date()
+  now: Date
 ) {
   const kind = classifyDay(date, now);
   const { start, end } = sameDayRange(date);

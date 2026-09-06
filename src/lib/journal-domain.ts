@@ -65,7 +65,7 @@ export type JournalCursor = {
 
 export function parseNoteCreateInput(
   value: unknown,
-  now = new Date()
+  now: Date
 ): NoteCreateInput {
   const body = parseBodyObject(value);
   const content = parseRequiredString(

@@ -1,3 +1,4 @@
+import { clock } from "@/lib/time";
 import { NextRequest, NextResponse } from "next/server";
 import { timeBlockMutationErrorResponse } from "@/lib/time-block-http";
 import {
@@ -20,7 +21,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
     // Replacement validates date transitions against the stored block inside
     // the persistence transaction, so unchanged past dates remain correctable.
     const input = parseTimeBlockDraftStructure(body);
-    return NextResponse.json(await replaceTimeBlock(id, input));
+    return NextResponse.json(await replaceTimeBlock(id, input, clock));
   } catch (error) {
     return timeBlockMutationErrorResponse(error, "save");
   }

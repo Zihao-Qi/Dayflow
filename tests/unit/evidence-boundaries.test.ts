@@ -1,3 +1,4 @@
+import { frozenClock } from "../../src/shared/kernel/calendar";
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
@@ -22,8 +23,8 @@ test("Focus elapsed time excludes persisted pauses", () => {
     status: "PAUSED"
   });
 
-  assert.equal(focusElapsedSeconds(session), 480);
-  assert.equal(focusRemainingSeconds(session), 120);
+  assert.equal(focusElapsedSeconds(session, testClock.now().getTime()), 480);
+  assert.equal(focusRemainingSeconds(session, testClock.now().getTime()), 120);
 });
 
 test("Focus client contracts reject malformed successful start payloads", () => {
@@ -121,3 +122,5 @@ function focusSessionFixture(
     ...overrides
   };
 }
+
+const testClock = frozenClock(new Date("2026-07-27T12:00:00-05:00"));

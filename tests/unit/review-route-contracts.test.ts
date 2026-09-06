@@ -7,6 +7,39 @@ import { GET as getReviewHistory } from "../../src/app/api/review/history/route"
 import { GET as getReviewWindow } from "../../src/app/api/review/window/route";
 import { reviewPeriodRange } from "../../src/lib/dates";
 import { prisma } from "../../src/lib/prisma";
+import { clock } from "../../src/lib/time";
+
+test("Review save rejects a period that ends while the request body is read", async (t) => {
+  let now = new Date("2026-09-04T23:59:59.999-05:00");
+  t.mock.method(clock, "now", () => new Date(now));
+  const period = reviewPeriodRange(now);
+  const request = jsonRequest({
+    periodStart: period.start.toISOString(),
+    periodEnd: period.end.toISOString(),
+    narrative: "Before midnight"
+  });
+  const readBody = request.json.bind(request);
+  t.mock.method(request, "json", async () => {
+    const body = await readBody();
+    now = new Date("2026-09-05T00:00:00.001-05:00");
+    return body;
+  });
+  const originalUpsert = prisma.review.upsert;
+  let writes = 0;
+  (prisma.review as unknown as { upsert: unknown }).upsert = async () => {
+    writes += 1;
+    return { id: "unexpected-write" };
+  };
+  t.after(() => { prisma.review.upsert = originalUpsert; });
+  const response = await saveReview(request);
+  assert.equal(response.status, 409);
+  assert.deepEqual(await response.json(), {
+    error: "The Review Period changed. Refresh and try again.",
+    code: "REVIEW_PERIOD_CHANGED",
+    field: "reviewPeriod"
+  });
+  assert.equal(writes, 0);
+});
 
 test("Review route returns typed malformed and empty mutation errors", async () => {
   const malformed = await saveReview(

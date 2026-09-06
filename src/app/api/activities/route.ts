@@ -1,3 +1,4 @@
+import { clock } from "@/lib/time";
 import { NextRequest, NextResponse } from "next/server";
 import {
   activityMutationErrorResponse
@@ -15,12 +16,13 @@ import {
 } from "@/lib/idempotent-mutations";
 
 export async function POST(request: NextRequest) {
+  const now = clock.now();
   try {
     const mutationId = parseMutationId(
       request.headers.get("X-Dayflow-Mutation-Id")
     );
     const body = await readEvidenceMutationBody(request);
-    const input = parseActivityCreateMutation(body);
+    const input = parseActivityCreateMutation(body, now);
     const activity = await runIdempotentCreate({
       mutationId,
       kind: "activity.create",

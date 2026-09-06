@@ -65,11 +65,11 @@ const MODULE_EDGES: Readonly<Record<string, ReadonlySet<string>>> = {
 // and scripts/** are intentionally excluded instead of allowlisted.
 const ACTIVITY_WRITE_ALLOWLIST = new Set([
   "src/app/api/activities/[id]/route.ts:62:activityEntry.deleteMany",
-  "src/app/api/activities/route.ts:34:activityEntry.create",
+  "src/app/api/activities/route.ts:36:activityEntry.create",
   "src/lib/activity-persistence.ts:79:activityEntry.updateMany",
-  "src/lib/focus-sessions.ts:267:activityEntry.upsert",
-  "src/lib/focus-sessions.ts:372:activityEntry.upsert",
-  "src/lib/projects.ts:164:activityEntry.updateMany"
+  "src/lib/focus-sessions.ts:268:activityEntry.upsert",
+  "src/lib/focus-sessions.ts:373:activityEntry.upsert",
+  "src/lib/projects.ts:163:activityEntry.updateMany"
 ]);
 
 // Legacy src/lib call counts are ratcheted per file so line movement is harmless,
@@ -93,15 +93,15 @@ const BASELINE: ReadonlyArray<Violation & { migration: string }> = [
   baseline(6, "src/lib/focus-queue.ts", 29, "Phase 2: planning"),
   baseline(6, "src/lib/focus-queue.ts", 54, "Phase 2: planning"),
   baseline(6, "src/lib/focus-queue.ts", 70, "Phase 2: planning"),
-  baseline(6, "src/lib/focus-sessions.ts", 180, "Phase 3: focus services"),
-  baseline(6, "src/lib/focus-sessions.ts", 264, "Phase 3: focus services"),
-  baseline(6, "src/lib/focus-sessions.ts", 347, "Phase 3: focus services"),
+  baseline(6, "src/lib/focus-sessions.ts", 181, "Phase 3: focus services"),
+  baseline(6, "src/lib/focus-sessions.ts", 265, "Phase 3: focus services"),
+  baseline(6, "src/lib/focus-sessions.ts", 348, "Phase 3: focus services"),
   baseline(6, "src/lib/journal-history.ts", 140, "Phase 3: journal services"),
-  baseline(6, "src/lib/projects.ts", 149, "Phase 3: projects services"),
-  baseline(6, "src/lib/projects.ts", 159, "Phase 3: projects services"),
-  baseline(6, "src/lib/time-block-persistence.ts", 51, "Phase 2: planning"),
+  baseline(6, "src/lib/projects.ts", 148, "Phase 3: projects services"),
+  baseline(6, "src/lib/projects.ts", 158, "Phase 3: projects services"),
+  baseline(6, "src/lib/time-block-persistence.ts", 53, "Phase 2: planning"),
   baseline(6, "src/lib/workspace-readiness.ts", 4, "Phase 3: read models"),
-  baseline(8, "src/lib/backup-management.ts", 41, "Phase 4: backup engine")
+  baseline(8, "src/lib/backup-management.ts", 42, "Phase 4: backup engine")
 ];
 
 function baseline(rule: Rule, file: string, line: number, migration: string) {
@@ -393,14 +393,16 @@ function collectModuleReferences(sourceFile: ts.SourceFile): ModuleReference[] {
         // Both import("pkg").Type and typeof import("pkg") are erased types.
         typeOnly: true
       });
-    } else if (
-      ts.isCallExpression(node) &&
-      node.arguments.length >= 1 &&
-      ts.isStringLiteralLike(node.arguments[0]) &&
-      (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
-        (ts.isIdentifier(node.expression) && node.expression.text === "require"))
-    ) {
-      references.push({ specifier: node.arguments[0].text, node, typeOnly: false });
+    } else if (ts.isCallExpression(node) && node.arguments.length >= 1) {
+      const callee = unwrapExpression(node.expression);
+      const argument = unwrapExpression(node.arguments[0]);
+      if (
+        ts.isStringLiteralLike(argument) &&
+        (callee.kind === ts.SyntaxKind.ImportKeyword ||
+          (ts.isIdentifier(callee) && callee.text === "require"))
+      ) {
+        references.push({ specifier: argument.text, node, typeOnly: false });
+      }
     }
   });
   return references;
@@ -478,10 +480,11 @@ function addSingletonModule(
 }
 
 function isNewPrismaClient(node: ts.Node) {
+  if (!ts.isNewExpression(node)) return false;
+  const callee = unwrapExpression(node.expression);
   return (
-    ts.isNewExpression(node) &&
-    ((ts.isIdentifier(node.expression) && node.expression.text === "PrismaClient") ||
-      (ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === "PrismaClient"))
+    (ts.isIdentifier(callee) && callee.text === "PrismaClient") ||
+    propertyName(callee) === "PrismaClient"
   );
 }
 
@@ -497,6 +500,12 @@ function exportedNewPrismaClientBindings(sourceFile: ts.SourceFile) {
   const names = new Set<string>();
   for (const statement of sourceFile.statements) {
     if (
+      ts.isExportAssignment(statement) &&
+      !statement.isExportEquals &&
+      containsNewPrismaClient(statement.expression)
+    ) {
+      names.add("default");
+    } else if (
       ts.isVariableStatement(statement) &&
       hasModifier(statement, ts.SyntaxKind.ExportKeyword)
     ) {
@@ -550,7 +559,13 @@ function oneHopSingletonExports(
   }
 
   for (const statement of record.sourceFile.statements) {
-    if (ts.isExportDeclaration(statement) && !statement.isTypeOnly) {
+    if (
+      ts.isExportAssignment(statement) &&
+      !statement.isExportEquals &&
+      expressionIsGlobalBinding(statement.expression, importedBindings)
+    ) {
+      exportedNames.add("default");
+    } else if (ts.isExportDeclaration(statement) && !statement.isTypeOnly) {
       if (statement.moduleSpecifier && ts.isStringLiteralLike(statement.moduleSpecifier)) {
         const targetKey = singletonTargetKey(
           record.relativePath,
@@ -589,24 +604,39 @@ function oneHopSingletonExports(
   return exportedNames;
 }
 
-function expressionIsGlobalBinding(
-  expression: ts.Expression,
-  bindings: ReadonlySet<string>
-) {
+// These wrappers do not change the runtime receiver or binding. Peel them at
+// every expression boundary, including intermediate members of an access chain.
+function unwrapExpression(expression: ts.Expression): ts.Expression {
   let current = expression;
   while (
     ts.isParenthesizedExpression(current) ||
     ts.isAsExpression(current) ||
+    ts.isSatisfiesExpression(current) ||
     ts.isTypeAssertionExpression(current) ||
     ts.isNonNullExpression(current)
   ) {
     current = current.expression;
   }
-  if (ts.isIdentifier(current)) return bindings.has(current.text);
-  if (ts.isPropertyAccessExpression(current)) {
-    return bindings.has(`${current.expression.getText()}.${current.name.text}`);
+  return current;
+}
+
+function expressionBindingName(expression: ts.Expression): string | null {
+  const current = unwrapExpression(expression);
+  if (ts.isIdentifier(current)) return current.text;
+  if (ts.isPropertyAccessExpression(current) || ts.isElementAccessExpression(current)) {
+    const receiver = expressionBindingName(current.expression);
+    const name = propertyName(current);
+    if (receiver !== null && name !== null) return `${receiver}.${name}`;
   }
-  return false;
+  return null;
+}
+
+function expressionIsGlobalBinding(
+  expression: ts.Expression,
+  bindings: ReadonlySet<string>
+) {
+  const name = expressionBindingName(expression);
+  return name !== null && bindings.has(name);
 }
 
 function isSingletonReference(
@@ -735,10 +765,9 @@ function collectBindingNames(name: ts.BindingName, names: Set<string>) {
 function expressionContainsGlobal(expression: ts.Expression, bindings: ReadonlySet<string>) {
   let found = false;
   visit(expression, (node) => {
-    if (ts.isIdentifier(node) && bindings.has(node.text)) found = true;
     if (
-      ts.isPropertyAccessExpression(node) &&
-      bindings.has(`${node.expression.getText()}.${node.name.text}`)
+      (ts.isIdentifier(node) || ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
+      expressionIsGlobalBinding(node, bindings)
     ) found = true;
   });
   return found;
@@ -756,17 +785,15 @@ function callUsesGlobalClient(
   call: ts.CallExpression,
   bindings: ReadonlySet<string>
 ) {
-  if (
-    !ts.isPropertyAccessExpression(call.expression) &&
-    !ts.isElementAccessExpression(call.expression)
-  ) return false;
-  const callee = call.expression.getText();
-  for (const binding of bindings) {
-    if (
-      callee.startsWith(`${binding}.`) ||
-      callee.startsWith(`${binding}[`) ||
-      callee.startsWith(`${binding}?.`)
-    ) return true;
+  let current = unwrapExpression(call.expression);
+  while (
+    ts.isPropertyAccessExpression(current) ||
+    ts.isElementAccessExpression(current) ||
+    ts.isCallExpression(current)
+  ) {
+    const next = unwrapExpression(current.expression);
+    if (expressionIsGlobalBinding(next, bindings)) return true;
+    current = next;
   }
   return false;
 }
@@ -785,26 +812,29 @@ function activityWriteMethod(call: ts.CallExpression): string | null {
     !method ||
     !["create", "upsert", "createMany", "update", "updateMany", "delete", "deleteMany"].includes(method)
   ) return null;
-  const callee = call.expression;
+  const callee = unwrapExpression(call.expression);
   if (!ts.isPropertyAccessExpression(callee) && !ts.isElementAccessExpression(callee)) return null;
-  const target = ts.isIdentifier(callee.expression)
-    ? callee.expression.text
-    : propertyName(callee.expression);
+  const receiver = unwrapExpression(callee.expression);
+  const target = ts.isIdentifier(receiver) ? receiver.text : propertyName(receiver);
   return target === "activityEntry" ? `activityEntry.${method}` : null;
 }
 
 function callMethod(call: ts.CallExpression) {
-  if (ts.isIdentifier(call.expression)) return call.expression.text;
-  return propertyName(call.expression);
+  const callee = unwrapExpression(call.expression);
+  if (ts.isIdentifier(callee)) return callee.text;
+  return propertyName(callee);
 }
 
 function propertyName(expression: ts.Expression): string | null {
-  if (ts.isPropertyAccessExpression(expression)) return expression.name.text;
+  const current = unwrapExpression(expression);
+  if (ts.isPropertyAccessExpression(current)) return current.name.text;
   if (
-    ts.isElementAccessExpression(expression) &&
-    expression.argumentExpression &&
-    ts.isStringLiteralLike(expression.argumentExpression)
-  ) return expression.argumentExpression.text;
+    ts.isElementAccessExpression(current) &&
+    current.argumentExpression
+  ) {
+    const argument = unwrapExpression(current.argumentExpression);
+    if (ts.isStringLiteralLike(argument)) return argument.text;
+  }
   return null;
 }
 
@@ -1164,6 +1194,63 @@ test("Rule 4: services cannot call through the global client binding", () => {
   );
 });
 
+test("Rule 4: a query through an extended global client chain is still counted", () => {
+  withFixture(
+    {
+      "src/lib/prisma.ts": 'import { PrismaClient } from "@prisma/client"; export const prisma = new PrismaClient();\n',
+      "src/lib/counted.ts": [
+        'import { prisma } from "@/lib/prisma";',
+        'import { prisma as getClient } from "@/lib/prisma";',
+        'export function viaExtends() { return prisma.$extends({}).task.findMany(); }',
+        'export function viaFactory() { return getClient().task.findMany(); }',
+        'export function local(tx: any) { return tx.$extends({}).task.findMany(); }'
+      ].join("\n"),
+      "src/modules/planning/services/fail.ts": [
+        'import { prisma } from "@/lib/prisma";',
+        'export function fail() { return prisma.$extends({}).task.findMany(); }'
+      ].join("\n")
+    },
+    (root) => {
+      const report = scanArchitecture(root);
+      const libDetails = report.violations
+        .filter((violation) =>
+          violation.rule === 4 &&
+          violation.file === "src/lib/counted.ts" &&
+          violation.detail.includes("calls through")
+        )
+        .map((violation) => violation.detail);
+      assert.equal(
+        libDetails.filter((detail) => detail.endsWith("prisma.$extends({}).task.findMany")).length,
+        1
+      );
+      assert.equal(
+        libDetails.filter((detail) => detail.endsWith("prisma.$extends")).length,
+        1
+      );
+      assert.equal(
+        libDetails.filter((detail) => detail.endsWith("getClient().task.findMany")).length,
+        1
+      );
+      assert.equal(
+        libDetails.filter((detail) => detail.includes("tx.$extends")).length,
+        0
+      );
+      assert.equal(report.legacyGlobalClientCalls["src/lib/counted.ts"], 3);
+      assert.deepEqual(
+        report.violations
+          .filter((violation) =>
+            violation.rule === 4 &&
+            violation.file === "src/modules/planning/services/fail.ts" &&
+            violation.detail.includes("calls through") &&
+            violation.detail.endsWith("prisma.$extends({}).task.findMany")
+          )
+          .map(({ file, line }) => `${file}:${line}`),
+        ["src/modules/planning/services/fail.ts:2"]
+      );
+    }
+  );
+});
+
 test("Rule 4: a concise-arrow service call through the global client is counted", () => {
   withFixture(
     {
@@ -1508,6 +1595,183 @@ test("Rule 8: scripts may import src, never the reverse", () => {
     (root) => assert.deepEqual(locations(root, 8), ["src/fail.ts:1"])
   );
 });
+
+const expressionWrappers: ReadonlyArray<[string, (value: string) => string]> = [
+  ["parentheses", (value) => `(${value})`],
+  ["as assertion", (value) => `(${value} as any)`],
+  ["satisfies", (value) => `(${value} satisfies any)`],
+  ["non-null assertion", (value) => `${value}!`],
+  ["type assertion", (value) => `(<any>${value})`],
+  ["nested wrappers", (value) => `(((<any>(${value}!) as any) satisfies any))`]
+];
+
+test("Rule 4: a default one-hop singleton export marks both import and call", () => {
+  withFixture(
+    {
+      "src/shared/database.ts": 'import { prisma } from "@/lib/prisma"; export default prisma;',
+      "src/modules/planning/services/task.ts": 'import database from "@/shared/database";\ndatabase.task.findMany();'
+    },
+    (root) => assert.deepEqual(locations(root, 4), [
+      "src/modules/planning/services/task.ts:1",
+      "src/modules/planning/services/task.ts:2"
+    ])
+  );
+});
+
+for (const [label, wrap] of expressionWrappers) {
+  test(`Rule 4: wrapped one-hop exported bindings: ${label}`, () => {
+    withFixture(
+      {
+        "src/shared/default.ts": `import { prisma } from "@/lib/prisma"; export default ${wrap("prisma")};`,
+        "src/shared/named.ts": `import * as clients from "@/lib/prisma"; export const db = ${wrap(`${wrap("clients")}.prisma`)};`,
+        "src/shared/namespace-default.ts": `import * as clients from "@/lib/prisma"; export default ${wrap(`${wrap("clients")}[${wrap('"prisma"')}]`)};`,
+        "src/modules/planning/services/task.ts": [
+          'import database from "@/shared/default";',
+          'import { db } from "@/shared/named";',
+          'import namespaceDb from "@/shared/namespace-default";',
+          'database.task.findMany();',
+          'db.task.findMany();',
+          'namespaceDb.task.findMany();'
+        ].join("\n")
+      },
+      (root) => assert.deepEqual(locations(root, 4),
+        [1, 2, 3, 4, 5, 6].map((line) => `src/modules/planning/services/task.ts:${line}`)
+      )
+    );
+  });
+
+  test(`Rule 4: wrapped global-client receivers and callees are counted: ${label}`, () => {
+    const file = "src/lib/counted.ts";
+    const calls = [
+      `${wrap("prisma")}.task.findMany();`,
+      `${wrap("prisma.task")}.findMany();`,
+      `${wrap("prisma.task.findMany")}();`,
+      `${wrap("clients")}.prisma.task.findMany();`,
+      `${wrap(`${wrap("clients")}[${wrap('"prisma"')}]`)}["task"]["findMany"]();`,
+      `${wrap("prisma")}?.task?.findMany?.();`
+    ];
+    withFixture(
+      { [file]: ['import { prisma } from "@/lib/prisma";', 'import * as clients from "@/lib/prisma";', ...calls].join("\n") },
+      (root) => {
+        const report = scanArchitecture(root);
+        assert.deepEqual(report.legacyGlobalClientCalls, { [file]: calls.length });
+        assert.deepEqual(report.violations.map(({ rule, line, baselineGroup }) => ({ rule, line, baselineGroup })),
+          calls.map((_, index) => ({ rule: 4, line: index + 3, baselineGroup: "legacy-global-client-call" }))
+        );
+      }
+    );
+  });
+
+  test(`Rule 7: wrapped Activity receivers, callees and keys retain allowlist sites: ${label}`, () => {
+    const file = "src/activity.ts";
+    const methods = ["create", "upsert", "createMany", "update", "updateMany", "delete", "deleteMany"];
+    const calls = methods.flatMap((method) => [
+      `${wrap("database.activityEntry")}.${method}({});`,
+      `${wrap(`database.activityEntry.${method}`)}({});`,
+      `${wrap("activityEntry")}.${method}({});`,
+      `${wrap(`database[${wrap('"activityEntry"')}]`)}[${wrap(JSON.stringify(method))}]({});`
+    ]);
+    const sites = methods.flatMap((method, index) =>
+      [1, 2, 3, 4].map((offset) => `${file}:${index * 4 + offset}:activityEntry.${method}`)
+    ).sort();
+    withFixture({ [file]: calls.join("\n") }, (root) => {
+      const report = scanArchitecture(root);
+      assert.deepEqual(report.activityWrites, sites);
+      assert.deepEqual(report.violations.map(({ rule, line }) => ({ rule, line })),
+        calls.map((_, index) => ({ rule: 7, line: index + 1 }))
+      );
+      const allowed = scanArchitecture(root, { activityWriteAllowlist: new Set(sites) });
+      assert.deepEqual(allowed.activityWrites, sites);
+      assert.deepEqual(allowed.violations, []);
+    });
+  });
+
+  test(`Rules 4 and 6: wrapped transaction callees and property keys: ${label}`, () => {
+    const file = "src/modules/planning/services/task.ts";
+    const calls = [
+      `${wrap("database.$transaction")}(() => null);`,
+      `${wrap("$transaction")}(() => null);`,
+      `database[${wrap('"$transaction"')}](() => null);`
+    ];
+    withFixture({ [file]: calls.join("\n") }, (root) => {
+      for (const rule of [4, 6] as const) {
+        assert.deepEqual(locations(root, rule), [1, 2, 3].map((line) => `${file}:${line}`));
+      }
+    });
+  });
+
+  test(`Rule 4: wrapped constructors and direct default client exports: ${label}`, () => {
+    withFixture(
+      {
+        "src/shared/client.ts": `export default ${wrap(`new (${wrap("PrismaClient")})()`)};`,
+        "src/shared/namespace.ts": `const client = new (${wrap("Prisma.PrismaClient")})();`,
+        "src/shared/barrel.ts": `import client from "./client"; export default ${wrap("client")};`,
+        "src/modules/planning/services/task.ts": 'import database from "@/shared/barrel";\ndatabase.task.findMany();'
+      },
+      (root) => assert.deepEqual(locations(root, 4), [
+        "src/modules/planning/services/task.ts:1",
+        "src/modules/planning/services/task.ts:2",
+        "src/shared/client.ts:1",
+        "src/shared/namespace.ts:1"
+      ])
+    );
+  });
+
+  test(`Rule 5: wrapped namespace globals in defaults and fallbacks: ${label}`, () => {
+    const file = "src/fallback.ts";
+    const global = wrap(`${wrap("clients")}[${wrap('"prisma"')}]`);
+    withFixture(
+      { [file]: [
+        'import * as clients from "@/lib/prisma";',
+        `function defaultClient(tx = ${global}) { return tx; }`,
+        `function fallback(tx?: Tx) { return ${wrap("tx")} ?? ${global}; }`,
+        `function nested(tx?: Tx) { return () => tx || ${global}; }`
+      ].join("\n") },
+      (root) => assert.deepEqual(locations(root, 5), [2, 3, 4].map((line) => `${file}:${line}`))
+    );
+  });
+
+  test(`Rule 8: wrapped require callee and module arguments: ${label}`, () => {
+    const file = "src/imports.ts";
+    withFixture(
+      { [file]: [
+        `${wrap("require")}("../scripts/task");`,
+        `require(${wrap('"../scripts/task"')});`,
+        `import(${wrap('"../scripts/task"')});`
+      ].join("\n") },
+      (root) => assert.deepEqual(locations(root, 8), [1, 2, 3].map((line) => `${file}:${line}`))
+    );
+  });
+
+  test(`Wrapped unrelated expressions remain clean: ${label}`, () => {
+    withFixture(
+      {
+        "src/shared/ordinary.ts": `import { prisma } from "@/lib/prisma"; const other = {}; export default ${wrap("other")};`,
+        "src/shared/namespace.ts": `import * as clients from "@/lib/prisma"; export default ${wrap(`${wrap("clients")}.other`)};`,
+        "src/modules/planning/services/task.ts": [
+          'import ordinary from "@/shared/ordinary";',
+          'import other from "@/shared/namespace";',
+          `${wrap("ordinary.task")}.create({});`,
+          `${wrap("other.task.create")}({});`,
+          `${wrap("database.activityEntry")}.findMany();`,
+          `new (${wrap("OtherClient")})();`
+        ].join("\n"),
+        "src/lib/unrelated.ts": [
+          'import { prisma } from "@/lib/prisma";',
+          'import * as clients from "@/lib/prisma";',
+          `${wrap("prismaOther")}.task.findMany();`,
+          `${wrap("clients")}.other.task.findMany();`,
+          `${wrap("local")}[prisma].findMany();`,
+          `${wrap("local.task.findMany")}(prisma);`
+        ].join("\n"),
+        "src/shadow.ts": `import * as clients from "@/lib/prisma"; function shadow(clients: any, tx?: Tx) { return tx ?? ${wrap(`${wrap("clients")}.prisma`)}; }`
+      },
+      (root) => assert.deepEqual(scanArchitecture(root), {
+        violations: [], activityWrites: [], legacyGlobalClientCalls: {}
+      })
+    );
+  });
+}
 
 // ============================================================================
 // Red-Team Evasion Test Cases (Rules 1-8)

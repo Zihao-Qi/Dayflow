@@ -1,3 +1,4 @@
+import { readReviewActivities, readReviewDiaries } from "@/server/evidence";
 import {
   addDays,
   localDateKey,
@@ -52,19 +53,8 @@ export async function readReviewPeriodEvidence(
 
   const [activities, diaries, completedTasks, notes, materials, projects] =
     await Promise.all([
-      database.activityEntry.findMany({
-        where: { startedAt: window },
-        orderBy: { startedAt: "asc" },
-        include: {
-          focusSession: {
-            select: { needsEnrichment: true }
-          }
-        }
-      }),
-      database.diaryEntry.findMany({
-        where: { date: window },
-        orderBy: { date: "asc" }
-      }),
+      readReviewActivities(database, period),
+      readReviewDiaries(database, period),
       database.task.findMany({
         where: { completedAt: window },
         select: { id: true }

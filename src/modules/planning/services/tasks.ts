@@ -142,3 +142,8 @@ export async function detachProjectTasks(tx: Prisma.TransactionClient, projectId
 export async function detachPhaseTasks(tx: Prisma.TransactionClient, phaseId: string) {
   await tx.task.updateMany({ where: { phaseId }, data: { phaseId: null } });
 }
+
+/** Narrow relationship snapshot for evidence attribution. */
+export function readTaskAttribution(database: TaskReadDatabase, id: string) {
+  return database.task.findUnique({ where: { id }, select: { id: true, projectId: true } });
+}

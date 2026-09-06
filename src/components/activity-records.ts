@@ -6,20 +6,8 @@
  * them without the two modules importing each other.
  */
 
-export type ActivityEntry = {
-  id: string;
-  startedAt: string;
-  durationMinutes: number;
-  category: string;
-  note: string;
-  origin: "MANUAL" | "FOCUS";
-  taskId: string | null;
-  projectId: string | null;
-  attributedProjectId: string | null;
-  focusSessionId: string | null;
-  createdAt: string;
-  updatedAt: string;
-};
+export { type ActivityEntry, isActivityResponse } from "@/modules/evidence/domain/activity";
+import type { ActivityEntry } from "@/modules/evidence/domain/activity";
 
 export type ActivityDraft = {
   date: string;

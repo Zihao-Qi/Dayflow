@@ -102,6 +102,46 @@ export async function readDayTasks(database: { task: Pick<Prisma.TransactionClie
   return tasks.map(serializeTask);
 }
 
+type TaskListReadDatabase = { task: Pick<Prisma.TransactionClient["task"], "findMany"> };
+
+/** Scheduled window plus overdue, backlog and queued Tasks, retaining raw records. */
+export function readTaskWindow(tx: TaskListReadDatabase, range: { start: Date; end: Date }, today: Date) {
+  return tx.task.findMany({
+    where: {
+      OR: [
+        { date: { gte: range.start, lt: range.end } },
+        { date: { lt: today }, status: { not: "DONE" } },
+        { date: null },
+        { focusQueuePosition: { not: null } }
+      ]
+    },
+    orderBy: [{ date: "asc" }, { sortOrder: "asc" }, { createdAt: "asc" }]
+  });
+}
+
+export function readOpenTaskPalette(tx: TaskListReadDatabase) {
+  return tx.task.findMany({
+    where: { status: { not: "DONE" } },
+    select: {
+      id: true,
+      title: true,
+      date: true,
+      estimateMinutes: true,
+      sortOrder: true,
+      focusQueuePosition: true,
+      projectId: true
+    }
+  });
+}
+
+/** All statuses within the exact half-open scheduled-date range. */
+export function readTasksInDateRange(tx: TaskListReadDatabase, range: { start: Date; end: Date }) {
+  return tx.task.findMany({
+    where: { date: { gte: range.start, lt: range.end } },
+    orderBy: { date: "asc" }
+  });
+}
+
 export type TaskMutationAction = "create" | "save" | "delete" | "reorder" | "undo";
 
 /** Also used by server transaction roots for failures raised while committing. */

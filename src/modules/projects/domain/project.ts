@@ -653,15 +653,6 @@ export const projectErrors = {
   }
 } as const satisfies Record<string, ErrorSpec>;
 
-export function parseProjectStatus(value: unknown): ProjectStatus | null {
-  const status = String(value ?? "").toUpperCase();
-  return projectStatuses.includes(status as ProjectStatus)
-    ? (status as ProjectStatus)
-    : null;
-}
-
-export { AppError as ProjectRuleError };
-
 export type SummaryInput = {
   id: string;
   name: string;
@@ -815,4 +806,3 @@ export function isProjectTaskResponse(value: unknown): value is ProjectTaskRecor
     (task.phaseId === null || typeof task.phaseId === "string")
   );
 }
-

@@ -9,6 +9,7 @@ import {
   timeBlockOverlapError,
   type TimeBlockDraft
 } from "@/modules/planning/domain/time-block";
+import type { Clock } from "@/shared/kernel/calendar";
 import { AppError } from "@/shared/kernel/errors";
 
 const timeBlockTaskSelection = { id: true, title: true, estimateMinutes: true } as const;
@@ -36,7 +37,7 @@ export async function replaceTimeBlock(
   tx: Prisma.TransactionClient,
   id: string,
   input: TimeBlockDraft,
-  now: Date
+  clock: Clock
 ) {
   try {
     const current = await tx.timeBlock.findUnique({
@@ -44,9 +45,11 @@ export async function replaceTimeBlock(
       select: { id: true, date: true, taskId: true }
     });
     if (!current) throw new AppError(timeBlockErrors.timeBlockNotFound);
-    // An unchanged past date remains correctable.
+    // An unchanged past date remains correctable. The stored-block read may
+    // cross midnight, so the transition is validated against the clock now,
+    // not against an instant sampled before the read.
     if (input.date.getTime() !== current.date.getTime()) {
-      assertTimeBlockIsNotPast(input, now);
+      assertTimeBlockIsNotPast(input, clock.now());
     }
     await validatePersistedTimeBlock(tx, input, id, current.taskId);
     const block = await tx.timeBlock.update({

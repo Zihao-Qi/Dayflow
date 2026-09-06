@@ -2567,7 +2567,15 @@ test("creates a project, keeps its plan on one page, and unifies its backlog", a
   // created after installation stay paused until time advances (1000ms, then
   // 4000ms in src/components/save-state.tsx:106); this test covers successful
   // autosave and shortcut saves, not recovery or every application timer.
-  await page.clock.install({ time: new Date(Date.now() - test.info().timeout) });
+  // Backdate for that headroom, but never past local midnight. The API server
+  // keeps the real date, so a run starting within the timeout window after
+  // midnight would hand the browser yesterday and fire the day-refresh timer
+  // that scheduleDayRefresh armed (src/shell/use-bootstrap.ts).
+  const localMidnight = new Date();
+  localMidnight.setHours(0, 0, 0, 0);
+  await page.clock.install({
+    time: new Date(Math.max(Date.now() - test.info().timeout, localMidnight.getTime()))
+  });
   await page.clock.pauseAt(new Date());
   await editProject.getByLabel("Name", { exact: true }).fill("Complete systems course");
   await expect(editProject.getByText("Unsaved changes", { exact: true })).toBeVisible();

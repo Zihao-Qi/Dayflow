@@ -117,7 +117,7 @@ test("planning Time Block services run headlessly on SQLite", async (context) =>
       const block = await create();
       await create({ startTime: "11:00", endTime: "12:00", title: "Neighbor" });
       const replace = (changes: Record<string, unknown>) => prisma.$transaction((tx) =>
-        replaceTimeBlock(tx, block.id, draft(changes), clock.now()));
+        replaceTimeBlock(tx, block.id, draft(changes), clock));
       const updated = await replace({ title: "Updated snapshot", endTime: "10:30" });
       assert.equal(updated.id, block.id);
       assert.equal(updated.createdAt, block.createdAt);
@@ -133,7 +133,7 @@ test("planning Time Block services run headlessly on SQLite", async (context) =>
       await assert.rejects(() => create({ date: "2026-09-03" }),
         hasSpec(timeBlockErrors.timeBlocksCannotBePlannedForADayThatHasAlready));
       const block = await create();
-      const tomorrow = new Date("2026-09-05T12:00:00-05:00");
+      const tomorrow = frozenClock(new Date("2026-09-05T12:00:00-05:00"));
       const corrected = await prisma.$transaction((tx) =>
         replaceTimeBlock(tx, block.id, draft({ title: "Past correction" }), tomorrow));
       assert.equal(corrected.title, "Past correction");
@@ -152,7 +152,7 @@ test("planning Time Block services run headlessly on SQLite", async (context) =>
       await assert.rejects(() => create({ taskId: task.id, startTime: "10:00", endTime: "11:00" }),
         hasSpec(timeBlockErrors.chooseAnUnfinishedTaskScheduledForTheSameDayAsThe));
       const updated = await prisma.$transaction((tx) =>
-        replaceTimeBlock(tx, block.id, draft({ taskId: task.id }), clock.now()));
+        replaceTimeBlock(tx, block.id, draft({ taskId: task.id }), clock));
       assert.equal(updated.taskId, task.id);
       assert.equal(updated.title, "Original title snapshot");
       await reset();
@@ -166,7 +166,7 @@ test("planning Time Block services run headlessly on SQLite", async (context) =>
       await assert.rejects(() => prisma.$transaction((tx) => deleteTimeBlock(tx, block.id)),
         hasSpec(timeBlockErrors.timeBlockNotFound));
       await assert.rejects(() => prisma.$transaction((tx) =>
-        replaceTimeBlock(tx, block.id, draft(), clock.now())), hasSpec(timeBlockErrors.timeBlockNotFound));
+        replaceTimeBlock(tx, block.id, draft(), clock)), hasSpec(timeBlockErrors.timeBlockNotFound));
     });
 
     await context.test("a seeded P2025 update race translates locally and rolls back the trigger", async () => {
@@ -175,7 +175,7 @@ test("planning Time Block services run headlessly on SQLite", async (context) =>
         BEFORE UPDATE ON "TimeBlock" BEGIN DELETE FROM "TimeBlock" WHERE id = OLD.id; END;`);
       try {
         await assert.rejects(() => prisma.$transaction((tx) =>
-          replaceTimeBlock(tx, block.id, draft({ title: "Lost" }), clock.now())),
+          replaceTimeBlock(tx, block.id, draft({ title: "Lost" }), clock)),
         hasSpec(timeBlockErrors.timeBlockNotFound));
         assert.equal((await prisma.timeBlock.findUniqueOrThrow({ where: { id: block.id } })).title,
           block.title);

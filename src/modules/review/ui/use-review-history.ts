@@ -1,14 +1,16 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
 import {
-  isPastReviewDetail,
-  isReviewWindowDetail,
-  isReviewHistoryPage,
+  loadReviewDetail as loadReviewDetailRequest,
+  loadReviewHistory as loadReviewHistoryRequest,
+  loadReviewWindow as loadReviewWindowRequest
+} from "@/components/dashboard-api";
+import {
   type PastReviewDetail,
   type PastReviewRecord,
   type ReviewWindowDetail
 } from "@/lib/review-records";
+import { useCallback, useRef, useState } from "react";
 
 const REVIEW_HISTORY_LIMIT = 20;
 const LIST_FAILURE =
@@ -64,13 +66,9 @@ export function useReviewHistory() {
     try {
       const query = new URLSearchParams({ limit: String(REVIEW_HISTORY_LIMIT) });
       if (cursor) query.set("cursor", cursor);
-      const response = await fetch(`/api/review/history?${query}`);
-      const payload = response.ok ? await response.json() : null;
+      const payload = await loadReviewHistoryRequest(query);
       if (request !== listRequest.current) return;
-      if (!response.ok || !isReviewHistoryPage(payload)) {
-        setState((current) => ({ ...current, loading: false, error: LIST_FAILURE }));
-        return;
-      }
+
       setState((current) => ({
         ...current,
         loading: false,
@@ -118,17 +116,9 @@ export function useReviewHistory() {
       windowLoading: false
     }));
     try {
-      const response = await fetch(`/api/review/${encodeURIComponent(id)}`);
-      const payload = response.ok ? await response.json() : null;
+      const payload = await loadReviewDetailRequest(id);
       if (request !== detailRequest.current) return;
-      if (!response.ok || !isPastReviewDetail(payload)) {
-        setState((current) => ({
-          ...current,
-          selecting: false,
-          selectionError: DETAIL_FAILURE
-        }));
-        return;
-      }
+
       setState((current) => ({
         ...current,
         selecting: false,
@@ -160,17 +150,9 @@ export function useReviewHistory() {
     }));
     try {
       const query = new URLSearchParams({ ending });
-      const response = await fetch(`/api/review/window?${query}`);
-      const payload = response.ok ? await response.json() : null;
+      const payload = await loadReviewWindowRequest(query);
       if (request !== detailRequest.current) return;
-      if (!response.ok || !isReviewWindowDetail(payload)) {
-        setState((current) => ({
-          ...current,
-          windowLoading: false,
-          windowError: WINDOW_FAILURE
-        }));
-        return;
-      }
+
       setState((current) => ({
         ...current,
         selected: null,

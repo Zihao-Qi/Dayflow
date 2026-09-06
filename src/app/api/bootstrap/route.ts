@@ -103,7 +103,7 @@ async function loadBootstrap(now: Date) {
       readActivityCategories(tx),
       isWorkspaceEmpty(tx),
       earliestRecordedDay(tx)
-    ]));
+    ]), { timeout: 60000 });
 
   const diaryEntry = diary
     ? { ...diary, persisted: true }

@@ -70,6 +70,10 @@ type ActivityExportRow = Prisma.ActivityEntryGetPayload<{
   select: typeof activitySelect;
 }>;
 
+export type CsvExportRows =
+  | { kind: "tasks"; rows: TaskExportRow[] }
+  | { kind: "activities"; rows: ActivityExportRow[] };
+
 const taskColumns: ReadonlyArray<CsvColumn<TaskExportRow>> = [
   { header: "task_id", value: (task) => task.id },
   { header: "title", value: (task) => task.title },
@@ -193,37 +197,42 @@ export function parseCsvExportKind(value: unknown): CsvExportKind {
   return value;
 }
 
-export async function createCsvExport(
+/** Read within the caller's transaction; return rows without encoding them. */
+export async function readCsvExport(
   kind: CsvExportKind,
-  now: Date,
   database: CsvExportDatabase
-): Promise<CsvExportResult> {
-  const fileDate = localDateKey(now);
+): Promise<CsvExportRows> {
   if (kind === "tasks") {
-    const tasks = await database.task.findMany({
-      select: taskSelect,
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }]
-    });
     return {
       kind,
-      fileName: csvExportFileName(kind, fileDate),
-      body: serializeCsv(taskColumns, tasks),
-      recordCount: tasks.length
+      rows: await database.task.findMany({
+        select: taskSelect,
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }]
+      })
     };
   }
 
-  const activities = await database.activityEntry.findMany({
-    select: activitySelect,
-    orderBy: [{ startedAt: "asc" }, { id: "asc" }]
-  });
   return {
     kind,
-    fileName: csvExportFileName(kind, fileDate),
-    body: serializeCsv(
-      activityColumns(resolveTimezone()),
-      activities
-    ),
-    recordCount: activities.length
+    rows: await database.activityEntry.findMany({
+      select: activitySelect,
+      orderBy: [{ startedAt: "asc" }, { id: "asc" }]
+    })
+  };
+}
+
+/** Serialize the captured rows only after the read transaction has closed. */
+export function createCsvExport(
+  data: CsvExportRows,
+  now: Date
+): CsvExportResult {
+  return {
+    kind: data.kind,
+    fileName: csvExportFileName(data.kind, localDateKey(now)),
+    body: data.kind === "tasks"
+      ? serializeCsv(taskColumns, data.rows)
+      : serializeCsv(activityColumns(resolveTimezone()), data.rows),
+    recordCount: data.rows.length
   };
 }
 

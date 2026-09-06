@@ -76,7 +76,6 @@ const ACTIVITY_WRITE_ALLOWLIST = new Set([
 // while any increase (or stale decrease) fails the real-tree assertion.
 const LEGACY_GLOBAL_CLIENT_CALL_BASELINE = [
   legacyClientCalls("src/lib/activity-persistence.ts", 1, "Phase 3: evidence services"),
-  legacyClientCalls("src/lib/focus-queue.ts", 3, "Phase 2: planning"),
   legacyClientCalls("src/lib/focus-sessions.ts", 7, "Phase 3: focus services"),
   legacyClientCalls("src/lib/projects.ts", 2, "Phase 3: projects services")
 ] as const;
@@ -89,9 +88,6 @@ function legacyClientCalls(file: string, count: number, migration: string) {
 // Remove each entry with its named migration phase.
 const BASELINE: ReadonlyArray<Violation & { migration: string }> = [
   baseline(6, "src/lib/activity-persistence.ts", 31, "Phase 3: evidence services"),
-  baseline(6, "src/lib/focus-queue.ts", 29, "Phase 2: planning"),
-  baseline(6, "src/lib/focus-queue.ts", 54, "Phase 2: planning"),
-  baseline(6, "src/lib/focus-queue.ts", 70, "Phase 2: planning"),
   baseline(6, "src/lib/focus-sessions.ts", 181, "Phase 3: focus services"),
   baseline(6, "src/lib/focus-sessions.ts", 265, "Phase 3: focus services"),
   baseline(6, "src/lib/focus-sessions.ts", 348, "Phase 3: focus services"),

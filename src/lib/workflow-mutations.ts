@@ -25,12 +25,10 @@ const focusActions = [
   "enrich",
   "record"
 ] as const;
-const queuePlacements = ["next", "end"] as const;
 
 type JsonObject = Record<string, unknown>;
 type FocusKind = (typeof focusKinds)[number];
 export type FocusAction = (typeof focusActions)[number];
-export type QueuePlacementMutation = (typeof queuePlacements)[number];
 export type WorkflowMutationErrorCode = "INVALID_JSON" | "VALIDATION_ERROR";
 
 /** @deprecated Compatibility constructor for existing callers; returns AppError. */
@@ -48,41 +46,9 @@ export async function readWorkflowMutationBody(request: {
   return requireObject(body);
 }
 
-export function parseFocusQueueAddMutation(value: unknown) {
-  const body = requireObject(value);
-  return {
-    taskId: parseWorkflowId(
-      body.taskId,
-      "taskId",
-      workflowErrors.taskIdentifierIsInvalid.message
-    ),
-    placement: parseEnum(
-      body.placement,
-      queuePlacements,
-      "placement",
-      workflowErrors.queuePlacementMustBeNextOrEnd.message
-    )
-  };
-}
-
-export function parseFocusQueueReorderMutation(value: unknown) {
-  const body = requireObject(value);
-  return {
-    ids: parseIdArray(body.ids, "ids"),
-    expectedIds: parseIdArray(body.expectedIds, "expectedIds")
-  };
-}
-
-export function parseFocusQueueRemoveMutation(value: unknown) {
-  const body = requireObject(value);
-  return {
-    taskId: parseWorkflowId(
-      body.taskId,
-      "taskId",
-      workflowErrors.taskIdentifierIsInvalid.message
-    )
-  };
-}
+export { parseFocusQueueAddMutation, parseFocusQueueReorderMutation, parseFocusQueueRemoveMutation,
+  type QueuePlacementMutation } from "@/modules/planning/domain/focus-queue";
+export { parseTaskReorderMutation } from "@/modules/planning/domain/task";
 
 export function parseFocusSessionStartMutation(value: unknown): {
   kind: FocusKind;
@@ -167,11 +133,6 @@ export function parseFocusSessionTransitionMutation(value: unknown): {
   };
 }
 
-export function parseTaskReorderMutation(value: unknown) {
-  const body = requireObject(value);
-  return { ids: parseIdArray(body.ids, "ids") };
-}
-
 export function parseWorkflowId(
   value: unknown,
   field: string,
@@ -199,22 +160,6 @@ function parseOptionalWorkflowId(
     rejectControlCharacters: true,
     nullValues: [undefined, null, ""]
   });
-}
-
-function parseIdArray(value: unknown, field: "ids" | "expectedIds") {
-  if (!Array.isArray(value)) {
-    throw validation(`${field === "ids" ? "Task identifiers" : "Expected task identifiers"} must be an array.`, field);
-  }
-  if (value.length > WORKFLOW_ID_ARRAY_MAX_ITEMS) {
-    throw validation(`No more than ${WORKFLOW_ID_ARRAY_MAX_ITEMS.toLocaleString("en-US")} task identifiers can be reordered at once.`, field);
-  }
-  const ids = value.map((id) =>
-    parseWorkflowId(id, field, workflowErrors.taskIdentifierIsInvalid.message)
-  );
-  if (new Set(ids).size !== ids.length) {
-    throw validation("Task identifiers must not contain duplicates.", field);
-  }
-  return ids;
 }
 
 function parseOptionalText(

@@ -85,8 +85,9 @@ rules target directories that do not exist until the migration creates them.
    Next, React and `node:*`, is rejected.
 3. **UI isolation.** References from `src/modules/*/ui` are rejected when
    they resolve to any `src/modules/*/services` folder or to `src/server`,
-   or when the specifier is `@prisma/client` or one of its subpaths,
-   type-only imports included.
+   or to `src/shell`, or when the specifier is `@prisma/client` or one of
+   its subpaths, type-only imports included. Module UI receives data and
+   callbacks; it must not depend on the shell's state or composition types.
 4. **Services never hold the client.** Under `src/modules/*/services`:
    value imports from `@prisma/client` or its subpaths are rejected, while
    type-only imports are allowed so a service can name
@@ -98,6 +99,12 @@ rules target directories that do not exist until the migration creates them.
    `src/lib` until it is deleted, a call rooted at an imported global-client
    binding is a violation. The global client module itself and
    `src/lib/idempotent-mutations.ts`, a transaction root, are excluded.
+   Independently, constructing a Prisma client anywhere under `src/`
+   outside the explicit canonical modules `src/lib/prisma` and
+   `src/server/prisma/client` is a violation, whether or not the file
+   makes a global-client call. Construction recognition is syntactic:
+   `new PrismaClient(...)` or a `new` expression whose constructor is a
+   property access named `PrismaClient`; constructor aliases are not resolved.
 5. **No fallback to the global client.** In any file under `src/` that
    imports the global-client binding, by its own name or an alias, a
    parameter initializer containing that binding, or a `??`, `||`, `??=`
@@ -106,12 +113,16 @@ rules target directories that do not exist until the migration creates them.
    is permitted only under `src/app/api`, `src/server`, and the idempotency
    helper: today `src/lib/idempotent-mutations.ts`, later
    `src/server/prisma/run-once.ts`.
-7. **Activity writes.** Every direct call whose receiver property is
-   `activityEntry` and whose method is `create`, `createMany`, `upsert`,
-   `update` or `updateMany` under `src/`, and every string or template
-   literal containing `INSERT INTO`, `INSERT OR REPLACE INTO`,
-   `INSERT OR IGNORE INTO` or `UPDATE` against `ActivityEntry`, must be in
-   the test's allowlist, and the allowlist must contain nothing else. The
+7. **Activity writes.** Every direct call whose receiver property or
+   identifier is `activityEntry` and whose method is `create`, `createMany`,
+   `upsert`, `update`, `updateMany`, `delete` or `deleteMany` under `src/`,
+   and every string or template literal containing `INSERT INTO`,
+   `INSERT OR REPLACE INTO`,
+   `INSERT OR IGNORE INTO`, `UPDATE` or `DELETE FROM` against `ActivityEntry`,
+   must be in the test's allowlist, and the allowlist must contain nothing
+   else. Deletions count as writes; the initial allowlist names six call
+   sites. Recognition is syntactic, by receiver and method names (including
+   string-literal element access) or SQL text, without type resolution. The
    allowlist constrains where writes can happen; it does not inspect
    payloads. Behavior tests prove that only the evidence focus writer
    persists `origin: FOCUS`. `prisma/seed.ts` and `scripts/` are outside
@@ -147,7 +158,8 @@ either direction fails until its entry is corrected in the same change.
 
 ### Initial Activity write allowlist
 
-Exactly five keys: `src/app/api/activities/route.ts:34:activityEntry.create`,
+Exactly six keys: `src/app/api/activities/[id]/route.ts:60:activityEntry.deleteMany`,
+`src/app/api/activities/route.ts:34:activityEntry.create`,
 `src/lib/activity-persistence.ts:84:activityEntry.updateMany`,
 `src/lib/focus-sessions.ts:280:activityEntry.upsert`,
 `src/lib/focus-sessions.ts:387:activityEntry.upsert` and
@@ -174,8 +186,10 @@ violation remains.
   run `test:architecture` immediately after `prisma:generate` in `check`.
 - Replace whole-payload snapshots of bootstrap and agent export with
   explicit assertions on the current top-level key set and the named
-  invariants: no future evidence, unfinished tasks keep their date, tags
-  decode to arrays.
+  invariants: unfinished tasks keep their date and tags decode to arrays.
+  Bootstrap bounds Activity evidence to the half-open local day, from local
+  midnight (inclusive) to next local midnight (exclusive).
+  Agent export includes all stored Activities with no date cutoff.
 
 Exit: every current envelope and workflow has a test that fails on drift; the
 architecture test reports the baseline and passes.
@@ -247,11 +261,105 @@ creator.
    ring and completion form.
 4. Move Today and Review to their own coarse reads in the `/api/day` pattern.
    Bootstrap refresh with a generation guard remains the invalidation model.
-5. `dashboard.tsx` becomes `src/shell`, owning navigation, the capture
-   palette, the focus rail and first-run only.
+5. `dashboard.tsx` becomes `src/shell`, owning navigation, capture-palette
+   coordination, focus-rail placement and first-run coordination. It is also
+   the application composition root: it mounts module UI, keeps module hooks
+   alive across destination changes, owns bootstrap/startup recovery and
+   refresh, and delivers application-wide errors and live announcements.
+   Module hooks own destination and dialog drafts, validation, mutation
+   payloads, optimistic update policy, retries and feature-specific recovery.
 
-Exit: no destination or dialog lives in the shell; no raw `fetch` outside
-`shared/client`; e2e suite unchanged and green.
+### Shell ownership decision (September 5, 2026)
+
+Mounting a module's page or dialog does not make its implementation shell-owned.
+The shell needs one place to join all seven modules: none can own navigation,
+startup, bootstrap invalidation or application-wide announcements without
+reversing the module graph. Those are explicit, bounded composition duties.
+Likewise, a module hook may be called unconditionally from the shell so its
+draft survives navigation; its state and behavior must still be defined in
+that module. Moving a hook into a conditional page would change draft lifetime.
+
+The shell may retain screen/selected-project navigation state, palette query
+and opener, mobile-menu and rail visibility, focus launch intent, first-run
+seen state, and a boolean to open Data & backups. It may pass bootstrap slices,
+adapt module callbacks to replace those slices, and forward module-produced
+navigation counts. A slice adapter may replace a value or apply a supplied
+updater; feature-specific filtering, sorting, merging and rollback belong to
+the module. Palette handoffs pass seed values and navigation intents to module
+entrypoints; the palette does not implement the resulting editor or mutation.
+
+This is not an exception for feature controllers. A task mutation used by
+Today, Backlog, Projects and first-run still belongs to planning; focus queue
+policy belongs to focus even though the shell displays the rail. Review save
+and period-conflict recovery belong to review even though bootstrap supplies
+the current review. Shell code may deliver their messages without deciding
+their feature-specific failure or recovery policy.
+
+On `arch/client-shell`, rule 3 rejects a module UI dependency back into
+`src/shell`, which is what keeps this boundary from eroding again. The
+extraction it implies is deferred, because moving those files collides with
+reviewed work still in the merge queue. It is listed below rather than
+described as done.
+
+### Deferred from `arch/client-shell`
+
+These move in the follow-up pull request below, not on that branch:
+`useReviewActions` and its recovery ref into `modules/review/ui`, with review
+request functions in that module's `api.ts`; `useQueueActions`, queue
+selection and optimistic rollback into `modules/focus/ui`; and
+`ProjectsWorkspace`, `TimeBlockDialog` and `useActivityCapture` out of legacy
+`components` into projects, planning and evidence UI. Activity replacement
+sorting and the original and inherited project dialog props move with the
+capture hook. Their shell mounts remain.
+
+### Required follow-up: persistent destination controllers
+
+This extraction is a separate client PR after the page/dialog stack lands.
+It is still required before client-track exit, not an architecture exception.
+The remaining three shell action files alone contain 810 lines, and share
+state with the palette, first-run, Log and bootstrap. Moving files with a
+`ShellState` import would preserve the wrong ownership; conditionally mounting
+them would lose drafts. Review this lifetime and interface change together:
+
+| Current shell responsibility | Required owner and precise change |
+| --- | --- |
+| `use-task-actions.ts`; `newTask`, pending/recovery/mutation refs and `dismissedUnfinished` in `use-shell-state.ts`; Today/Backlog task selection in `use-shell-model.ts` | Planning UI: add an unconditionally mounted planning controller owning task create/update/delete/reorder, retries and optimistic policy, task draft and unfinished dismissal; expose page props, navigation counts and a task-draft seed entrypoint. Keep first-run seen/navigation/focus coordination in the shell and invoke planning's first-task operation. |
+| `use-journal-actions.ts`; note/material drafts, pending/recovery/mutation refs and empty-draft constants in `use-shell-state.ts` | Journal UI: combine those with `useJournalPage` in a persistent journal controller; own diary updates, attribution, tag normalization and history refresh. Expose note/reference seed entrypoints for the palette, page props, save and recovery actions. |
+| `use-time-block-actions.ts`; `TimeBlockEditor`, draft/error/pending/mutation state in `use-shell-state.ts`; inline draft/close handlers and `mergeTimeBlockTaskOptions` call in `workspace-shell.tsx` | Planning UI: persistent time-block controller and dialog host owning defaults, linked-task preservation, request construction, saved-but-refresh-failed behavior and dialog props. Shell invokes open/edit entrypoints and mounts the host. |
+| Log projections, duration totals, day/task candidates and reset-on-leave effect in `use-shell-model.ts`; future-day Timeline rule in `workspace-shell.tsx`; `components/use-viewed-day.ts` and `loadViewedDay` in `components/dashboard-api.ts` | Planning UI: `useDayPage` owns the viewed-day hook, `/api/day` request, selectors and reset policy, with active-destination input and navigation callbacks. It shares the viewed-day refresh seam with the time-block controller. Remove unused totals while extracting. |
+| Task/note/reference field setters in `command-palette-host.tsx` | Replace with the planning/journal seed entrypoints above. Retain palette resolution, dismissal, navigation and focus handoff in the shell. |
+
+The PR must preserve draft lifetime across a full destination tour, request
+payloads and mutation-id reuse, task retry timing, queue rollback, diary/review
+recovery messages, time-block linked-task options and saved-but-refresh-failed
+state, Log reset and future-day navigation, and palette focus restoration.
+Use the existing `*-destination-state`, `day-navigation`, `time-blocks`,
+`client-dialogs*`, `command-palette` and `first-run-onboarding` browser specs
+as behavior gates, plus architecture, typecheck and unit gates. Browser gates
+must run in an environment where a disposable database and server are allowed.
+
+Exit (all required, evaluated on the integrated client stack):
+
+- Every destination and feature dialog component and controller is defined
+  under its owning `modules/*/ui`, including its drafts, validation, request
+  construction, optimistic policy and recovery state. None is defined in
+  `src/shell` or left in legacy `src/components`. The capture palette and
+  first-run coordination are the explicit shell exceptions above.
+- `src/shell` contains only the enumerated composition duties. It has no
+  task/journal/review/queue/time-block action implementation, feature editor
+  draft type, feature mutation-id/recovery ref, or destination-specific data
+  projection. Check the follow-up table against the final tree; every row
+  must be removed from the shell. An architecture pass alone cannot certify
+  this semantic ownership check.
+- No module UI imports `src/shell`, including type-only references (Rule 3);
+  no raw `fetch` exists outside `shared/client`.
+- The e2e suite is unchanged and green, including navigation/draft lifetime
+  and dialog recovery. A skipped browser run is not a passing exit gate.
+
+The shell branch does not yet meet this exit. Step 4 also remains to be
+verified on the integrated stack: in this branch Today/current Review still
+consume bootstrap data, and `useBootstrap.refresh` has no generation guard.
+Neither gap is excused by the composition-root decision.
 
 ## Phase 4: Backup Engine and Lazy Prisma
 

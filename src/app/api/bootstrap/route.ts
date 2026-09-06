@@ -117,7 +117,7 @@ async function loadBootstrap(now: Date) {
       }),
       isWorkspaceEmpty(tx),
       earliestRecordedDay(tx)
-    ]));
+    ]), { timeout: 60000 });
 
   const diaryEntry = diary
     ? { ...diary, persisted: true }

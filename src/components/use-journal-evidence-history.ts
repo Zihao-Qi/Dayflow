@@ -1,19 +1,11 @@
 "use client";
 
+import { journalHistoryMessages, loadJournalHistory as loadJournalHistoryRequest } from "@/modules/journal/ui/api";
 import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState
-} from "react";
-import {
-  isJournalHistoryPage,
-  isJournalMaterialRecord,
-  isJournalNoteRecord,
   type JournalMaterialRecord,
   type JournalNoteRecord
 } from "@/lib/journal-records";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const JOURNAL_HISTORY_LIMIT = 50;
 const JOURNAL_SEARCH_DEBOUNCE_MS = 200;
@@ -56,12 +48,6 @@ type HistoryRequestDescriptor = {
   tag: string;
 };
 
-type HistoryConfig<T extends HistoryRecord> = {
-  endpoint: string;
-  errorMessage: string;
-  isRecord: (value: unknown) => value is T;
-};
-
 const emptyHistory = <T,>(queryKey = ""): JournalHistoryState<T> & {
   queryKey: string;
 } => ({
@@ -86,7 +72,7 @@ export function useJournalEvidenceHistory(
   kind: HistoryKind,
   active: boolean
 ): JournalHistoryResult<HistoryRecord, any> {
-  const config = historyConfig(kind);
+  const errorMessage = journalHistoryMessages[kind];
   const [criteria, setCriteria] = useState<HistoryCriteria>(
     kind === "note" ? { q: "", tag: "" } : { q: "" }
   );
@@ -153,21 +139,8 @@ export function useJournalEvidenceHistory(
         if (q) searchParams.set("q", q);
         if (kind === "note" && tag) searchParams.set("tag", tag);
         if (cursor) searchParams.set("cursor", cursor);
-        const response = await fetch(
-          `${config.endpoint}?${searchParams.toString()}`,
-          {
-            cache: "no-store",
-            signal: controller.signal
-          }
-        );
-        const result = await response.json().catch(() => null);
-        if (!response.ok || !isJournalHistoryPage(result, config.isRecord)) {
-          throw new Error(
-            result && typeof result.error === "string"
-              ? result.error
-              : config.errorMessage
-          );
-        }
+        const result = await loadJournalHistoryRequest(kind, searchParams, controller.signal);
+
         if (
           controller.signal.aborted ||
           generationRef.current !== generation ||
@@ -214,13 +187,13 @@ export function useJournalEvidenceHistory(
                 ...current,
                 loading: false,
                 error:
-                  error instanceof Error ? error.message : config.errorMessage
+                  error instanceof Error ? error.message : errorMessage
               }
             : current
         );
       }
     },
-    [config.endpoint, config.errorMessage, config.isRecord, kind]
+    [errorMessage, kind]
   );
 
   useEffect(() => {
@@ -347,20 +320,6 @@ export function useJournalEvidenceHistory(
     retry,
     refresh: () => setRefreshRevision((current) => current + 1)
   };
-}
-
-function historyConfig(kind: HistoryKind): HistoryConfig<HistoryRecord> {
-  return kind === "note"
-    ? {
-        endpoint: "/api/notes",
-        errorMessage: "Note history could not be loaded.",
-        isRecord: isJournalNoteRecord
-      }
-    : {
-        endpoint: "/api/materials",
-        errorMessage: "Reference history could not be loaded.",
-        isRecord: isJournalMaterialRecord
-      };
 }
 
 function appendUnique<T extends { id: string }>(current: T[], next: T[]) {

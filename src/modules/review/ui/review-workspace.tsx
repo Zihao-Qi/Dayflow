@@ -138,7 +138,7 @@ export function ReviewPage({
         onOpenProject={onOpenProject}
       />
 
-      {window?.review ? (
+      {window?.review && window.review.id !== null ? (
         <PastReviewCard
           review={window.review}
           onReturnToCurrent={history.clearSelection}

@@ -147,3 +147,8 @@ export async function detachPhaseTasks(tx: Prisma.TransactionClient, phaseId: st
 export function readTaskAttribution(database: TaskReadDatabase, id: string) {
   return database.task.findUnique({ where: { id }, select: { id: true, projectId: true } });
 }
+
+/** Review counts completions using the evidence period's exact half-open bounds. */
+export function readReviewCompletedTasks(database: { task: Pick<Prisma.TransactionClient["task"], "findMany"> }, range: { start: Date; end: Date }) {
+  return database.task.findMany({ where: { completedAt: { gte: range.start, lt: range.end } }, select: { id: true } });
+}

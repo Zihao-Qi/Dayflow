@@ -1,6 +1,6 @@
 import { readProjectActivitySummaries } from "@/modules/evidence/services/activities";
 import type { Prisma } from "@prisma/client";
-import { summarizeProject } from "@/modules/projects/domain/project";
+import { summarizeProjects } from "@/modules/projects/domain/project";
 import { readProjects } from "@/modules/projects/services/projects";
 import { readProjectTasks } from "@/modules/planning/services/tasks";
 
@@ -19,23 +19,5 @@ export async function listProjectSummaries(database: SummaryDatabase, reviewPeri
     readProjectTasks(database, ids),
     readProjectActivitySummaries(database, ids)
   ]);
-  const tasksByProject = new Map<string | null, typeof tasks>();
-  for (const task of tasks) {
-    const projectId = task.projectId;
-    const bucket = tasksByProject.get(projectId);
-    if (bucket) bucket.push(task);
-    else tasksByProject.set(projectId, [task]);
-  }
-  const activitiesByProject = new Map<string | null, typeof activities>();
-  for (const activity of activities) {
-    const projectId = activity.attributedProjectId;
-    const bucket = activitiesByProject.get(projectId);
-    if (bucket) bucket.push(activity);
-    else activitiesByProject.set(projectId, [activity]);
-  }
-  return projects.map(project => summarizeProject({
-    ...project,
-    tasks: tasksByProject.get(project.id) ?? [],
-    attributedActivities: activitiesByProject.get(project.id) ?? []
-  }, reviewPeriod));
+  return summarizeProjects(projects, tasks, activities, reviewPeriod);
 }

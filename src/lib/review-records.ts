@@ -1,2 +1,3 @@
-export { isPastReviewDetail,isPastReviewProject,isPastReviewRecord,isPastReviewSummary,isReviewHistoryPage,isReviewWindowDetail } from "@/shared/client/decoders";
-export type { PastReviewDetail,PastReviewProject,PastReviewRecord,PastReviewSummary,ReviewHistoryPage,ReviewWindowDetail } from "@/shared/client/decoders";
+// Compatibility surface; Review contracts live in the pure module domain.
+export * from "@/modules/review/domain/review";
+

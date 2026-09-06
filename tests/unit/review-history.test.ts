@@ -135,3 +135,21 @@ test("Review Window anchors are canonical, singular, real, and strictly past", (
     );
   }
 });
+
+test("Review cursors preserve legacy UTF-8 bytes and malformed trailing-sextet behavior without Buffer", () => {
+  const value = { periodStart: new Date("2026-08-03T05:00:00.000Z"), id: "review-学习-🌱" };
+  const text = JSON.stringify({ version: 1, kind: "review", periodStart: value.periodStart.toISOString(), id: value.id });
+  const expected = Buffer.from(text).toString("base64url");
+  assert.equal(encodeReviewCursor(value), expected);
+  const originalBuffer = globalThis.Buffer;
+  try {
+    Object.defineProperty(globalThis, "Buffer", { value: undefined, configurable: true, writable: true });
+    assert.equal(encodeReviewCursor(value), expected);
+    assert.deepEqual(decodeReviewCursor(expected), value);
+  } finally {
+    Object.defineProperty(globalThis, "Buffer", { value: originalBuffer, configurable: true, writable: true });
+  }
+  const divisible = text + " ".repeat((3 - Buffer.byteLength(text) % 3) % 3);
+  assert.deepEqual(decodeReviewCursor(Buffer.from(divisible).toString("base64url") + "A"), value);
+  assert.throws(() => decodeReviewCursor(Buffer.from("\uFEFF" + text).toString("base64url")), ReviewHistoryRequestError);
+});

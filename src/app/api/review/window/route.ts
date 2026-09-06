@@ -3,18 +3,16 @@ import { appErrorResponse } from "@/lib/http-errors";
 import { prisma } from "@/lib/prisma";
 import { reviewErrors } from "@/lib/review-errors";
 import {
-  parseReviewWindowRequest,
-  readResolvedReviewWindow
-} from "@/lib/review-history";
+  loadReviewWindow
+} from "@/server/review";
 import { AppError } from "@/shared/kernel/errors";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(request: NextRequest) {
   const now = clock.now();
   try {
-    const window = parseReviewWindowRequest(request.nextUrl.searchParams, now);
     return NextResponse.json(
-      await prisma.$transaction(tx => readResolvedReviewWindow(tx, window))
+      await loadReviewWindow(prisma, request.nextUrl.searchParams, now)
     );
   } catch (error) {
     if (error instanceof AppError) return appErrorResponse(error);

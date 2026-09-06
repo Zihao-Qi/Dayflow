@@ -1,8 +1,8 @@
-import { clock } from "@/lib/time";
+import { saveReview } from "@/server/review";
+import { clock, calendar } from "@/lib/time";
 import { appErrorResponse } from "@/lib/http-errors";
 import { prisma } from "@/lib/prisma";
 import {
-  assertCurrentReviewPeriod,
   parseReviewMutation,
   readReviewMutationBody
 } from "@/lib/review-domain";
@@ -13,24 +13,8 @@ import { NextRequest, NextResponse } from "next/server";
 export async function PUT(request: NextRequest) {
   try {
     const body = await readReviewMutationBody(request);
-    const input = parseReviewMutation(body);
-    assertCurrentReviewPeriod(input, clock.now());
-
-    const review = await prisma.review.upsert({
-      where: {
-        periodStart_periodEnd: {
-          periodStart: input.periodStart,
-          periodEnd: input.periodEnd
-        }
-      },
-      create: input,
-      update: {
-        narrative: input.narrative,
-        nextPeriodIntention: input.nextPeriodIntention
-      }
-    });
-
-    return NextResponse.json({ ...review, persisted: true });
+    const input = parseReviewMutation(body, calendar);
+    return NextResponse.json(await saveReview(prisma, input, clock.now()));
   } catch (error) {
     if (error instanceof AppError) return appErrorResponse(error);
 

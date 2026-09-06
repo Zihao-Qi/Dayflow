@@ -2559,8 +2559,27 @@ test("creates a project, keeps its plan on one page, and unifies its backlog", a
     name: "Edit Complete the systems course"
   });
   await expect(editProject.getByRole("button", { name: "Save changes" })).toBeDisabled();
+  // Install only after startup, so the day-refresh timer is scheduled with the
+  // real date and cannot fire from advancing this clock across midnight.
+  // Leave a test deadline of headroom so delayed pauseAt delivery stays valid.
+  // Control the rename's 600ms autosave and 2s Saved chip, and the phase shortcut.
+  // Timers created before installation remain native. Save recovery timers
+  // created after installation stay paused until time advances (1000ms, then
+  // 4000ms in src/components/save-state.tsx:106); this test covers successful
+  // autosave and shortcut saves, not recovery or every application timer.
+  // Backdate for that headroom, but never past local midnight. The API server
+  // keeps the real date, so a run starting within the timeout window after
+  // midnight would hand the browser yesterday and fire the day-refresh timer
+  // that scheduleDayRefresh armed (src/shell/use-bootstrap.ts).
+  const localMidnight = new Date();
+  localMidnight.setHours(0, 0, 0, 0);
+  await page.clock.install({
+    time: new Date(Math.max(Date.now() - test.info().timeout, localMidnight.getTime()))
+  });
+  await page.clock.pauseAt(new Date());
   await editProject.getByLabel("Name", { exact: true }).fill("Complete systems course");
   await expect(editProject.getByText("Unsaved changes", { exact: true })).toBeVisible();
+  await page.clock.runFor(600);
   const renamedProjectDialog = page.getByRole("dialog", {
     name: "Edit Complete systems course"
   });
@@ -2569,7 +2588,7 @@ test("creates a project, keeps its plan on one page, and unifies its backlog", a
   ).toBeVisible();
   await expect(renamedProjectDialog).toBeVisible();
   await renamedProjectDialog.getByRole("button", { name: "Cancel" }).click();
-  await expect(editProject).toHaveCount(0);
+  await expect(renamedProjectDialog).toHaveCount(0);
   await expect(
     page.getByRole("heading", {
       level: 1,
@@ -2579,6 +2598,8 @@ test("creates a project, keeps its plan on one page, and unifies its backlog", a
   ).toBeVisible();
 
   await page.getByRole("button", { name: "Add a phase", exact: true }).click();
+  await page.clock.runFor(0);
+  await expect(page.getByPlaceholder("Add an optional phase")).toBeFocused();
   await page.getByPlaceholder("Add an optional phase").fill("Foundations");
   await page.getByRole("button", { name: "Add phase" }).click();
   await expect(page.getByLabel("Phase name: Foundations")).toBeVisible();
@@ -2592,6 +2613,7 @@ test("creates a project, keeps its plan on one page, and unifies its backlog", a
       .filter({ has: renamedPhaseName })
       .getByText("Saved", { exact: true })
   ).toBeVisible();
+  await page.clock.resume();
 
   const addTaskPanel = page.locator(".project-plan-add");
   await addTaskPanel.getByLabel("New Project task").fill("Finish module one exercises");

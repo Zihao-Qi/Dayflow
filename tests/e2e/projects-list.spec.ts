@@ -141,7 +141,10 @@ test("supports roving keyboard selection for the Project view", async ({ page })
     exact: true
   });
 
+  // focus() alone does not wait for visibility or verify keyboard readiness.
+  await expect(cards).toBeVisible();
   await cards.focus();
+  await expect(cards).toBeFocused();
   await page.keyboard.press("ArrowRight");
   await expect(listOption).toBeChecked();
   await expect(listOption).toBeFocused();

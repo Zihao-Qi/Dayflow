@@ -74,9 +74,18 @@ test("a past period opens read-only and returns to an editable current period", 
   const currentEyebrow = await page.locator(".page-eyebrow").textContent();
 
   await page.getByRole("button", { name: "Earlier reviews" }).click();
+  // Detail loading can outlast the DOM assertion timeout on a busy server.
+  const pastReviewResponse = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/review/past-review-3" &&
+      response.request().method() === "GET"
+  );
   await historyPanel(page)
     .getByRole("button", { name: /Saved 3 days ago/ })
     .click();
+  const pastReview = await pastReviewResponse;
+  expect(pastReview.ok()).toBe(true);
+  expect(await pastReview.finished()).toBeNull();
 
   // Read-only: the saved writing is shown, with nothing to type into and
   // nothing to save.
@@ -230,9 +239,18 @@ test("past-period evidence is derived for that window, not for today", async ({
   await expect(page.locator(".review-metrics")).toContainText("45m");
 
   await page.getByRole("button", { name: "Earlier reviews" }).click();
+  // Wait for this window's evidence before checking the resulting render.
+  const pastReviewResponse = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/review/past-review-3" &&
+      response.request().method() === "GET"
+  );
   await historyPanel(page)
     .getByRole("button", { name: /Saved 3 days ago/ })
     .click();
+  const pastReview = await pastReviewResponse;
+  expect(pastReview.ok()).toBe(true);
+  expect(await pastReview.finished()).toBeNull();
 
   await expect(page.locator(".page-eyebrow")).toContainText("Past review");
   await expect(page.locator(".review-metrics")).not.toContainText("45m");

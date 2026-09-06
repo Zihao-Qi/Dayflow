@@ -9,7 +9,7 @@ export { upsertDiary } from "@/modules/evidence/services/diary";
 export { ActivityPersistenceError } from "@/modules/evidence/domain/activity";
 export { replaceActivity as replaceManualActivityInTransaction } from "@/modules/evidence/services/activities";
 
-/** Compatibility argument order for legacy focus and journal callers. */
+/** Compatibility argument order retained for attribution tests through src/lib/evidence-attribution. */
 export function resolveTaskProjectAttribution(taskValue: unknown, projectValue: unknown, database: Pick<Prisma.TransactionClient, "task" | "project">) {
   return readActivityAttribution(database, taskValue, projectValue);
 }

@@ -1,7 +1,7 @@
 import type { Prisma } from "@prisma/client";
 
 /** Caller supplies its session snapshot and elapsed minutes in the same transaction.
- * Focus owns eligibility (completed Focus, at least one minute) and text defaults.
+ * Focus owns eligibility and enrichment text defaults; this writer supplies completion text defaults.
  */
 export type FocusActivityEvidence = {
   id: string;

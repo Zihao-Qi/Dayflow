@@ -487,7 +487,7 @@ export function isActivityResponse(value: unknown): value is ActivityEntry {
 }
 
 
-/** Focus-origin evidence cannot be changed through manual Activity operations. */
+/** Focus-origin or session-linked evidence cannot be changed through manual Activity operations. */
 export function isFocusActivityProtected(activity: { origin: "MANUAL" | "FOCUS"; focusSessionId: string | null }) {
   return activity.origin === "FOCUS" || Boolean(activity.focusSessionId);
 }

@@ -21,7 +21,7 @@ import {
   timelineBounds,
   timelineHourHeights,
   timelinePosition
-} from "@/components/day-workspace-helpers";
+} from "@/modules/planning/ui/log/day-workspace-helpers";
 import type { ViewedDayKind } from "@/lib/day-records";
 import type { FocusSessionRecord } from "@/lib/focus-domain";
 import {

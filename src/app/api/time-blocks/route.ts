@@ -11,7 +11,6 @@ import {
 } from "@/modules/planning/domain/time-block";
 
 export async function POST(request: NextRequest) {
-  const now = clock.now();
   try {
     const body = await readTimeBlockMutationBody(request);
     const mutationId = parseMutationId(
@@ -22,7 +21,9 @@ export async function POST(request: NextRequest) {
       mutationId,
       kind: "time-block.create",
       payload: body,
-      create: (tx) => createTimeBlock(tx, input, now)
+      // Sample the clock here, after body parsing and receipt lookup, so a day
+      // that ends mid-request is caught; replays skip this callback entirely.
+      create: (tx) => createTimeBlock(tx, input, clock.now())
     });
     return NextResponse.json(timeBlock, { status: 201 });
   } catch (error) {

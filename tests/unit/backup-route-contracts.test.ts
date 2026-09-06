@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -15,7 +16,7 @@ import {
 } from "../../src/app/api/backups/restore/route";
 import { GET as getAutomaticPolicy, PUT as saveAutomaticPolicy } from "../../src/app/api/backups/automatic/route";
 import { GET as downloadBackup } from "../../src/app/api/backups/[id]/download/route";
-import { BackupManagementError } from "../../src/lib/backup-management";
+import { applyPendingManagedRestore, BackupManagementError } from "../../src/lib/backup-management";
 import { backupErrorResponse } from "../../src/lib/backup-http";
 
 const repositoryRoot = process.cwd();
@@ -153,7 +154,7 @@ test("backup guards pin exact forbidden and unsupported-media envelopes", async 
   });
 });
 
-test("backup error mapping pins management statuses, optional fields, and fallback", async () => {
+test("defensive backup serializers pin injected management statuses, optional fields, and fallback", async () => {
   const cases: Array<[BackupManagementError, number, Record<string, unknown>]> = [
     [
       new BackupManagementError(
@@ -226,8 +227,8 @@ test("backup error mapping pins management statuses, optional fields, and fallba
     assert.deepEqual(await response.json(), body);
     assert.equal(response.headers.get("Cache-Control"), "no-store");
     for (const [handler, method, path] of backupHandlers) {
-      // Throw at the request boundary to exercise each route's catch/serializer
-      // without accessing local backup storage.
+      // Defensive serializer coverage only: these injected cross-operation
+      // errors do not establish HTTP reachability (see the inventory appendix).
       const request = new NextRequest(`http://127.0.0.1${path}`, { method });
       request.headers.get = () => { throw error; };
       const routed = await handler(request);
@@ -516,20 +517,145 @@ const backupHandlers = [
   [cancelRestore, "DELETE", "/api/backups/restore", "Restore cancellation could not be completed."]
 ] as const;
 
-test("backup handlers select their operation-specific fallback bodies", async () => {
-  const originalConsoleError = console.error;
-  console.error = () => undefined;
+const validPolicy = { enabled: false, intervalHours: 24, retainCount: 7 };
+const restoreSelection = {
+  backupId: "a".repeat(43),
+  expectedPayloadSha256: "b".repeat(64),
+  confirmation: "RESTORE"
+};
+
+async function withBackupStorage(
+  run: (directory: string) => Promise<void>
+) {
+  const directory = mkdtempSync(join(tmpdir(), "dayflow-backup-errors-"));
+  const previous = {
+    DATABASE_URL: process.env.DATABASE_URL,
+    DAYFLOW_BACKUP_DIRECTORY: process.env.DAYFLOW_BACKUP_DIRECTORY,
+    DAYFLOW_DISABLE_RESTORE: process.env.DAYFLOW_DISABLE_RESTORE
+  };
   try {
-    for (const [handler, method, path, error] of backupHandlers) {
-      const request = new NextRequest(`http://127.0.0.1${path}`, { method });
-      request.headers.get = () => { throw new Error("Planted request failure"); };
-      const response = await handler(request);
-      assert.equal(response.status, 500);
-      assert.deepEqual(await response.json(), { error, code: "INTERNAL_ERROR" });
-    }
+    const database = join(directory, "active.db");
+    initializeDatabase(database);
+    process.env.DATABASE_URL = `file:${database}`;
+    process.env.DAYFLOW_BACKUP_DIRECTORY = join(directory, "backups");
+    delete process.env.DAYFLOW_DISABLE_RESTORE;
+    await run(directory);
   } finally {
-    console.error = originalConsoleError;
+    for (const [key, value] of Object.entries(previous)) restoreEnvironment(key, value);
+    rmSync(directory, { recursive: true, force: true });
   }
+}
+
+async function assertEnvelope(response: Response, status: number, body: Record<string, unknown>) {
+  assert.equal(response.status, status);
+  assert.deepEqual(await response.json(), body);
+  assert.equal(response.headers.get("Cache-Control"), "no-store");
+}
+
+function restoreRequest(body = restoreSelection) {
+  return jsonRequest("http://127.0.0.1/api/backups/restore", "POST", body);
+}
+
+function downloadRequest(id: string) {
+  return downloadBackup(
+    new NextRequest(`http://127.0.0.1/api/backups/${id}/download`),
+    { params: Promise.resolve({ id }) }
+  );
+}
+
+test("backup routes expose selected-backup errors through disposable storage", async () => {
+  await withBackupStorage(async (directory) => {
+    for (const [backupId, status, error, code] of [
+      ["invalid", 400, "The backup identifier is invalid.", "VALIDATION_ERROR"],
+      [restoreSelection.backupId, 404, "The selected backup could not be found.", "NOT_FOUND"]
+    ] as const) {
+      const body = { error, code, field: "backupId" };
+      await assertEnvelope(await stageRestore(restoreRequest({ ...restoreSelection, backupId })), status, body);
+      await assertEnvelope(await downloadRequest(backupId), status, body);
+    }
+    await assertEnvelope(await cancelRestore(jsonRequest(
+      "http://127.0.0.1/api/backups/restore", "DELETE", {}
+    )), 404, { error: "No restore is currently pending.", code: "NOT_FOUND" });
+
+    process.env.DAYFLOW_DISABLE_RESTORE = "1";
+    await assertEnvelope(await stageRestore(restoreRequest()), 503, {
+      error: "Restore scheduling is disabled in this Dayflow process.", code: "RESTORE_DISABLED"
+    });
+    delete process.env.DAYFLOW_DISABLE_RESTORE;
+
+    const created = await createBackup(jsonRequest("http://127.0.0.1/api/backups", "POST", {}));
+    assert.equal(created.status, 201);
+    const { backup } = await created.json();
+    const selection = { ...restoreSelection, backupId: backup.id, expectedPayloadSha256: backup.payloadSha256 };
+    assert.equal((await stageRestore(restoreRequest(selection))).status, 202);
+    await assertEnvelope(await stageRestore(restoreRequest(selection)), 409, {
+      error: "Another restore is already pending.", code: "CONFLICT"
+    });
+
+    // Real startup coordination holds the operation lock while waiting for a
+    // live owner's disposable file. No production methods or errors are mocked.
+    const ownerPath = join(directory, "backups", ".dayflow-restore-owner.json");
+    const pendingPath = join(directory, "backups", ".dayflow-restore-pending.json");
+    writeFileSync(ownerPath, JSON.stringify({
+      version: 1, token: randomUUID(), pid: process.pid, startedAt: new Date().toISOString()
+    }));
+    const applying = applyPendingManagedRestore();
+    try {
+      for (const [handler, method, path, body] of [
+        [createBackup, "POST", "/api/backups", {}],
+        [saveAutomaticPolicy, "PUT", "/api/backups/automatic", validPolicy],
+        [stageRestore, "POST", "/api/backups/restore", selection],
+        [cancelRestore, "DELETE", "/api/backups/restore", {}]
+      ] as const) {
+        await assertEnvelope(await handler(new NextRequest(`http://127.0.0.1${path}`, {
+          method, headers: localActionHeaders, body: JSON.stringify(body)
+        })), 409, { error: "Another backup operation is already running.", code: "CONFLICT" });
+      }
+    } finally {
+      rmSync(pendingPath, { force: true });
+      rmSync(ownerPath, { force: true });
+      await applying;
+    }
+
+    writeFileSync(join(directory, "backups", backup.fileName), "corrupt backup");
+    await assertEnvelope(await stageRestore(restoreRequest(selection)), 422, {
+      error: "The selected backup is corrupt or incompatible and cannot be restored.",
+      code: "CORRUPT_BACKUP", field: "backupId"
+    });
+    const originalConsoleError = console.error;
+    console.error = () => undefined;
+    try {
+      await assertEnvelope(await downloadRequest(backup.id), 500, {
+        error: "Backup download could not be completed.", code: "INTERNAL_ERROR"
+      });
+    } finally {
+      console.error = originalConsoleError;
+    }
+  });
+});
+
+test("backup handlers select their operation-specific fallback bodies from storage failures", async () => {
+  await withBackupStorage(async (directory) => {
+    const file = join(directory, "not-a-directory");
+    writeFileSync(file, "blocks directory traversal");
+    // lstat on a child of a regular file raises ENOTDIR in the real storage path.
+    process.env.DAYFLOW_BACKUP_DIRECTORY = join(file, "backups");
+    const originalConsoleError = console.error;
+    console.error = () => undefined;
+    try {
+      for (const [handler, method, path, error] of backupHandlers) {
+        const body = method === "PUT" ? validPolicy
+          : handler === stageRestore ? restoreSelection : {};
+        const request = new NextRequest(`http://127.0.0.1${path}`, {
+          method, headers: localActionHeaders,
+          ...(method === "GET" ? {} : { body: JSON.stringify(body) })
+        });
+        await assertEnvelope(await handler(request), 500, { error, code: "INTERNAL_ERROR" });
+      }
+    } finally {
+      console.error = originalConsoleError;
+    }
+  });
 });
 
 test("every backup handler pins its applicable request guards", async () => {

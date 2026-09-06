@@ -11,11 +11,10 @@ import { AppError } from "@/shared/kernel/errors";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function PUT(request: NextRequest) {
-  const now = clock.now();
   try {
     const body = await readReviewMutationBody(request);
     const input = parseReviewMutation(body, calendar);
-    return NextResponse.json(await saveReview(prisma, input, now));
+    return NextResponse.json(await saveReview(prisma, input, clock.now()));
   } catch (error) {
     if (error instanceof AppError) return appErrorResponse(error);
 

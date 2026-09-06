@@ -1,11 +1,8 @@
 "use client";
 
+import { loadViewedDay as loadViewedDayRequest } from "@/components/dashboard-api";
+import { type ViewedDayKind, type ViewedDayPayload } from "@/lib/day-records";
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  isViewedDayPayload,
-  type ViewedDayKind,
-  type ViewedDayPayload
-} from "@/lib/day-records";
 
 const LOAD_FAILURE =
   "That day could not be loaded. Check that Dayflow is still running.";
@@ -59,20 +56,9 @@ export function useViewedDay(
       }
       setState((current) => ({ ...current, dayKey, loading: true, error: "" }));
       try {
-        const response = await fetch(
-          `/api/day?date=${encodeURIComponent(dayKey)}`,
-          { cache: "no-store" }
-        );
-        const body = response.ok ? await response.json() : null;
+        const body = await loadViewedDayRequest(dayKey);
         if (ticket !== request.current) return false;
-        if (!response.ok || !isViewedDayPayload(body)) {
-          setState((current) => ({
-            ...current,
-            loading: false,
-            error: LOAD_FAILURE
-          }));
-          return false;
-        }
+
         setState({
           dayKey: body.dateKey,
           kind: body.kind,

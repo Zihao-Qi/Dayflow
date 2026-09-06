@@ -6,8 +6,9 @@ import { join } from "node:path";
 import test from "node:test";
 import { PrismaClient } from "@prisma/client";
 import { addDays, localDateKey, reviewPeriodRange, startOfLocalDay } from "../../src/lib/dates";
+import { activityHeaders, parseCsv, taskHeaders } from "../csv-test-helpers";
 
-test("bootstrap and agent export preserve their seeded read contracts", async (context) => {
+test("bootstrap, agent export, and CSV preserve their seeded read contracts", async (context) => {
   const directory = mkdtempSync(join(tmpdir(), "dayflow-read-route-contracts-"));
   const databasePath = join(directory, "dayflow.db");
   const previousUrl = process.env.DATABASE_URL;
@@ -84,9 +85,10 @@ test("bootstrap and agent export preserve their seeded read contracts", async (c
     data: { startedAt: tomorrow, durationMinutes: 60, category: "Learning", note: "Future row" }
   });
 
-  const [{ GET: bootstrap }, { GET: agentExport }] = await Promise.all([
+  const [{ GET: bootstrap }, { GET: agentExport }, { GET: csvExport }] = await Promise.all([
     import("../../src/app/api/bootstrap/route"),
-    import("../../src/app/api/agent-export/route")
+    import("../../src/app/api/agent-export/route"),
+    import("../../src/app/api/exports/[kind]/route")
   ]);
 
   // Transaction clients have their own delegates. Any helper that escapes to
@@ -187,4 +189,39 @@ test("bootstrap and agent export preserve their seeded read contracts", async (c
     assert.equal(body.timeBlocks[0].date, today.toISOString());
     assertSingleReadTransaction();
   });
+
+  for (const kind of ["tasks", "activities"] as const) {
+    await context.test(`CSV ${kind} reads ordered rows and relationships through SQLite`, async () => {
+      queries.length = 0;
+      const response = await csvExport(
+        new Request(`http://localhost/api/exports/${kind}`),
+        { params: Promise.resolve({ kind }) }
+      );
+      assert.equal(response.status, 200);
+      const bytes = Buffer.from(await response.arrayBuffer());
+      assert.deepEqual(bytes.subarray(0, 3), Buffer.from([0xef, 0xbb, 0xbf]));
+      assert.equal(bytes.subarray(-2).toString(), "\r\n");
+      const [headers, ...rows] = parseCsv(bytes.toString("utf8"));
+      assert.deepEqual(headers, kind === "tasks" ? taskHeaders : activityHeaders);
+      const expectedIds = kind === "tasks"
+        ? [task, overdue, future].sort((left, right) =>
+          left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id)
+        ).map(({ id }) => id)
+        : [activity.id, futureActivity.id];
+      assert.deepEqual(rows.map(([id]) => id), expectedIds);
+      assert.equal(response.headers.get("X-Dayflow-Record-Count"), String(expectedIds.length));
+      const linkedRow = rows.find(([id]) => id === (kind === "tasks" ? task.id : activity.id))!;
+      const values = Object.fromEntries(headers.map((header, index) => [header, linkedRow[index]]));
+      if (kind === "tasks") {
+        assert.equal(values.project_name, project.name);
+        assert.equal(values.phase_name, phase.name);
+        assert.equal(values.scheduled_date, localDateKey(today));
+      } else {
+        assert.equal(values.task_title, task.title);
+        assert.equal(values.attributed_project_name, project.name);
+        assert.equal(values.started_at_utc, today.toISOString());
+      }
+      assertSingleReadTransaction();
+    });
+  }
 });

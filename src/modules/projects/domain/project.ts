@@ -653,15 +653,6 @@ export const projectErrors = {
   }
 } as const satisfies Record<string, ErrorSpec>;
 
-export function parseProjectStatus(value: unknown): ProjectStatus | null {
-  const status = String(value ?? "").toUpperCase();
-  return projectStatuses.includes(status as ProjectStatus)
-    ? (status as ProjectStatus)
-    : null;
-}
-
-export { AppError as ProjectRuleError };
-
 export type SummaryInput = {
   id: string;
   name: string;
@@ -688,6 +679,35 @@ export type SummaryInput = {
     startedAt: Date;
   }>;
 };
+
+/** Pure row composition shared by Review and the server project-summary read model.
+ * Reads stay with the callers; grouping preserves each query's source order. */
+export function summarizeProjects(
+  projects: Array<Omit<SummaryInput, "tasks" | "attributedActivities">>,
+  tasks: Array<SummaryInput["tasks"][number] & { projectId: string | null }>,
+  activities: Array<SummaryInput["attributedActivities"][number] & { attributedProjectId: string | null }>,
+  reviewPeriod: { start: Date; end: Date }
+) {
+  const tasksByProject = groupProjectRows(tasks, task => task.projectId);
+  const activitiesByProject = groupProjectRows(activities, activity => activity.attributedProjectId);
+  return projects.map(project => summarizeProject({
+    ...project,
+    tasks: tasksByProject.get(project.id) ?? [],
+    attributedActivities: activitiesByProject.get(project.id) ?? []
+  }, reviewPeriod));
+}
+
+function groupProjectRows<Row>(rows: Row[], projectId: (row: Row) => string | null) {
+  const buckets = new Map<string, Row[]>();
+  for (const row of rows) {
+    const id = projectId(row);
+    if (id === null) continue;
+    const bucket = buckets.get(id);
+    if (bucket) bucket.push(row);
+    else buckets.set(id, [row]);
+  }
+  return buckets;
+}
 
 export function summarizeProject(
   project: SummaryInput,
@@ -815,4 +835,3 @@ export function isProjectTaskResponse(value: unknown): value is ProjectTaskRecor
     (task.phaseId === null || typeof task.phaseId === "string")
   );
 }
-

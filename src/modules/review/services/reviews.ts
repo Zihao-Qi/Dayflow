@@ -7,7 +7,7 @@ import { readReviewActivities, readProjectActivitySummaries } from "@/modules/ev
 import { readReviewDiaries } from "@/modules/evidence/services/diary";
 import { readReviewCompletedTasks, readProjectTasks } from "@/modules/planning/services/tasks";
 import { readProjects } from "@/modules/projects/services/projects";
-import { summarizeProject } from "@/modules/projects/domain/project";
+import { summarizeProjects } from "@/modules/projects/domain/project";
 import {
   assertCurrentReviewPeriod, buildReviewSummary, reviewErrors, parseReviewWindowRequest,
   parseCurrentReviewWindowRequest, parseReviewHistoryPage, encodeReviewCursor, isReviewIdentifier,
@@ -30,8 +30,8 @@ export function readSavedReview(database: { review: Pick<Prisma.TransactionClien
   });
 }
 
-/** Same project capabilities and metric calculation as the server summary read model.
- * Review owns this composition because modules cannot import server read models. */
+/** Review owns the reads; pure project-summary composition is shared in the domain.
+ * Modules cannot import server read models. */
 async function readReviewProjects(database: Prisma.TransactionClient, reviewPeriod: ReviewPeriodInterval) {
   const projects = await readProjects(database);
   if (!projects.length) return [];
@@ -39,11 +39,7 @@ async function readReviewProjects(database: Prisma.TransactionClient, reviewPeri
   const [tasks, activities] = await Promise.all([
     readProjectTasks(database, ids), readProjectActivitySummaries(database, ids)
   ]);
-  return projects.map(project => summarizeProject({
-    ...project,
-    tasks: tasks.filter(task => task.projectId === project.id),
-    attributedActivities: activities.filter(activity => activity.attributedProjectId === project.id)
-  }, reviewPeriod));
+  return summarizeProjects(projects, tasks, activities, reviewPeriod);
 }
 
 export async function readReviewPeriodEvidence(

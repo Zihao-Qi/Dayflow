@@ -1,3 +1,4 @@
+import { tourDestinationsAndReturn } from "./destination-tour";
 import { expect, test, type Page } from "@playwright/test";
 import { resetTestDatabase, seedTimeBlock } from "./database";
 
@@ -102,13 +103,10 @@ test("leaving Log and returning resets the day", async ({ page }) => {
   await page.getByRole("button", { name: "Next day" }).click();
   await expect(dayInput(page)).toHaveValue(offsetKey(today, 1));
 
-  await page.getByRole("button", { name: /^Projects/ }).first().click();
-  await expect(
-    page.getByRole("heading", { name: "Projects", exact: true, level: 1 })
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Log", exact: true }).click();
+  await tourDestinationsAndReturn(page, "day");
 
   await expect(dayInput(page)).toHaveValue(today);
+  await expect(page.getByRole("radio", { name: "Stream", exact: true })).toBeChecked();
 });
 
 test("forward navigation stops at the eight-week horizon", async ({ page }) => {

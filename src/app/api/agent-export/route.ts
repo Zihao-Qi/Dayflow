@@ -28,7 +28,7 @@ export async function GET() {
     tx.material.findMany({ orderBy: { createdAt: "desc" } }),
     tx.timeBlock.findMany({ orderBy: { date: "asc" } }),
     tx.activityEntry.findMany({ orderBy: { startedAt: "asc" } })
-  ]));
+  ]), { timeout: 60000 });
 
   return NextResponse.json({
     app: "Dayflow",
@@ -53,7 +53,8 @@ export async function GET() {
 
 function parseTags(tags: string) {
   try {
-    return JSON.parse(tags);
+    const value = JSON.parse(tags);
+    return Array.isArray(value) ? value : [];
   } catch {
     return [];
   }

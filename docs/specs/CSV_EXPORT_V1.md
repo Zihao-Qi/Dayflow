@@ -100,19 +100,31 @@ and database backup.
 
 ## Deep Module and Interface
 
-CSV rules belong behind one module interface:
+CSV rules belong behind the read model in
+`src/server/read-models/csv-export.ts`, with a two-call interface:
 
 ```ts
-createCsvExport(kind, now?, database?)
+readCsvExport(kind, tx)
+createCsvExport(rows, now)
 ```
 
-Callers choose only the export kind. The module owns complete retrieval,
-relations, ordering, headers, formula safety, escaping, local-time
-representation, filenames, and response metadata. The production database and
-an in-memory test adapter share the same seam.
+`readCsvExport(kind, tx)` owns both export queries, selecting the requested
+kind's complete history, relations, and deterministic ordering inside the
+caller's transaction, and returns the captured rows without encoding them.
+After that transaction closes, `createCsvExport(rows, now)` produces CSV text
+with stable column headers, formula safety, escaping, and local-time
+representation, plus the canonical filename, kind, and record count used for
+response metadata. The production transaction client and an in-memory test
+adapter share the read seam.
 
-The HTTP route is a thin transport adapter. It parses the path, calls the
-module, and maps the result into download headers.
+Encoding a large export inside an interactive transaction spends the
+transaction budget on CPU and can roll a successful read back into a generic
+500, so reading and encoding are separate calls.
+
+The HTTP route is a thin transport adapter. It captures `now`, parses the path,
+awaits `prisma.$transaction(tx => readCsvExport(kind, tx))`, calls
+`createCsvExport(rows, now)` after the transaction closes, and maps the result
+into download headers with `csvExportResponseHeaders(result)`.
 
 ## HTTP Interface
 
@@ -263,8 +275,10 @@ CSV Export v1 is complete when:
 
 Implemented July 28, 2026.
 
-- `src/lib/csv-export.ts` owns complete retrieval, stable fields and ordering,
-  date/time representation, formula safety, and CSV serialization.
+- `src/server/read-models/csv-export.ts` owns complete retrieval, stable fields
+  and ordering through `readCsvExport`, and date/time representation, formula
+  safety, and CSV serialization through `createCsvExport` after the read
+  transaction closes; `src/lib/csv-export.ts` is a compatibility re-export.
 - `src/lib/csv-export-contract.ts` owns the shared kind, filename, response
   metadata, and strict browser-validation contract.
 - `GET /api/exports/tasks` and `GET /api/exports/activities` expose the

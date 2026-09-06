@@ -47,6 +47,35 @@ async function withDatabase(
   await run({ prisma, runOnce });
 }
 
+// Wrap rows only after the real query returns, so counters measure read-model work.
+function countRowKeys(database: Prisma.TransactionClient, keys: Record<string, string>) {
+  const rows: Record<string, number> = {};
+  const reads: Record<string, number> = {};
+  return { rows, reads, database: new Proxy(database, {
+    get(target, property, receiver) {
+      const delegate = Reflect.get(target, property, receiver);
+      if (typeof property !== "string" || !keys[property]) return delegate;
+      return new Proxy(delegate, {
+        get(targetDelegate, method) {
+          if (method !== "findMany") return Reflect.get(targetDelegate, method);
+          return async (...args: unknown[]) => {
+            const result = await Reflect.apply(targetDelegate.findMany, targetDelegate, args);
+            assert.ok(Array.isArray(result));
+            rows[property] = (rows[property] ?? 0) + result.length;
+            reads[property] ??= 0;
+            return result.map((row: object) => new Proxy(row, {
+              get(record, key, recordReceiver) {
+                if (key === keys[property]) reads[property]++;
+                return Reflect.get(record, key, recordReceiver);
+              }
+            }));
+          };
+        }
+      });
+    }
+  }) };
+}
+
 const period = { start: new Date("2026-08-29T05:00:00Z"), end: new Date("2026-09-05T05:00:00Z") };
 const draft = (name = "Project") => parseProjectCreateMutation({ name });
 const json = (value: unknown) => JSON.parse(JSON.stringify(value));
@@ -258,39 +287,106 @@ test("projects services and server workflows run headlessly on SQLite", async (c
       await reset();
     });
 
-    await context.test("summary and detail retain legacy values, ordering, journal deduplication and attribution", async () => {
+    await context.test("summary and detail retain legacy values, ordering, journal deduplication and attribution", async (contract) => {
+      const at = (offset: number) => new Date(period.start.getTime() + offset * 1000);
       const project = await create("Read model");
+      const otherCreated = await create("Other");
+      const other = await prisma.project.update({ where: { id: otherCreated.id }, data: { updatedAt: new Date(project.updatedAt.getTime() + 1000) } });
       const emptyCreated = await create("Empty");
-      const empty = await prisma.project.update({ where: { id: emptyCreated.id }, data: { updatedAt: new Date(project.updatedAt.getTime() + 1000) } });
+      const empty = await prisma.project.update({ where: { id: emptyCreated.id }, data: { updatedAt: new Date(project.updatedAt.getTime() + 2000) } });
+      const tasksOnlyCreated = await create("Tasks only");
+      const tasksOnly = await prisma.project.update({ where: { id: tasksOnlyCreated.id }, data: { status: "PAUSED" } });
       const later = await prisma.$transaction(tx => createPhase(tx, project.id, { name: "Later" }));
       const earlier = await prisma.$transaction(tx => createPhase(tx, project.id, { name: "Earlier" }));
       const firstPhase = await prisma.$transaction(tx => updatePhase(tx, earlier.id, { sortOrder: 0 }));
+      // Query order interleaves projects; tied scheduled dates must keep source order.
       const backlog = await prisma.task.create({ data: { title: "Backlog", projectId: project.id, sortOrder: 1 } });
+      const otherBacklog = await prisma.task.create({ data: { title: "Other backlog", projectId: other.id, sortOrder: 2 } });
       const dated = await prisma.task.create({ data: { title: "Next", projectId: project.id, date: period.start, sortOrder: 2, estimateMinutes: 42 } });
+      const otherDated = await prisma.task.create({ data: { title: "Other next", projectId: other.id, date: period.start, sortOrder: 3, estimateMinutes: 12 } });
+      const datedSecond = await prisma.task.create({ data: { title: "Same date, later order", projectId: project.id, date: period.start, sortOrder: 4 } });
       const done = await prisma.task.create({ data: { title: "Done", projectId: project.id, status: "DONE", completedAt: period.start, sortOrder: 3 } });
-      const direct = await prisma.note.create({ data: { content: "Direct first", tags: '["tag"]', date: period.start, projectId: project.id, taskId: dated.id, createdAt: period.start } });
-      const taskNote = await prisma.note.create({ data: { content: "Task second", tags: 'invalid', date: period.start, taskId: backlog.id, createdAt: period.end } });
-      const material = await prisma.material.create({ data: { title: "Shared", url: "https://example.com", projectId: project.id, taskId: dated.id } });
-      const taskMaterial = await prisma.material.create({ data: { title: "Task only", url: "https://example.com/task", taskId: backlog.id } });
+      const loneTask = await prisma.task.create({ data: { title: "No evidence", projectId: tasksOnly.id, sortOrder: 4, estimateMinutes: 7 } });
+      // Source chronology crosses direct and task buckets. Done and datedSecond have empty journal buckets.
+      const note = (content: string, offset: number, links: { projectId?: string; taskId?: string }, tags = "[]") =>
+        prisma.note.create({ data: { content, tags, date: period.start, createdAt: at(offset), ...links } });
+      const direct = await note("Dual linked", 2, { projectId: project.id, taskId: dated.id }, '["tag", "second"]');
+      const taskNote = await note("Backlog older", 3, { taskId: backlog.id }, "invalid");
+      const datedNote = await note("Dated newest", 8, { taskId: dated.id }, '{"not":"array"}');
+      const directOnly = await note("Direct only", 5, { projectId: project.id }, '["direct"]');
+      const taskNoteNewer = await note("Backlog newer", 7, { taskId: backlog.id }, "null");
+      const datedNoteOlder = await note("Dated oldest", 1, { taskId: dated.id });
+      await note("Unrelated", 9, { projectId: other.id, taskId: otherBacklog.id });
+      const material = (title: string, offset: number, links: { projectId?: string; taskId?: string }) =>
+        prisma.material.create({ data: { title, url: "https://example.com", createdAt: at(offset), ...links } });
+      const dualMaterial = await material("Dual linked", 2, { projectId: project.id, taskId: dated.id });
+      const taskMaterial = await material("Backlog older", 3, { taskId: backlog.id });
+      const datedMaterial = await material("Dated newest", 8, { taskId: dated.id });
+      const directMaterial = await material("Direct only", 5, { projectId: project.id });
+      const taskMaterialNewer = await material("Backlog newer", 7, { taskId: backlog.id });
+      const datedMaterialOlder = await material("Dated oldest", 1, { taskId: dated.id });
+      await material("Unrelated", 9, { projectId: other.id, taskId: otherBacklog.id });
       const activity = await prisma.activityEntry.create({ data: { startedAt: period.start, durationMinutes: 20, category: "Work", note: "", attributedProjectId: project.id } });
+      await prisma.activityEntry.create({ data: { startedAt: at(1), durationMinutes: 7, category: "Work", note: "", projectId: project.id, attributedProjectId: other.id } });
       const future = await prisma.activityEntry.create({ data: { startedAt: period.end, durationMinutes: 10, category: "Work", note: "", attributedProjectId: project.id } });
+      await prisma.activityEntry.create({ data: { startedAt: at(-1), durationMinutes: 13, category: "Work", note: "", attributedProjectId: other.id } });
       // Direct or task links alone do not contribute to project invested minutes.
       await prisma.activityEntry.create({ data: { startedAt: period.start, durationMinutes: 99, category: "Other", note: "", projectId: project.id, taskId: backlog.id } });
-      const expected = { ...project, completedTaskCount: 1, taskCount: 3, progressPercent: 33,
+      const expected = { ...project, completedTaskCount: 1, taskCount: 4, progressPercent: 25,
         phaseCount: 2, backlogCount: 1, investedMinutes: 30, reviewPeriodInvestedMinutes: 20,
         movedDuringReviewPeriod: true, nextTaskId: dated.id, nextTaskTitle: "Next", nextTaskEstimateMinutes: 42, lastProgressAt: period.end };
+      const emptySummary = { ...empty, completedTaskCount: 0, taskCount: 0, progressPercent: null,
+        phaseCount: 0, backlogCount: 0, investedMinutes: 0, reviewPeriodInvestedMinutes: 0, movedDuringReviewPeriod: false,
+        nextTaskId: null, nextTaskTitle: null, nextTaskEstimateMinutes: null, lastProgressAt: null };
+      const otherSummary = { ...other, completedTaskCount: 0, taskCount: 2, progressPercent: 0,
+        phaseCount: 0, backlogCount: 1, investedMinutes: 20, reviewPeriodInvestedMinutes: 7, movedDuringReviewPeriod: true,
+        nextTaskId: otherDated.id, nextTaskTitle: "Other next", nextTaskEstimateMinutes: 12, lastProgressAt: at(1) };
+      const tasksOnlySummary = { ...tasksOnly, completedTaskCount: 0, taskCount: 1, progressPercent: 0,
+        phaseCount: 0, backlogCount: 1, investedMinutes: 0, reviewPeriodInvestedMinutes: 0, movedDuringReviewPeriod: false,
+        nextTaskId: loneTask.id, nextTaskTitle: "No evidence", nextTaskEstimateMinutes: 7, lastProgressAt: null };
       await prisma.$transaction(async tx => {
         const detail = await getProjectDetail(tx, project.id, period);
-        assert.deepEqual(detail, { ...expected, phases: [firstPhase, later], tasks: [backlog, done, dated],
-          activities: [future, activity], notes: [{ ...direct, tags: ["tag"] }, { ...taskNote, tags: [] }], materials: [material, taskMaterial] });
+        assert.deepEqual(detail, { ...expected, phases: [firstPhase, later], tasks: [backlog, done, dated, datedSecond],
+          activities: [future, activity],
+          notes: [{ ...directOnly, tags: ["direct"] }, { ...direct, tags: ["tag", "second"] },
+            { ...taskNoteNewer, tags: [] }, { ...taskNote, tags: [] }, { ...datedNote, tags: [] }, { ...datedNoteOlder, tags: [] }],
+          materials: [directMaterial, dualMaterial, taskMaterialNewer, taskMaterial, datedMaterial, datedMaterialOlder] });
         assert.ok(isProjectDetailResponse(json(detail)));
-        const summaries = await listProjectSummaries(tx, period);
-        assert.deepEqual(summaries, [{ ...empty, completedTaskCount: 0, taskCount: 0, progressPercent: null,
-          phaseCount: 0, backlogCount: 0, investedMinutes: 0, reviewPeriodInvestedMinutes: 0, movedDuringReviewPeriod: false,
-          nextTaskId: null, nextTaskTitle: null, nextTaskEstimateMinutes: null, lastProgressAt: null }, expected]);
+        assert.deepEqual(await listProjectSummaries(tx, period), [emptySummary, otherSummary, expected, tasksOnlySummary]);
+        assert.deepEqual(await getProjectDetail(tx, empty.id, period), { ...emptySummary, phases: [], tasks: [], activities: [], notes: [], materials: [] });
         assert.equal(await getProjectDetail(tx, "missing", period), null);
       });
+      await contract.test("summary grouping reads each returned row key a bounded number of times", async () => {
+        await prisma.$transaction(async tx => {
+          const counted = countRowKeys(tx, { task: "projectId", activityEntry: "attributedProjectId" });
+          await listProjectSummaries(counted.database, period);
+          assert.deepEqual(counted.rows, { task: 7, activityEntry: 4 });
+          contract.diagnostic(`summary key reads: ${JSON.stringify(counted.reads)}`);
+          for (const [key, rowCount] of Object.entries(counted.rows)) {
+            assert.ok(counted.reads[key] <= 2 * rowCount, `${key}: ${counted.reads[key]} key reads for ${rowCount} rows`);
+          }
+        });
+      });
+      await contract.test("journal grouping reads each returned task key a bounded number of times", async () => {
+        await prisma.$transaction(async tx => {
+          const counted = countRowKeys(tx, { note: "taskId", material: "taskId" });
+          await getProjectDetail(counted.database, project.id, period);
+          assert.deepEqual(counted.rows, { note: 6, material: 6 });
+          contract.diagnostic(`journal task key reads: ${JSON.stringify(counted.reads)}`);
+          for (const [key, rowCount] of Object.entries(counted.rows)) {
+            // Notes also read taskId when spreading the final row for tag parsing.
+            assert.ok(counted.reads[key] <= 3 * rowCount, `${key}: ${counted.reads[key]} key reads for ${rowCount} rows`);
+          }
+        });
+      });
       await reset();
+      await contract.test("empty project summaries skip task and activity reads", async () => {
+        await prisma.$transaction(async tx => {
+          const counted = countRowKeys(tx, { task: "projectId", activityEntry: "attributedProjectId" });
+          assert.deepEqual(await listProjectSummaries(counted.database, period), []);
+          assert.deepEqual(counted.rows, {});
+        });
+      });
     });
 
     await context.test("SQLite P2025 update races translate locally and roll back disappearing records", async () => {

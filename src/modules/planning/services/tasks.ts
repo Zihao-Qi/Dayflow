@@ -157,3 +157,8 @@ export function readFocusTask(database: TaskReadDatabase, id: string) {
 export function completeFocusTask(tx: Prisma.TransactionClient, id: string, now: Date) {
   return tx.task.updateMany({ where: { id, status: { not: "DONE" } }, data: { status: "DONE", completedAt: now } });
 }
+
+/** Review counts completions using the evidence period's exact half-open bounds. */
+export function readReviewCompletedTasks(database: { task: Pick<Prisma.TransactionClient["task"], "findMany"> }, range: { start: Date; end: Date }) {
+  return database.task.findMany({ where: { completedAt: { gte: range.start, lt: range.end } }, select: { id: true } });
+}

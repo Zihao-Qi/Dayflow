@@ -1,6 +1,5 @@
 import type { Prisma } from "@prisma/client";
-// Transitional projects-side seam; it requires this transaction and never falls back.
-import { validateProjectPlacement } from "@/lib/projects";
+import { validateProjectPlacement } from "@/modules/projects/services/projects";
 import { AppError } from "@/shared/kernel/errors";
 import type { Calendar } from "@/shared/kernel/calendar";
 import {
@@ -14,7 +13,7 @@ import { compactFocusQueue, consumeFocusQueueTask } from "./focus-queue";
 
 export async function createTask(tx: Prisma.TransactionClient, input: TaskCreateMutation) {
   try {
-    await validateProjectPlacement(input.projectId, input.phaseId, { allowCompleted: input.status === "DONE" }, tx);
+    await validateProjectPlacement(tx, input.projectId, input.phaseId, { allowCompleted: input.status === "DONE" });
     const maxTask = await tx.task.findFirst({ where: { date: input.date }, orderBy: { sortOrder: "desc" } });
     return serializeTask(await tx.task.create({ data: { ...input, sortOrder: (maxTask?.sortOrder ?? 0) + 1 } }));
   } catch (error) {
@@ -35,7 +34,7 @@ export async function updateTask(
     });
     if (!current) throw new AppError(taskErrors.taskNotFound);
     const plan = planTaskPatch(current, patch, calendar, now);
-    await validateProjectPlacement(plan.projectId, plan.phaseId, { allowCompleted: plan.status === "DONE" }, tx);
+    await validateProjectPlacement(tx, plan.projectId, plan.phaseId, { allowCompleted: plan.status === "DONE" });
     await tx.task.update({ where: { id }, data: plan.data });
     if (plan.consumeQueue) await consumeFocusQueueTask(tx, id);
     if (plan.scheduleChange) {
@@ -125,4 +124,21 @@ export function translateTaskPersistenceError(error: unknown, action: TaskMutati
   }
   // P2002 must reach runOnce for receipt-race recovery. Queue errors retain their fallback.
   return error;
+}
+
+/** Project workflows pass their transaction through these planning capabilities. */
+export function countUnfinishedProjectTasks(database: { task: Pick<Prisma.TransactionClient["task"], "count"> }, projectId: string) {
+  return database.task.count({ where: { projectId, status: { not: "DONE" } } });
+}
+
+export function readProjectTasks(database: { task: Pick<Prisma.TransactionClient["task"], "findMany"> }, projectIds: string[]) {
+  return database.task.findMany({ where: { projectId: { in: projectIds } }, orderBy: [{ date: "asc" }, { sortOrder: "asc" }, { createdAt: "asc" }] });
+}
+
+export async function detachProjectTasks(tx: Prisma.TransactionClient, projectId: string) {
+  await tx.task.updateMany({ where: { projectId }, data: { projectId: null, phaseId: null } });
+}
+
+export async function detachPhaseTasks(tx: Prisma.TransactionClient, phaseId: string) {
+  await tx.task.updateMany({ where: { phaseId }, data: { phaseId: null } });
 }

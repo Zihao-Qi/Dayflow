@@ -69,7 +69,7 @@ const ACTIVITY_WRITE_ALLOWLIST = new Set([
   "src/lib/activity-persistence.ts:79:activityEntry.updateMany",
   "src/lib/focus-sessions.ts:268:activityEntry.upsert",
   "src/lib/focus-sessions.ts:373:activityEntry.upsert",
-  "src/lib/projects.ts:163:activityEntry.updateMany"
+  "src/server/workflows/delete-project.ts:15:activityEntry.updateMany"
 ]);
 
 // Legacy src/lib call counts are ratcheted per file so line movement is harmless,
@@ -77,7 +77,6 @@ const ACTIVITY_WRITE_ALLOWLIST = new Set([
 const LEGACY_GLOBAL_CLIENT_CALL_BASELINE = [
   legacyClientCalls("src/lib/activity-persistence.ts", 1, "Phase 3: evidence services"),
   legacyClientCalls("src/lib/focus-sessions.ts", 7, "Phase 3: focus services"),
-  legacyClientCalls("src/lib/projects.ts", 2, "Phase 3: projects services")
 ] as const;
 
 function legacyClientCalls(file: string, count: number, migration: string) {
@@ -92,8 +91,6 @@ const BASELINE: ReadonlyArray<Violation & { migration: string }> = [
   baseline(6, "src/lib/focus-sessions.ts", 265, "Phase 3: focus services"),
   baseline(6, "src/lib/focus-sessions.ts", 348, "Phase 3: focus services"),
   baseline(6, "src/lib/journal-history.ts", 140, "Phase 3: journal services"),
-  baseline(6, "src/lib/projects.ts", 148, "Phase 3: projects services"),
-  baseline(6, "src/lib/projects.ts", 158, "Phase 3: projects services"),
   baseline(6, "src/lib/workspace-readiness.ts", 4, "Phase 3: read models"),
   baseline(8, "src/lib/backup-management.ts", 42, "Phase 4: backup engine")
 ];

@@ -3,6 +3,7 @@ import { appErrorResponse } from "@/lib/http-errors";
 import { prisma } from "@/lib/prisma";
 import { reviewErrors } from "@/lib/review-errors";
 import {
+  isReviewIdentifier,
   readPastReviewPeriod
 } from "@/lib/review-history";
 import { AppError } from "@/shared/kernel/errors";
@@ -15,7 +16,8 @@ export async function GET(
   const now = clock.now();
   try {
     const { id } = await params;
-    return NextResponse.json(await readPastReviewPeriod(prisma, id, now));
+    if (!isReviewIdentifier(id)) throw new AppError(reviewErrors.thatReviewIdentifierIsNotValid);
+    return NextResponse.json(await prisma.$transaction(tx => readPastReviewPeriod(tx, id, now)));
   } catch (error) {
     if (error instanceof AppError) return appErrorResponse(error);
 

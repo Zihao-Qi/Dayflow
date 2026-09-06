@@ -1,66 +1,34 @@
 import { clock, calendar } from "@/lib/time";
-import { appErrorResponse } from "@/lib/http-errors";
-import {
-  parseMutationId,
-  runIdempotentCreate
-} from "@/lib/idempotent-mutations";
 import { prisma } from "@/lib/prisma";
-import { projectErrors } from "@/lib/project-errors";
-import {
-  parseProjectCreateMutation,
-  readProjectMutationBody
-} from "@/lib/project-mutations";
-import { getProjectDetail, listProjectSummaries } from "@/lib/projects";
-import { AppError } from "@/shared/kernel/errors";
-import { Prisma } from "@prisma/client";
+import { parseMutationId, runOnce } from "@/server/prisma/run-once";
+import { parseProjectCreateMutation, readProjectMutationBody } from "@/modules/projects/domain/project";
+import { createProject, getProjectDetail, listProjectSummaries, projectMutationErrorResponse } from "@/server/projects";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function GET() {
   const now = clock.now();
-  return NextResponse.json(await listProjectSummaries(prisma, calendar.reviewPeriodEnding(calendar.dayOf(now))));
+  return NextResponse.json(await prisma.$transaction(tx => listProjectSummaries(tx, calendar.reviewPeriodEnding(calendar.dayOf(now)))));
 }
 
 export async function POST(request: NextRequest) {
   const now = clock.now();
   try {
     const body = await readProjectMutationBody(request);
-    const mutationId = parseMutationId(
-      request.headers.get("X-Dayflow-Mutation-Id")
-    );
+    const mutationId = parseMutationId(request.headers.get("X-Dayflow-Mutation-Id"));
     const input = parseProjectCreateMutation(body);
-
-    const detail = await runIdempotentCreate({
+    const detail = await runOnce({
       mutationId,
       kind: "project.create",
       payload: body,
-      create: async (transaction) => {
-        const project = await transaction.project.create({
-          data: input
-        });
-        const createdDetail = await getProjectDetail(project.id, transaction, calendar.reviewPeriodEnding(calendar.dayOf(now)));
-        if (!createdDetail) {
-          throw new Error("Created Project could not be read back.");
-        }
+      create: async tx => {
+        const project = await createProject(tx, input);
+        const createdDetail = await getProjectDetail(project.id, tx, calendar.reviewPeriodEnding(calendar.dayOf(now)));
+        if (!createdDetail) throw new Error("Created Project could not be read back.");
         return createdDetail;
       }
     });
-
     return NextResponse.json(detail, { status: 201 });
   } catch (error) {
-    return projectCreateErrorResponse(error);
+    return projectMutationErrorResponse(error, "create");
   }
-}
-
-function projectCreateErrorResponse(error: unknown) {
-  if (error instanceof AppError) return appErrorResponse(error);
-
-  if (
-    error instanceof Prisma.PrismaClientKnownRequestError &&
-    error.code === "P2003"
-  ) {
-    return appErrorResponse(new AppError(projectErrors.aRelatedRecordChangedBeforeTheProjectCouldBeCreated));
-  }
-
-  console.error("Project creation failed.", error);
-  return appErrorResponse(new AppError(projectErrors.projectCouldNotBeCreated));
 }

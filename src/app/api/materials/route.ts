@@ -1,14 +1,12 @@
 import {
   parseMutationId,
-  runIdempotentCreate
-} from "@/lib/idempotent-mutations";
+  runOnce
+} from "@/server/prisma/run-once";
 import {
   parseMaterialCreateInput
-} from "@/lib/journal-domain";
-import { journalErrors } from "@/lib/journal-errors";
-import { readJournalHistory } from "@/lib/journal-history";
-import { journalErrorResponse } from "@/lib/journal-http";
-import { resolveMaterialRelations } from "@/lib/journal-relations";
+} from "@/modules/journal/domain/journal";
+import { journalErrors } from "@/modules/journal/domain/journal";
+import { createMaterial, readJournalHistory, journalErrorResponse } from "@/server/journal";
 import { prisma } from "@/lib/prisma";
 import { AppError } from "@/shared/kernel/errors";
 import { NextRequest, NextResponse } from "next/server";
@@ -30,24 +28,11 @@ export async function POST(request: NextRequest) {
     );
     const body = await parseJson(request);
     const input = parseMaterialCreateInput(body);
-    const material = await runIdempotentCreate({
+    const material = await runOnce({
       mutationId,
       kind: "material.create",
       payload: body,
-      create: async (transaction) => {
-        const relations = await resolveMaterialRelations(transaction, input);
-        return transaction.material.create({
-          data: {
-            title: input.title,
-            url: input.url,
-            type: input.type,
-            notes: input.notes,
-            taskId: relations.taskId,
-            noteId: relations.noteId,
-            projectId: relations.projectId
-          }
-        });
-      }
+      create: (transaction) => createMaterial(transaction, input)
     });
 
     return NextResponse.json(material, { status: 201 });

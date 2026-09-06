@@ -5,7 +5,7 @@ import {
   journalLiteralLikePattern,
   parseJournalHistoryCriteria,
   readJournalHistory
-} from "../../src/lib/journal-history";
+} from "../../src/server/journal";
 import {
   JOURNAL_SEARCH_MAX_LENGTH,
   JournalRequestError

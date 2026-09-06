@@ -302,3 +302,30 @@ test("Materials POST pins receipt and attribution bodies through its handler", a
     (prisma as unknown as { $transaction: unknown }).$transaction = originalTransaction;
   }
 });
+
+test("Journal Prisma failures keep operation-specific internal envelopes without field", async () => {
+  const { Prisma } = await import("@prisma/client");
+  const originalTransaction = prisma.$transaction;
+  const originalConsoleError = console.error;
+  console.error = () => undefined;
+  try {
+    for (const code of ["P2003", "P2025", "P2002"]) {
+      (prisma as unknown as { $transaction: unknown }).$transaction = async () => {
+        throw new Prisma.PrismaClientKnownRequestError("storage failure", { code, clientVersion: "test" });
+      };
+      for (const [handler, request, message] of [
+        [getNotes, new NextRequest("http://localhost/api/notes"), "Notes could not be loaded."],
+        [getMaterials, new NextRequest("http://localhost/api/materials"), "References could not be loaded."],
+        [createNote, jsonRequest("http://localhost/api/notes", { content: "Note" }), "The note could not be saved."],
+        [createMaterial, jsonRequest("http://localhost/api/materials", { url: "https://example.com" }), "The reference could not be saved."]
+      ] as const) {
+        const response = await handler(request);
+        assert.equal(response.status, 500);
+        assert.deepEqual(await response.json(), { code: "INTERNAL_ERROR", error: message });
+      }
+    }
+  } finally {
+    (prisma as unknown as { $transaction: unknown }).$transaction = originalTransaction;
+    console.error = originalConsoleError;
+  }
+});

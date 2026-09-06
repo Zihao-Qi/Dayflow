@@ -210,8 +210,8 @@ export function useActivityCapture({
     try {
       const result = await saveActivityRequest(activeEditor, editable, payload, selectedDate, expectedAttributedProjectId, mutationId);
 
+      replaceActivity(result);
       if (activeEditor) {
-        replaceActivity(result);
         setEditor(null);
       } else {
         setCreateDraft((current) => ({

@@ -8,7 +8,9 @@ import { GET as getReviewWindow } from "../../src/app/api/review/window/route";
 import { reviewPeriodRange } from "../../src/lib/dates";
 import { prisma } from "../../src/lib/prisma";
 import { clock } from "../../src/lib/time";
-import { isReviewWindowDetail } from "../../src/lib/review-records";
+// The route's own response contract, which admits the current draft: the client
+// decoder behind @/lib/review-records deliberately rejects one.
+import { isReviewWindowDetail } from "../../src/modules/review/domain/review";
 
 test("Review save rejects a period that ends while the request body is read", async (t) => {
   let now = new Date("2026-09-04T23:59:59.999-05:00");

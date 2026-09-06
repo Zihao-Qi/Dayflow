@@ -1,6 +1,9 @@
+"use client";
+
 import { request } from "@/shared/client/api-client";
 import {
   isBootstrapResponse,
+  isCurrentReviewWindow,
   isPastReviewDetail,
   isPersistedReviewResponse,
   isReviewHistoryPage,
@@ -54,10 +57,18 @@ export function loadReviewWindow(query: URLSearchParams) {
   });
 }
 
+export function loadCurrentReviewWindow() {
+  return request("/api/review/window?current=1", {
+    cache: "no-store",
+    decode: isCurrentReviewWindow,
+    fallback: "The current Review could not be loaded. Try again."
+  });
+}
+
 export function loadViewedDay(dayKey: string) {
   return request(`/api/day?date=${encodeURIComponent(dayKey)}`, {
     cache: "no-store",
-    decode: (body): body is ViewedDayPayload => isViewedDayPayload(body),
+    decode: (body): body is ViewedDayPayload => isViewedDayPayload(body) && body.dateKey === dayKey,
     fallback: LOAD_FAILURE,
   });
 }

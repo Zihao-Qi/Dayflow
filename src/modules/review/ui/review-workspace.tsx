@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useCurrentReview } from "./use-current-review";
 import { BookOpen, Check, Save } from "lucide-react";
 import { SaveStateChip, useSaveState } from "@/components/save-state";
 import { useReviewHistory } from "@/modules/review/ui/use-review-history";
@@ -11,7 +12,6 @@ import {
   formatMinutes,
   formatReviewPeriodEnd
 } from "@/components/dashboard-formatters";
-import type { ProjectSummary } from "@/lib/project-domain";
 import { formatInvestedMinutes } from "@/lib/project-domain";
 import type { PastReviewRecord } from "@/lib/review-records";
 import { addDays, localDateKey } from "@/lib/dates";
@@ -71,23 +71,43 @@ function hasReviewContent(review: Review) {
 }
 
 export function ReviewPage({
-  projects,
-  review,
-  summary,
+  todayKey,
+  registerRefresh,
+  onRetry,
   onSaveReview,
   onSaveError,
   onSaveRecovered,
   onOpenProject
 }: {
-  projects: ProjectSummary[];
-  review: Review;
-  summary: ReviewSummary;
-  onSaveReview: (review: Review) => Promise<boolean>;
+  todayKey: string;
+  registerRefresh: (refresh: (() => Promise<boolean>) | null) => void;
+  onRetry: () => void;
+  onSaveReview: (review: Review, accept?: (saved: Review) => void) => Promise<boolean>;
   onSaveError: () => void;
   onSaveRecovered: () => void;
   onOpenProject: (id: string) => void;
 }) {
-  const history = useReviewHistory();
+  const current = useCurrentReview(todayKey);
+  const history = useReviewHistory(todayKey);
+  const latestRefresh = useRef<() => Promise<boolean>>(async () => true);
+  latestRefresh.current = async () => {
+    const outcomes = await Promise.all([current.refresh(), history.refresh()]);
+    return outcomes.every(Boolean);
+  };
+  useEffect(() => {
+    registerRefresh(() => latestRefresh.current());
+    return () => registerRefresh(null);
+  }, [registerRefresh]);
+  const readStatus = current.error ? (
+    <div role="alert">
+      {current.error}
+      <button className="secondary-button" onClick={onRetry}>Retry Review</button>
+    </div>
+  ) : current.loading ? <p role="status">Loading current Review…</p> : null;
+  if (!current.payload) {
+    return <div className="review-page page-stack"><PageHeader title="Review" eyebrow="Seven days ending" />{readStatus}</div>;
+  }
+  const { review, projects, reviewSummary: summary } = current.payload;
   const past = history.selected;
   const window = history.window;
   const detail = window ?? past;
@@ -125,9 +145,12 @@ export function ReviewPage({
         }
       />
 
+      {readStatus}
+
       {history.open && (
         <ReviewHistoryPanel
           history={history}
+          onRetry={onRetry}
           latestWindowEnding={latestWindowEnding}
         />
       )}
@@ -154,7 +177,7 @@ export function ReviewPage({
         <CurrentReviewEditor
           key={`${review.periodStart}:${review.periodEnd}`}
           review={review}
-          onSaveReview={onSaveReview}
+          onSaveReview={(draft) => onSaveReview(draft, current.acceptReview)}
           onSaveError={onSaveError}
           onSaveRecovered={onSaveRecovered}
         />
@@ -591,9 +614,11 @@ function PastReviewCard({
 
 function ReviewHistoryPanel({
   history,
+  onRetry,
   latestWindowEnding
 }: {
   history: ReturnType<typeof useReviewHistory>;
+  onRetry: () => void;
   latestWindowEnding: string;
 }) {
   const [windowEnding, setWindowEnding] = useState(latestWindowEnding);
@@ -653,7 +678,7 @@ function ReviewHistoryPanel({
             <button
               type="button"
               className="secondary-button"
-              onClick={history.retryWindow}
+              onClick={onRetry}
             >
               Try again
             </button>
@@ -667,7 +692,7 @@ function ReviewHistoryPanel({
           <button
             type="button"
             className="secondary-button"
-            onClick={history.retry}
+            onClick={onRetry}
           >
             Try again
           </button>

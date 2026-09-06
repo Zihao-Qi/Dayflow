@@ -10,7 +10,8 @@ import {
   type PastReviewRecord,
   type ReviewWindowDetail
 } from "@/lib/review-records";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { createReadGeneration } from "@/shared/client/read-generation";
 
 const REVIEW_HISTORY_LIMIT = 20;
 const LIST_FAILURE =
@@ -54,35 +55,38 @@ const initialState: ReviewHistoryState = {
   windowEnding: ""
 };
 
-export function useReviewHistory() {
+export function useReviewHistory(calendarKey: string) {
   const [state, setState] = useState<ReviewHistoryState>(initialState);
-  const listRequest = useRef(0);
-  const detailRequest = useRef(0);
+  const listOwner = useRef(createReadGeneration()).current;
+  const detailOwner = useRef(createReadGeneration()).current;
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const selection = useRef<{ id: string } | { ending: string } | null>(null);
   const windowEndingRequest = useRef("");
 
-  const loadPage = useCallback(async (cursor: string | null) => {
-    const request = (listRequest.current += 1);
+  const loadPage = useCallback(async (cursor: string | null, count = REVIEW_HISTORY_LIMIT) => {
     setState((current) => ({ ...current, loading: true, error: "" }));
     try {
-      const query = new URLSearchParams({ limit: String(REVIEW_HISTORY_LIMIT) });
-      if (cursor) query.set("cursor", cursor);
-      const payload = await loadReviewHistoryRequest(query);
-      if (request !== listRequest.current) return;
-
-      setState((current) => ({
-        ...current,
-        loading: false,
-        loaded: true,
-        error: "",
+      return await listOwner.run(async () => {
+        const query = new URLSearchParams({ limit: String(REVIEW_HISTORY_LIMIT) });
+        if (cursor) query.set("cursor", cursor);
+        const payload = await loadReviewHistoryRequest(query);
+        // Refresh all pages already opened without discarding the selection.
+        while (!cursor && payload.nextCursor && payload.items.length < count) {
+          query.set("cursor", payload.nextCursor);
+          const next = await loadReviewHistoryRequest(query);
+          payload.items.push(...next.items);
+          payload.nextCursor = next.nextCursor;
+        }
+        return payload;
+      }, (payload) => setState((current) => ({
+        ...current, loaded: true, error: "",
         items: cursor ? [...current.items, ...payload.items] : payload.items,
-        nextCursor: payload.nextCursor,
-        totalCount: payload.totalCount
-      }));
-    } catch {
-      if (request !== listRequest.current) return;
-      setState((current) => ({ ...current, loading: false, error: LIST_FAILURE }));
-    }
-  }, []);
+        nextCursor: payload.nextCursor, totalCount: payload.totalCount
+      })), () => setState((current) => ({ ...current, error: LIST_FAILURE })),
+      () => setState((current) => ({ ...current, loading: false })));
+    } catch { return false; }
+  }, [listOwner]);
 
   const openHistory = useCallback(() => {
     setState((current) => ({ ...current, open: true }));
@@ -90,10 +94,11 @@ export function useReviewHistory() {
   }, [loadPage]);
 
   const closeHistory = useCallback(() => {
-    listRequest.current += 1;
-    detailRequest.current += 1;
+    listOwner.invalidate();
+    detailOwner.invalidate();
+    selection.current = null;
     setState(initialState);
-  }, []);
+  }, [listOwner, detailOwner]);
 
   const loadNext = useCallback(() => {
     setState((current) => {
@@ -108,68 +113,30 @@ export function useReviewHistory() {
   }, [loadPage]);
 
   const select = useCallback(async (id: string) => {
-    const request = (detailRequest.current += 1);
-    setState((current) => ({
-      ...current,
-      selecting: true,
-      selectionError: "",
-      windowLoading: false
-    }));
+    selection.current = { id };
+    setState((current) => ({ ...current, selecting: true, selectionError: "", windowLoading: false }));
     try {
-      const payload = await loadReviewDetailRequest(id);
-      if (request !== detailRequest.current) return;
-
-      setState((current) => ({
-        ...current,
-        selecting: false,
-        selectionError: "",
-        selected: payload,
-        window: null,
-        windowLoading: false,
-        windowError: ""
-      }));
-    } catch {
-      if (request !== detailRequest.current) return;
-      setState((current) => ({
-        ...current,
-        selecting: false,
-        selectionError: DETAIL_FAILURE
-      }));
-    }
-  }, []);
+      return await detailOwner.run(() => loadReviewDetailRequest(id),
+        (payload) => setState((current) => ({
+          ...current, selectionError: "", selected: payload, window: null,
+          windowLoading: false, windowError: ""
+        })), () => setState((current) => ({ ...current, selectionError: DETAIL_FAILURE })),
+        () => setState((current) => ({ ...current, selecting: false })));
+    } catch { return false; }
+  }, [detailOwner]);
 
   const selectWindow = useCallback(async (ending: string) => {
-    const request = (detailRequest.current += 1);
+    selection.current = { ending };
     windowEndingRequest.current = ending;
-    setState((current) => ({
-      ...current,
-      selecting: false,
-      windowLoading: true,
-      windowError: "",
-      windowEnding: ending
-    }));
+    setState((current) => ({ ...current, selecting: false, windowLoading: true, windowError: "", windowEnding: ending }));
     try {
-      const query = new URLSearchParams({ ending });
-      const payload = await loadReviewWindowRequest(query);
-      if (request !== detailRequest.current) return;
-
-      setState((current) => ({
-        ...current,
-        selected: null,
-        selectionError: "",
-        window: payload,
-        windowLoading: false,
-        windowError: ""
-      }));
-    } catch {
-      if (request !== detailRequest.current) return;
-      setState((current) => ({
-        ...current,
-        windowLoading: false,
-        windowError: WINDOW_FAILURE
-      }));
-    }
-  }, []);
+      return await detailOwner.run(() => loadReviewWindowRequest(new URLSearchParams({ ending })),
+        (payload) => setState((current) => ({
+          ...current, selected: null, selectionError: "", window: payload, windowError: ""
+        })), () => setState((current) => ({ ...current, windowError: WINDOW_FAILURE })),
+        () => setState((current) => ({ ...current, windowLoading: false })));
+    } catch { return false; }
+  }, [detailOwner]);
 
   const retryWindow = useCallback(() => {
     if (windowEndingRequest.current) {
@@ -178,7 +145,8 @@ export function useReviewHistory() {
   }, [selectWindow]);
 
   const clearSelection = useCallback(() => {
-    detailRequest.current += 1;
+    detailOwner.invalidate();
+    selection.current = null;
     setState((current) => ({
       ...current,
       selected: null,
@@ -188,9 +156,27 @@ export function useReviewHistory() {
       windowLoading: false,
       windowError: ""
     }));
-  }, []);
+  }, [detailOwner]);
+
+  const refresh = useCallback(async () => {
+    if (!stateRef.current.open) return true;
+    const selected = selection.current;
+    const outcomes = await Promise.all([
+      loadPage(null, stateRef.current.items.length),
+      selected ? ("id" in selected ? select(selected.id) : selectWindow(selected.ending)) : Promise.resolve(true)
+    ]);
+    return outcomes.every(Boolean);
+  }, [loadPage, select, selectWindow]);
+
+  useEffect(() => {
+    listOwner.invalidate();
+    detailOwner.invalidate();
+    void refresh();
+    return () => { listOwner.invalidate(); detailOwner.invalidate(); };
+  }, [calendarKey, listOwner, detailOwner, refresh]);
 
   return {
+    refresh,
     ...state,
     openHistory,
     closeHistory,

@@ -238,6 +238,7 @@ export function useTimeBlockActions({
             }
           : current
       );
+      viewedDay.acceptTimeBlock(result);
       if (creating) timeBlockCreateMutation.current = null;
       setTimeBlockError("");
       setTimeBlockErrorField(null);
@@ -246,11 +247,7 @@ export function useTimeBlockActions({
         creating ? "Time block added." : "Time block updated."
       );
       const refreshed = await refreshAfterConfirmedMutation();
-      const viewedDayRefreshed =
-        payload.date === data.todayKey
-          ? true
-          : await viewedDay.setDay(payload.date);
-      if (!refreshed || !viewedDayRefreshed) {
+      if (!refreshed) {
         setTimeBlockEditor((current) =>
           current
             ? {
@@ -295,6 +292,7 @@ export function useTimeBlockActions({
     setTimeBlockErrorField(null);
     try {
       const result = await deleteTimeBlockRequest(id);
+      viewedDay.removeTimeBlock(id);
 
       setData((current) =>
         current

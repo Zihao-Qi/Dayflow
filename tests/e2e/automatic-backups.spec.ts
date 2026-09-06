@@ -107,9 +107,21 @@ test("a rejected policy change surfaces without leaking internals", async ({
     });
   });
 
-  await panel(page).getByRole("checkbox").check();
+  // Not check(): it re-reads the checkbox after clicking and fails if it is no
+  // longer checked. The panel toggles optimistically and reverts when the
+  // mocked 400 arrives, so on a slow runner the revert lands before that
+  // re-read. Click, then assert the rejection round trip and the rollback.
+  const rejected = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/backups/automatic" &&
+      response.request().method() === "PUT"
+  );
+  const toggle = panel(page).getByRole("checkbox");
+  await toggle.click();
+  expect((await rejected).status()).toBe(400);
   const message = page.getByText(/must be a whole number between 1 and 168/);
   await expect(message).toBeVisible();
+  await expect(toggle).not.toBeChecked();
   await expect(page.getByText(/sqlite|prisma/i)).toHaveCount(0);
 });
 

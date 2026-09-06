@@ -1,8 +1,24 @@
+import { systemClock, type Clock } from "@/shared/kernel/calendar";
+import type {
+  AutomaticBackupAttempt,
+  AutomaticBackupPolicy,
+  AutomaticBackupState
+} from "@/lib/automatic-backup-contract";
+import { backupErrors } from "@/lib/backup-errors";
+import {
+  DEFAULT_AUTOMATIC_BACKUP_POLICY,
+  buildRetentionReport,
+  parseAutomaticBackupPolicy,
+  readStoredAutomaticBackupPolicy,
+  resolveAutomaticBackupSchedule
+} from "@/lib/backup-schedule";
+import { appErrorConstructor } from "@/lib/error-compat";
+import { AppError } from "@/shared/kernel/errors";
 import { createHash, randomUUID } from "node:crypto";
 import {
   closeSync,
-  constants as fsConstants,
   existsSync,
+  constants as fsConstants,
   fstatSync,
   fsyncSync,
   lstatSync,
@@ -23,19 +39,7 @@ import {
   resolveActiveDatabase,
   restoreDatabaseBackup,
   type BackupPurpose
-} from "../../scripts/database-backup";
-import {
-  DEFAULT_AUTOMATIC_BACKUP_POLICY,
-  buildRetentionReport,
-  parseAutomaticBackupPolicy,
-  readStoredAutomaticBackupPolicy,
-  resolveAutomaticBackupSchedule
-} from "@/lib/backup-schedule";
-import type {
-  AutomaticBackupAttempt,
-  AutomaticBackupPolicy,
-  AutomaticBackupState
-} from "@/lib/automatic-backup-contract";
+} from "@/modules/data-ops/services/sqlite-backup-engine";
 
 export type {
   AutomaticBackupAttempt,
@@ -110,6 +114,8 @@ export type BackupManagementOptions = {
   repositoryRoot?: string;
   environment?: NodeJS.ProcessEnv;
   now?: Date;
+  /** Live clock for startup completion and ownership deadlines; now only anchors the artifact. */
+  clock?: Clock;
 };
 
 type BackupContext = {
@@ -127,22 +133,16 @@ type RestoreOwner = {
   startedAt: string;
 };
 
-export class BackupManagementError extends Error {
-  constructor(
+/** @deprecated Compatibility constructor for existing callers; returns AppError. */
+export const BackupManagementError = appErrorConstructor(
+  (
     message: string,
-    readonly code:
-      | "VALIDATION_ERROR"
-      | "NOT_FOUND"
-      | "CONFLICT"
-      | "CORRUPT_BACKUP"
-      | "RESTORE_DISABLED",
-    readonly status: 400 | 404 | 409 | 422 | 503,
-    readonly field?: string
-  ) {
-    super(message);
-    this.name = "BackupManagementError";
-  }
-}
+    code: "VALIDATION_ERROR" | "NOT_FOUND" | "CONFLICT" | "CORRUPT_BACKUP" | "RESTORE_DISABLED",
+    status: 400 | 404 | 409 | 422 | 503,
+    field?: string
+  ) => new AppError({ status, message, code, ...(field ? { field } : {}) })
+);
+export type BackupManagementError = AppError;
 
 let operationInProgress = false;
 
@@ -153,7 +153,7 @@ export function getManagedBackupIndex(
   const backups = listBackupFiles(context);
   return {
     directory: context.directory,
-    automatic: automaticStateFor(context, backups, options.now),
+    automatic: automaticStateFor(context, backups, options.now ?? (options.clock ?? systemClock).now()),
     backups,
     pendingRestore: readMetadataForDisplay(
       join(context.directory, PENDING_FILE),
@@ -170,7 +170,7 @@ export function getAutomaticBackupState(
   options: BackupManagementOptions = {}
 ): AutomaticBackupState {
   const context = resolveBackupContext(options, "read");
-  return automaticStateFor(context, listBackupFiles(context), options.now);
+  return automaticStateFor(context, listBackupFiles(context), options.now ?? (options.clock ?? systemClock).now());
 }
 
 /**
@@ -191,7 +191,7 @@ export function setAutomaticBackupPolicy(
       version: METADATA_VERSION,
       ...policy
     });
-    return automaticStateFor(context, listBackupFiles(context), options.now);
+    return automaticStateFor(context, listBackupFiles(context), options.now ?? (options.clock ?? systemClock).now());
   });
 }
 
@@ -205,7 +205,7 @@ export function setAutomaticBackupPolicy(
 export function runDueAutomaticBackup(
   options: BackupManagementOptions = {}
 ): AutomaticBackupAttempt {
-  const now = options.now ?? new Date();
+  const now = options.now ?? (options.clock ?? systemClock).now();
   let context: BackupContext;
   try {
     context = resolveBackupContext(options, "read");
@@ -273,7 +273,7 @@ export function runDueAutomaticBackup(
 function automaticStateFor(
   context: BackupContext,
   backups: ManagedBackupSummary[],
-  now = new Date()
+  now: Date
 ): AutomaticBackupState {
   const policy = readAutomaticPolicy(context);
   const automatic = backups.filter((backup) => backup.purpose === "automatic");
@@ -340,26 +340,26 @@ function readAutomaticStatus(
   if (!stored) return null;
   const lastSuccessAt =
     typeof stored.lastSuccessAt === "string" &&
-    !Number.isNaN(new Date(stored.lastSuccessAt).getTime())
+      !Number.isNaN(new Date(stored.lastSuccessAt).getTime())
       ? stored.lastSuccessAt
       : null;
   const attempt = stored.lastAttempt as Record<string, unknown> | undefined;
   const lastAttempt =
     attempt &&
-    (attempt.status === "succeeded" ||
-      attempt.status === "failed" ||
-      attempt.status === "skipped") &&
-    typeof attempt.at === "string"
+      (attempt.status === "succeeded" ||
+        attempt.status === "failed" ||
+        attempt.status === "skipped") &&
+      typeof attempt.at === "string"
       ? ({
-          status: attempt.status,
-          at: attempt.at,
-          ...(typeof attempt.fileName === "string"
-            ? { fileName: attempt.fileName }
-            : {}),
-          ...(typeof attempt.reason === "string"
-            ? { reason: attempt.reason }
-            : {})
-        } as AutomaticBackupAttempt)
+        status: attempt.status,
+        at: attempt.at,
+        ...(typeof attempt.fileName === "string"
+          ? { fileName: attempt.fileName }
+          : {}),
+        ...(typeof attempt.reason === "string"
+          ? { reason: attempt.reason }
+          : {})
+      } as AutomaticBackupAttempt)
       : null;
   return { lastSuccessAt, lastAttempt };
 }
@@ -407,7 +407,7 @@ export function createManagedBackup(
 ): ManagedBackupSummary {
   return withOperation(() => {
     const context = resolveBackupContext(options, "mutation");
-    const now = options.now ?? new Date();
+    const now = options.now ?? (options.clock ?? systemClock).now();
     const outputPath = join(
       context.directory,
       basename(defaultBackupPath(context.databasePath, "manual", now))
@@ -432,20 +432,10 @@ export function stageManagedRestore(
 ): PendingRestore {
   return withOperation(() => {
     if (input.confirmation !== "RESTORE") {
-      throw new BackupManagementError(
-        "Type RESTORE exactly to schedule replacement.",
-        "VALIDATION_ERROR",
-        400,
-        "confirmation"
-      );
+      throw new AppError(backupErrors.typeRESTOREExactlyToScheduleReplacement);
     }
     if (!/^[a-f0-9]{64}$/.test(input.expectedPayloadSha256)) {
-      throw new BackupManagementError(
-        "The selected backup checksum is invalid.",
-        "VALIDATION_ERROR",
-        400,
-        "expectedPayloadSha256"
-      );
+      throw new AppError(backupErrors.theSelectedBackupChecksumIsInvalid);
     }
 
     const context = resolveBackupContext(options, "mutation");
@@ -453,21 +443,12 @@ export function stageManagedRestore(
     const pendingPath = join(context.directory, PENDING_FILE);
     const applyingPath = join(context.directory, APPLYING_FILE);
     if (pathEntryExists(pendingPath) || pathEntryExists(applyingPath)) {
-      throw new BackupManagementError(
-        "Another restore is already pending.",
-        "CONFLICT",
-        409
-      );
+      throw new AppError(backupErrors.anotherRestoreIsAlreadyPending);
     }
 
     const backup = resolveVerifiedBackup(input.backupId, context);
     if (backup.payloadSha256 !== input.expectedPayloadSha256) {
-      throw new BackupManagementError(
-        "The selected backup changed after it was inspected. Refresh and try again.",
-        "CONFLICT",
-        409,
-        "expectedPayloadSha256"
-      );
+      throw new AppError(backupErrors.theSelectedBackupChangedAfterItWasInspectedRefreshAndTry);
     }
 
     const pending: PendingRestore = {
@@ -476,7 +457,7 @@ export function stageManagedRestore(
       backupId: backup.id,
       fileName: backup.fileName,
       expectedPayloadSha256: input.expectedPayloadSha256,
-      scheduledAt: (options.now ?? new Date()).toISOString()
+      scheduledAt: (options.now ?? (options.clock ?? systemClock).now()).toISOString()
     };
     writeJsonAtomically(pendingPath, pending);
     return pending;
@@ -490,11 +471,7 @@ export function cancelManagedRestore(
     const context = resolveBackupContext(options, "mutation");
     const pendingPath = join(context.directory, PENDING_FILE);
     if (!pathEntryExists(pendingPath)) {
-      throw new BackupManagementError(
-        "No restore is currently pending.",
-        "NOT_FOUND",
-        404
-      );
+      throw new AppError(backupErrors.noRestoreIsCurrentlyPending);
     }
     rmSync(pendingPath);
     syncDirectory(context.directory);
@@ -519,6 +496,7 @@ export function resolveManagedBackupDownload(
 export async function applyPendingManagedRestore(
   options: BackupManagementOptions = {}
 ): Promise<RestoreStatus | null> {
+  const clock = options.clock ?? systemClock;
   const context = resolveBackupContext(options, "read");
   if (context.environment.DAYFLOW_DISABLE_RESTORE === "1") return null;
   if (!context.directoryExists) return null;
@@ -531,7 +509,7 @@ export async function applyPendingManagedRestore(
       return null;
     }
 
-    const owner = await acquireRestoreOwnership(context.directory);
+    const owner = await acquireRestoreOwnership(context.directory, clock);
     try {
       if (pathEntryExists(applyingPath)) {
         let interrupted: PendingRestore;
@@ -542,7 +520,7 @@ export async function applyPendingManagedRestore(
             "[Dayflow restore] Interrupted restore metadata was invalid.",
             error
           );
-          interrupted = fallbackPendingRestore();
+          interrupted = fallbackPendingRestore(clock.now());
         }
 
         const completed = readRestoreStatus(statusPath);
@@ -563,7 +541,8 @@ export async function applyPendingManagedRestore(
           verifiedSafetyPath
             ? "A previous restore stopped before completion could be confirmed. Verify the active data before choosing whether to recover from the verified safety backup."
             : "A previous restore stopped before completion could be confirmed. Verify the active data before scheduling another restore.",
-          verifiedSafetyPath
+          verifiedSafetyPath,
+          clock.now()
         );
         writeJsonAtomically(statusPath, status);
         clearRestoreMarkers(context.directory);
@@ -583,24 +562,26 @@ export async function applyPendingManagedRestore(
           "[Dayflow restore] Scheduled restore metadata was invalid.",
           error
         );
-        const fallback = fallbackPendingRestore();
+        const fallback = fallbackPendingRestore(clock.now());
         const status = failedRestoreStatus(
           fallback,
           "The scheduled restore metadata was invalid and was discarded. The active database was not intentionally replaced.",
-          null
+          null,
+          clock.now()
         );
         writeJsonAtomically(statusPath, status);
         clearRestoreMarkers(context.directory);
         return status;
       }
 
+      const restoreAt = options.now ?? clock.now();
       const safetyBackupPath = join(
         context.directory,
         basename(
           defaultBackupPath(
             context.databasePath,
             "restore-safety",
-            options.now ?? new Date()
+            restoreAt
           )
         )
       );
@@ -613,11 +594,7 @@ export async function applyPendingManagedRestore(
           backup.fileName !== pending.fileName ||
           backup.payloadSha256 !== pending.expectedPayloadSha256
         ) {
-          throw new BackupManagementError(
-            "The scheduled backup changed before startup and was not restored.",
-            "CONFLICT",
-            409
-          );
+          throw new AppError(backupErrors.theScheduledBackupChangedBeforeStartupAndWasNotRestored);
         }
 
         const result = await restoreDatabaseBackup({
@@ -626,6 +603,7 @@ export async function applyPendingManagedRestore(
           safetyBackupPath,
           expectedPayloadSha256: pending.expectedPayloadSha256,
           repositoryRoot: context.repositoryRoot,
+          now: restoreAt,
           onProgress: (message) =>
             console.log(`[Dayflow restore] ${message}`)
         });
@@ -635,7 +613,7 @@ export async function applyPendingManagedRestore(
           backupId: pending.backupId,
           fileName: pending.fileName,
           requestedAt: pending.scheduledAt,
-          completedAt: new Date().toISOString(),
+          completedAt: clock.now().toISOString(),
           safetyBackupPath: result.safetyBackupPath,
           schemaVersion: result.schemaVersion,
           recordCounts: result.restoredRecordCounts
@@ -655,7 +633,8 @@ export async function applyPendingManagedRestore(
         const status = failedRestoreStatus(
           pending,
           persistedRestoreError(error, Boolean(safetyPath)),
-          safetyPath
+          safetyPath,
+          clock.now()
         );
         writeJsonAtomically(statusPath, status);
         clearRestoreMarkers(context.directory);
@@ -682,9 +661,9 @@ function resolveBackupContext(
   const configuredDirectory = environment.DAYFLOW_BACKUP_DIRECTORY?.trim();
   const directory = configuredDirectory
     ? resolve(
-        isAbsolute(configuredDirectory) ? configuredDirectory : repositoryRoot,
-        isAbsolute(configuredDirectory) ? "." : configuredDirectory
-      )
+      isAbsolute(configuredDirectory) ? configuredDirectory : repositoryRoot,
+      isAbsolute(configuredDirectory) ? "." : configuredDirectory
+    )
     : join(dirname(databasePath), "backups");
 
   const directoryExists =
@@ -723,11 +702,7 @@ function inspectManagedDirectory(directory: string) {
     throw error;
   }
   if (stats.isSymbolicLink() || !stats.isDirectory()) {
-    throw new BackupManagementError(
-      "The managed backup location is not a safe directory.",
-      "CONFLICT",
-      409
-    );
+    throw new AppError(backupErrors.theManagedBackupLocationIsNotASafeDirectory);
   }
   return true;
 }
@@ -870,12 +845,7 @@ function resolveVerifiedBackup(
       payloadSha256: string;
     };
   } catch {
-    throw new BackupManagementError(
-      "The selected backup is corrupt or incompatible and cannot be restored.",
-      "CORRUPT_BACKUP",
-      422,
-      "backupId"
-    );
+    throw new AppError(backupErrors.theSelectedBackupIsCorruptOrIncompatibleAndCannotBeRestored);
   }
 }
 
@@ -884,20 +854,10 @@ function resolveManagedBackupPath(
   context: BackupContext
 ) {
   if (!isValidBackupId(backupId)) {
-    throw new BackupManagementError(
-      "The backup identifier is invalid.",
-      "VALIDATION_ERROR",
-      400,
-      "backupId"
-    );
+    throw new AppError(backupErrors.theBackupIdentifierIsInvalid);
   }
   if (!context.directoryExists) {
-    throw new BackupManagementError(
-      "The selected backup could not be found.",
-      "NOT_FOUND",
-      404,
-      "backupId"
-    );
+    throw new AppError(backupErrors.theSelectedBackupCouldNotBeFound);
   }
   const entry = readdirSync(context.directory, { withFileTypes: true }).find(
     (candidate) =>
@@ -906,12 +866,7 @@ function resolveManagedBackupPath(
       backupIdForFileName(candidate.name) === backupId
   );
   if (!entry) {
-    throw new BackupManagementError(
-      "The selected backup could not be found.",
-      "NOT_FOUND",
-      404,
-      "backupId"
-    );
+    throw new AppError(backupErrors.theSelectedBackupCouldNotBeFound);
   }
   return join(context.directory, entry.name);
 }
@@ -978,21 +933,22 @@ function readMetadataForDisplay(path: string, failureMessage: string) {
   }
 }
 
-function fallbackPendingRestore(): PendingRestore {
+function fallbackPendingRestore(now: Date): PendingRestore {
   return {
     version: METADATA_VERSION,
     status: "pending_restart",
     backupId: "unknown",
     fileName: "Unknown backup",
     expectedPayloadSha256: "",
-    scheduledAt: new Date().toISOString()
+    scheduledAt: now.toISOString()
   };
 }
 
 function failedRestoreStatus(
   pending: PendingRestore,
   error: string,
-  safetyBackupPath: string | null
+  safetyBackupPath: string | null,
+  now: Date
 ): RestoreStatus {
   return {
     version: METADATA_VERSION,
@@ -1000,24 +956,25 @@ function failedRestoreStatus(
     backupId: pending.backupId,
     fileName: pending.fileName,
     requestedAt: pending.scheduledAt,
-    completedAt: new Date().toISOString(),
+    completedAt: now.toISOString(),
     safetyBackupPath,
     error: boundPersistedError(error)
   };
 }
 
 async function acquireRestoreOwnership(
-  directory: string
+  directory: string,
+  clock: Clock
 ): Promise<RestoreOwner> {
   const ownerPath = join(directory, OWNER_FILE);
-  const deadline = Date.now() + RESTORE_OWNER_WAIT_MS;
+  const deadline = clock.now().getTime() + RESTORE_OWNER_WAIT_MS;
 
-  for (;;) {
+  for (; ;) {
     const owner: RestoreOwner = {
       version: METADATA_VERSION,
       token: randomUUID(),
       pid: process.pid,
-      startedAt: new Date().toISOString()
+      startedAt: clock.now().toISOString()
     };
     let descriptor: number | null = null;
     try {
@@ -1037,12 +994,12 @@ async function acquireRestoreOwnership(
       if (errorCode(error) !== "EEXIST") throw error;
     }
 
-    const ownerState = inspectRestoreOwner(ownerPath);
+    const ownerState = inspectRestoreOwner(ownerPath, clock);
     if (ownerState === "stale") {
       quarantineStaleRestoreOwner(ownerPath, directory);
       continue;
     }
-    if (Date.now() >= deadline) {
+    if (clock.now().getTime() >= deadline) {
       throw new Error(
         "Timed out waiting for another Dayflow process to finish startup restore coordination."
       );
@@ -1051,7 +1008,7 @@ async function acquireRestoreOwnership(
   }
 }
 
-function inspectRestoreOwner(path: string): "active" | "stale" {
+function inspectRestoreOwner(path: string, clock: Clock): "active" | "stale" {
   let stats: ReturnType<typeof lstatSync>;
   try {
     stats = lstatSync(path);
@@ -1059,7 +1016,7 @@ function inspectRestoreOwner(path: string): "active" | "stale" {
     return errorCode(error) === "ENOENT" ? "stale" : "active";
   }
   if (stats.isSymbolicLink() || !stats.isFile()) return "stale";
-  const age = Date.now() - stats.mtimeMs;
+  const age = clock.now().getTime() - stats.mtimeMs;
   if (age > RESTORE_OWNER_STALE_MS) return "stale";
 
   try {
@@ -1077,7 +1034,7 @@ function inspectRestoreOwner(path: string): "active" | "stale" {
       return age < 2_000 ? "active" : "stale";
     }
     if (
-      Date.now() - Date.parse(value.startedAt) >
+      clock.now().getTime() - Date.parse(value.startedAt) >
       RESTORE_OWNER_STALE_MS
     ) {
       return "stale";
@@ -1288,11 +1245,7 @@ function pathEntryExists(path: string) {
 
 function assertRestoreEnabled(environment: NodeJS.ProcessEnv) {
   if (environment.DAYFLOW_DISABLE_RESTORE === "1") {
-    throw new BackupManagementError(
-      "Restore scheduling is disabled in this Dayflow process.",
-      "RESTORE_DISABLED",
-      503
-    );
+    throw new AppError(backupErrors.restoreSchedulingIsDisabledInThisDayflowProcess);
   }
 }
 
@@ -1328,11 +1281,7 @@ function syncDirectory(path: string) {
 
 function withOperation<T>(operation: () => T): T {
   if (operationInProgress) {
-    throw new BackupManagementError(
-      "Another backup operation is already running.",
-      "CONFLICT",
-      409
-    );
+    throw new AppError(backupErrors.anotherBackupOperationIsAlreadyRunning);
   }
   operationInProgress = true;
   try {
@@ -1344,11 +1293,7 @@ function withOperation<T>(operation: () => T): T {
 
 async function withAsyncOperation<T>(operation: () => Promise<T>) {
   if (operationInProgress) {
-    throw new BackupManagementError(
-      "Another backup operation is already running.",
-      "CONFLICT",
-      409
-    );
+    throw new AppError(backupErrors.anotherBackupOperationIsAlreadyRunning);
   }
   operationInProgress = true;
   try {

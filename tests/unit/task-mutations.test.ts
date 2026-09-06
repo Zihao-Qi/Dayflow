@@ -1,3 +1,4 @@
+import { frozenClock } from "../../src/shared/kernel/calendar";
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
@@ -6,9 +7,10 @@ import {
   TaskMutationValidationError,
   parseTaskCreateMutation,
   parseTaskPatchMutation,
-  readTaskMutationBody,
-  taskProjectRuleErrorDetails
+  readTaskMutationBody
 } from "../../src/lib/task-mutations";
+
+import { projectErrors } from "../../src/lib/project-errors";
 
 function expectValidationError(
   action: () => unknown,
@@ -41,38 +43,38 @@ test("task create parser returns normalized defaults", () => {
 });
 
 test("task create parser requires a bounded non-empty title", () => {
-  expectValidationError(() => parseTaskCreateMutation({}), "title");
+  expectValidationError(() => parseTaskCreateMutation({}, testClock.now()), "title");
   expectValidationError(
-    () => parseTaskCreateMutation({ title: " \n\t " }),
+    () => parseTaskCreateMutation({ title: " \n\t " }, testClock.now()),
     "title"
   );
   expectValidationError(
     () =>
       parseTaskCreateMutation({
         title: "x".repeat(TASK_TITLE_MAX_LENGTH + 1)
-      }),
+      }, testClock.now()),
     "title"
   );
 });
 
 test("task parser rejects invalid enum values", () => {
   expectValidationError(
-    () => parseTaskCreateMutation({ title: "Task", status: "finished" }),
+    () => parseTaskCreateMutation({ title: "Task", status: "finished" }, testClock.now()),
     "status"
   );
   expectValidationError(
-    () => parseTaskCreateMutation({ title: "Task", priority: "urgent" }),
+    () => parseTaskCreateMutation({ title: "Task", priority: "urgent" }, testClock.now()),
     "priority"
   );
   expectValidationError(
-    () => parseTaskCreateMutation({ title: "Task", status: 1 }),
+    () => parseTaskCreateMutation({ title: "Task", status: 1 }, testClock.now()),
     "status"
   );
 });
 
 test("task parser rejects invalid scheduled dates and deadlines", () => {
   expectValidationError(
-    () => parseTaskCreateMutation({ title: "Task", date: "2026-02-30" }),
+    () => parseTaskCreateMutation({ title: "Task", date: "2026-02-30" }, testClock.now()),
     "date"
   );
   expectValidationError(
@@ -80,11 +82,11 @@ test("task parser rejects invalid scheduled dates and deadlines", () => {
       parseTaskCreateMutation({
         title: "Task",
         deadline: "tomorrow"
-      }),
+      }, testClock.now()),
     "deadline"
   );
   expectValidationError(
-    () => parseTaskCreateMutation({ title: "Task", deadline: false }),
+    () => parseTaskCreateMutation({ title: "Task", deadline: false }, testClock.now()),
     "deadline"
   );
 
@@ -92,7 +94,7 @@ test("task parser rejects invalid scheduled dates and deadlines", () => {
     title: "Task",
     date: null,
     deadline: ""
-  });
+  }, testClock.now());
   assert.equal(parsed.date, null);
   assert.equal(parsed.deadline, null);
 });
@@ -105,20 +107,20 @@ test("task parser requires whole bounded estimate and score numbers", () => {
     "30"
   ]) {
     expectValidationError(
-      () => parseTaskCreateMutation({ title: "Task", estimateMinutes }),
+      () => parseTaskCreateMutation({ title: "Task", estimateMinutes }, testClock.now()),
       "estimateMinutes"
     );
   }
 
   for (const urgentScore of [0, 2.5, 6, "4"]) {
     expectValidationError(
-      () => parseTaskCreateMutation({ title: "Task", urgentScore }),
+      () => parseTaskCreateMutation({ title: "Task", urgentScore }, testClock.now()),
       "urgentScore"
     );
   }
 
   assert.equal(
-    parseTaskCreateMutation({ title: "Task", estimateMinutes: 0 })
+    parseTaskCreateMutation({ title: "Task", estimateMinutes: 0 }, testClock.now())
       .estimateMinutes,
     0
   );
@@ -137,7 +139,7 @@ test("task patch parser shares field validation and preserves placement", () => 
       urgentScore: 5,
       deadline: "2026-08-01"
     },
-    current
+    current, testClock.now()
   );
 
   assert.equal(parsed.data.title, "Updated");
@@ -152,11 +154,11 @@ test("task patch parser shares field validation and preserves placement", () => 
   );
 
   expectValidationError(
-    () => parseTaskPatchMutation({ title: " " }, current),
+    () => parseTaskPatchMutation({ title: " " }, current, testClock.now()),
     "title"
   );
   expectValidationError(
-    () => parseTaskPatchMutation({ importanceScore: 1.2 }, current),
+    () => parseTaskPatchMutation({ importanceScore: 1.2 }, current, testClock.now()),
     "importanceScore"
   );
 });
@@ -168,7 +170,7 @@ test("moving a task to another project clears an omitted phase", () => {
       projectId: "project-a",
       phaseId: "phase-a",
       status: "TODO"
-    }
+    }, testClock.now()
   );
 
   assert.equal(parsed.projectId, "project-b");
@@ -239,7 +241,7 @@ test("malformed and non-object JSON bodies produce typed parse errors", async ()
 
 test("task relationship errors distinguish missing and conflicting placement", () => {
   assert.deepEqual(
-    taskProjectRuleErrorDetails("The selected project could not be found."),
+    placementDetails(projectErrors.theSelectedProjectCouldNotBeFound),
     {
       code: "RELATIONSHIP_NOT_FOUND",
       field: "projectId",
@@ -247,9 +249,7 @@ test("task relationship errors distinguish missing and conflicting placement", (
     }
   );
   assert.deepEqual(
-    taskProjectRuleErrorDetails(
-      "The selected phase does not belong to this project."
-    ),
+    placementDetails(projectErrors.theSelectedPhaseDoesNotBelongToThisProject),
     {
       code: "RELATIONSHIP_CONFLICT",
       field: "phaseId",
@@ -257,9 +257,7 @@ test("task relationship errors distinguish missing and conflicting placement", (
     }
   );
   assert.deepEqual(
-    taskProjectRuleErrorDetails(
-      "A task cannot have a phase without a project."
-    ),
+    placementDetails(projectErrors.aTaskCannotHaveAPhaseWithoutAProject),
     {
       code: "VALIDATION_ERROR",
       field: "phaseId",
@@ -267,3 +265,9 @@ test("task relationship errors distinguish missing and conflicting placement", (
     }
   );
 });
+
+function placementDetails({ code, field, status }: { code: string; field: string; status: number }) {
+  return { code, field, status };
+}
+
+const testClock = frozenClock(new Date("2026-07-27T12:00:00-05:00"));

@@ -14,7 +14,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { inspectDatabaseBackup } from "./database-backup";
+import { inspectDatabaseBackup } from "../src/modules/data-ops/services/sqlite-backup-engine";
 
 const repositoryRoot = process.cwd();
 const temporaryDirectory = mkdtempSync(

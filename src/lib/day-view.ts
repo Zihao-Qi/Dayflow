@@ -1,7 +1,10 @@
-import type { PrismaClient } from "@prisma/client";
+import { readDayActivities, readEarliestActivity } from "@/server/evidence";
 import { addDays, localDateKey, parseLocalDate, sameDayRange, startOfLocalDay } from "@/lib/dates";
-import { serializeTimeBlock } from "@/lib/time-block-persistence";
-import { isTimeBlockRecord } from "@/lib/time-blocks";
+import { dayErrors } from "@/lib/day-errors";
+import { readDayTasks } from "@/server/tasks";
+import { readTimeBlocks } from "@/server/time-blocks";
+import { AppError } from "@/shared/kernel/errors";
+import type { Prisma, PrismaClient } from "@prisma/client";
 
 /**
  * How far ahead Log may travel.
@@ -19,19 +22,10 @@ export type DayViewKind = "past" | "today" | "future";
 
 export type DayViewErrorCode = "VALIDATION_ERROR";
 
-export class DayViewRequestError extends Error {
-  constructor(
-    readonly code: DayViewErrorCode,
-    message: string,
-    readonly field: string,
-    readonly status: 400 = 400
-  ) {
-    super(message);
-    this.name = "DayViewRequestError";
-  }
-}
+/** @deprecated Compatibility constructor for existing callers; returns AppError. */
+export { AppError as DayViewRequestError };
 
-export function classifyDay(date: Date, now = new Date()): DayViewKind {
+export function classifyDay(date: Date, now: Date): DayViewKind {
   const today = startOfLocalDay(now).getTime();
   const day = startOfLocalDay(date).getTime();
   if (day < today) return "past";
@@ -47,15 +41,11 @@ export function classifyDay(date: Date, now = new Date()): DayViewKind {
  */
 export function parseViewedDay(
   searchParams: URLSearchParams,
-  now = new Date()
+  now: Date
 ) {
   const values = searchParams.getAll("date");
   if (values.length > 1) {
-    throw new DayViewRequestError(
-      "VALIDATION_ERROR",
-      "Provide only one day.",
-      "date"
-    );
+    throw new AppError(dayErrors.provideOnlyOneDay);
   }
   const today = startOfLocalDay(now);
   if (values.length === 0) {
@@ -64,26 +54,14 @@ export function parseViewedDay(
 
   const raw = values[0].trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
-    throw new DayViewRequestError(
-      "VALIDATION_ERROR",
-      "A day must be a calendar date such as 2026-08-23.",
-      "date"
-    );
+    throw new AppError(dayErrors.aDayMustBeACalendarDateSuchAs20260823);
   }
   const date = parseLocalDate(raw);
   if (!date || localDateKey(date) !== raw) {
-    throw new DayViewRequestError(
-      "VALIDATION_ERROR",
-      "That day is not a real calendar date.",
-      "date"
-    );
+    throw new AppError(dayErrors.thatDayIsNotARealCalendarDate);
   }
   if (date.getTime() > addDays(today, FORWARD_DAYS).getTime()) {
-    throw new DayViewRequestError(
-      "VALIDATION_ERROR",
-      `Dayflow plans up to ${DAY_VIEW_FORWARD_WEEKS} weeks ahead.`,
-      "date"
-    );
+    throw new AppError(dayErrors.dayflowPlansUpTo8WeeksAhead);
   }
 
   return { date, kind: classifyDay(date, now) };
@@ -91,7 +69,7 @@ export function parseViewedDay(
 
 export function resolveEarliestNavigableDayKey(
   earliestRecordedDayKey: string | null,
-  now = new Date()
+  now: Date
 ) {
   const todayKey = localDateKey(startOfLocalDay(now));
   return earliestRecordedDayKey && earliestRecordedDayKey < todayKey
@@ -105,11 +83,7 @@ export function assertViewedDayOnOrAfter(
 ) {
   const earliest = parseLocalDate(earliestDayKey);
   if (!earliest || date.getTime() < earliest.getTime()) {
-    throw new DayViewRequestError(
-      "VALIDATION_ERROR",
-      "That day is earlier than Dayflow's first recorded evidence.",
-      "date"
-    );
+    throw new AppError(dayErrors.thatDayIsEarlierThanDayflowsFirstRecordedEvidence);
   }
 }
 
@@ -122,41 +96,24 @@ export function assertViewedDayOnOrAfter(
 export async function readViewedDay(
   database: PrismaClient,
   date: Date,
-  now = new Date()
+  now: Date
 ) {
   const kind = classifyDay(date, now);
   const { start, end } = sameDayRange(date);
 
   const [tasks, timeBlocks, activities] = await Promise.all([
-    database.task.findMany({
-      where: { date: { gte: start, lt: end } },
-      orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }]
-    }),
-    database.timeBlock.findMany({
-      where: { date: { gte: start, lt: end } },
-      orderBy: [
-        { startTime: "asc" },
-        { endTime: "asc" },
-        { createdAt: "asc" },
-        { id: "asc" }
-      ],
-      include: {
-        task: { select: { id: true, title: true, estimateMinutes: true } }
-      }
-    }),
+    readDayTasks(database, { start, end }),
+    readTimeBlocks(database, { start, end }, "day"),
     kind === "future"
       ? Promise.resolve([])
-      : database.activityEntry.findMany({
-          where: { startedAt: { gte: start, lt: end } },
-          orderBy: [{ startedAt: "desc" }, { createdAt: "desc" }]
-        })
+      : readDayActivities(database, { start, end })
   ]);
 
   return {
     dateKey: localDateKey(date),
     kind,
     tasks,
-    timeBlocks: timeBlocks.map(serializeTimeBlock).filter(isTimeBlockRecord),
+    timeBlocks,
     activities
   };
 }
@@ -164,17 +121,14 @@ export async function readViewedDay(
 /**
  * The earliest day worth navigating back to. Null when nothing is persisted.
  */
-export async function earliestRecordedDay(database: PrismaClient) {
+export async function earliestRecordedDay(database: Prisma.TransactionClient) {
   const [task, activity, block] = await Promise.all([
     database.task.findFirst({
       where: { date: { not: null } },
       orderBy: { date: "asc" },
       select: { date: true }
     }),
-    database.activityEntry.findFirst({
-      orderBy: { startedAt: "asc" },
-      select: { startedAt: true }
-    }),
+    readEarliestActivity(database),
     database.timeBlock.findFirst({
       orderBy: { date: "asc" },
       select: { date: true }

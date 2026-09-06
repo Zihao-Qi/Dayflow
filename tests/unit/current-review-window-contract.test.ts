@@ -13,6 +13,11 @@ const prisma = Object.fromEntries(
     upsert: async () => { throw new Error("Read must not persist"); }
   }])
 ) as unknown as PrismaClient;
+// The window read now opens a transaction before touching any delegate; the
+// fixture runs it against the same delegates so the mocks below still apply.
+(prisma as unknown as { $transaction: unknown }).$transaction = async (
+  operation: (tx: PrismaClient) => unknown
+) => operation(prisma);
 (globalThis as unknown as { prisma: PrismaClient }).prisma = prisma;
 const route = import("../../src/app/api/review/window/route");
 async function GET(request: NextRequest) { return (await route).GET(request); }
@@ -26,7 +31,9 @@ for (const persisted of [false, true]) {
     for (const delegate of [prisma.activityEntry, prisma.diaryEntry, prisma.task, prisma.note, prisma.material, prisma.project]) {
       t.mock.method(delegate, "findMany", async () => []);
     }
-    const activity = { id: "evidence", startedAt: period.start, durationMinutes: 17, category: "Research", origin: "MANUAL" };
+    // Project investment is now grouped from an attributedProjectId column rather
+    // than a per-project `attributedActivities` include, so the row must carry it.
+    const activity = { id: "evidence", attributedProjectId: "project", startedAt: period.start, durationMinutes: 17, category: "Research", origin: "MANUAL" };
     const evidenceRead = t.mock.method(prisma.activityEntry, "findMany", async () => [activity]);
     t.mock.method(prisma.project, "findMany", async () => [{
       id: "project", name: "Current evidence", tasks: [], phases: [], attributedActivities: [activity]

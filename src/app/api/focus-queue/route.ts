@@ -1,79 +1,37 @@
+import { prisma } from "@/lib/prisma";
+import { addToFocusQueue, removeFromFocusQueue, reorderFocusQueue, focusQueueMutationErrorResponse } from "@/server/focus-queue";
+import { parseFocusQueueAddMutation, parseFocusQueueRemoveMutation, parseFocusQueueReorderMutation, readFocusQueueMutationBody } from "@/modules/planning/domain/focus-queue";
 import { NextRequest, NextResponse } from "next/server";
-import {
-  addToFocusQueue,
-  FocusQueueConflictError,
-  FocusQueueError,
-  FocusQueueNotFoundError,
-  removeFromFocusQueue,
-  reorderFocusQueue
-} from "@/lib/focus-queue";
-import {
-  WorkflowMutationRequestError,
-  parseFocusQueueAddMutation,
-  parseFocusQueueRemoveMutation,
-  parseFocusQueueReorderMutation,
-  readWorkflowMutationBody
-} from "@/lib/workflow-mutations";
 
 export async function POST(request: NextRequest) {
-  return respond(async () => {
-    const body = await readWorkflowMutationBody(request);
+  try {
+    const body = await readFocusQueueMutationBody(request);
     const input = parseFocusQueueAddMutation(body);
-    return addToFocusQueue(input.taskId, input.placement);
-  }, "save");
+    const tasks = await prisma.$transaction((tx) => addToFocusQueue(tx, input.taskId, input.placement));
+    return NextResponse.json({ tasks });
+  } catch (error) {
+    return focusQueueMutationErrorResponse(error, "save");
+  }
 }
 
 export async function PATCH(request: NextRequest) {
-  return respond(async () => {
-    const body = await readWorkflowMutationBody(request);
+  try {
+    const body = await readFocusQueueMutationBody(request);
     const input = parseFocusQueueReorderMutation(body);
-    return reorderFocusQueue(input.ids, input.expectedIds);
-  }, "reorder");
+    const tasks = await prisma.$transaction((tx) => reorderFocusQueue(tx, input.ids, input.expectedIds));
+    return NextResponse.json({ tasks });
+  } catch (error) {
+    return focusQueueMutationErrorResponse(error, "reorder");
+  }
 }
 
 export async function DELETE(request: NextRequest) {
-  return respond(async () => {
-    const body = await readWorkflowMutationBody(request);
-    const input = parseFocusQueueRemoveMutation(body);
-    return removeFromFocusQueue(input.taskId);
-  }, "remove");
-}
-
-async function respond(
-  action: () => Promise<unknown>,
-  operation: "save" | "reorder" | "remove"
-) {
   try {
-    return NextResponse.json({ tasks: await action() });
+    const body = await readFocusQueueMutationBody(request);
+    const input = parseFocusQueueRemoveMutation(body);
+    const tasks = await prisma.$transaction((tx) => removeFromFocusQueue(tx, input.taskId));
+    return NextResponse.json({ tasks });
   } catch (error) {
-    if (error instanceof WorkflowMutationRequestError) {
-      return NextResponse.json(
-        { error: error.message, code: error.code, field: error.field },
-        { status: 400 }
-      );
-    }
-    if (error instanceof FocusQueueNotFoundError) {
-      return NextResponse.json(
-        { error: error.message, code: "NOT_FOUND", field: "taskId" },
-        { status: 404 }
-      );
-    }
-    if (error instanceof FocusQueueConflictError) {
-      return NextResponse.json(
-        { error: error.message, code: "CONFLICT" },
-        { status: 409 }
-      );
-    }
-    if (error instanceof FocusQueueError) {
-      return NextResponse.json(
-        { error: error.message, code: "VALIDATION_ERROR" },
-        { status: 400 }
-      );
-    }
-    console.error(`Focus queue ${operation} failed.`, error);
-    return NextResponse.json(
-      { error: "Focus queue could not be saved.", code: "INTERNAL_ERROR" },
-      { status: 500 }
-    );
+    return focusQueueMutationErrorResponse(error, "remove");
   }
 }

@@ -51,6 +51,10 @@ export type DatabaseMigrationOptions = {
   repositoryRoot?: string;
   environment?: NodeJS.ProcessEnv;
   onProgress?: (message: string) => void;
+  /** Required: the caller owns the instant used for the safety backup.
+   * Shared with the disposable-restore path, which never takes a backup but
+   * spreads the same options object, so requiring it there costs nothing. */
+  now: Date;
 };
 
 export type DisposableRestoreCopyMigrationOptions =
@@ -184,7 +188,7 @@ export class DatabaseMigrationError extends Error {
 }
 
 export function migrateActiveDatabase(
-  options: DatabaseMigrationOptions = {}
+  options: DatabaseMigrationOptions
 ): DatabaseMigrationResult {
   const repositoryRoot = options.repositoryRoot ?? process.cwd();
   const environment = options.environment ?? process.env;
@@ -209,8 +213,13 @@ export function migrateActiveDatabase(
       phase = "backup";
       const backup = createDatabaseBackup({
         databasePath,
-        outputPath: defaultBackupPath(databasePath, "migration-safety"),
-        repositoryRoot
+        outputPath: defaultBackupPath(
+          databasePath,
+          "migration-safety",
+          options.now
+        ),
+        repositoryRoot,
+        now: options.now
       });
       safety = { kind: "verified-backup", backup };
       reportSafetyBackup(progress, backup);

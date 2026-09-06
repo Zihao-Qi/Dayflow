@@ -574,13 +574,14 @@ export async function applyPendingManagedRestore(
         return status;
       }
 
+      const restoreAt = options.now ?? clock.now();
       const safetyBackupPath = join(
         context.directory,
         basename(
           defaultBackupPath(
             context.databasePath,
             "restore-safety",
-            options.now ?? (options.clock ?? systemClock).now()
+            restoreAt
           )
         )
       );
@@ -602,6 +603,7 @@ export async function applyPendingManagedRestore(
           safetyBackupPath,
           expectedPayloadSha256: pending.expectedPayloadSha256,
           repositoryRoot: context.repositoryRoot,
+          now: restoreAt,
           onProgress: (message) =>
             console.log(`[Dayflow restore] ${message}`)
         });

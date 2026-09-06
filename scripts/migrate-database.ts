@@ -3,11 +3,14 @@ import {
   migrateActiveDatabase,
   migrateDisposableRestoreCopy
 } from "../src/modules/data-ops/services/sqlite-migration-engine";
+import { systemClock } from "../src/shared/kernel/calendar";
 
 try {
   const args = process.argv.slice(2);
+  // Sample once at entry: the engine takes the instant, it does not read a clock.
   const options = {
-    onProgress: (message: string) => console.log(message)
+    onProgress: (message: string) => console.log(message),
+    now: systemClock.now()
   };
   if (args.length === 0) {
     migrateActiveDatabase(options);

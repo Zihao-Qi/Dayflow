@@ -27,7 +27,7 @@ const request = (query: string) => new NextRequest(`http://localhost/api/review/
 for (const persisted of [false, true]) {
   test(`current Review window selects server bounds and returns ${persisted ? "saved" : "unpersisted"} writing without a write`, async (t) => {
     t.mock.timers.enable({ apis: ["Date"], now: new Date("2026-09-04T12:00:00-05:00") });
-    const period = reviewPeriodRange();
+    const period = reviewPeriodRange(new Date());
     for (const delegate of [prisma.activityEntry, prisma.diaryEntry, prisma.task, prisma.note, prisma.material, prisma.project]) {
       t.mock.method(delegate, "findMany", async () => []);
     }

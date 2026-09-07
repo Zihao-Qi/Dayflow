@@ -36,7 +36,7 @@ test("read transaction budgets preserve bootstrap and export after five seconds"
     stdio: ["pipe", "pipe", "pipe"]
   });
 
-  const today = startOfLocalDay();
+  const today = startOfLocalDay(new Date());
   const yesterday = addDays(today, -1);
   const tomorrow = addDays(today, 1);
   const period = reviewPeriodRange(today);

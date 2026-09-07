@@ -54,7 +54,7 @@ test("bootstrap and agent export preserve their payload contracts", async (conte
   disconnectPrisma = () => prisma.$disconnect();
 
   context.mock.timers.enable({ apis: ["Date"], now: new Date("2026-09-04T12:00:00-05:00") });
-  const today = startOfLocalDay();
+  const today = startOfLocalDay(new Date());
   const yesterday = addDays(today, -1);
   const tomorrow = addDays(today, 1);
   const overdue = await prisma.task.create({

@@ -57,8 +57,7 @@ export function calendarFor(timeZone: string): Calendar {
   };
 }
 
-// Legacy helpers keep optional times only for existing zero-argument callers.
-export function startOfLocalDay(input = new Date()) {
+export function startOfLocalDay(input: Date) {
   const date = new Date(input);
   // Process-local civil time: DST gaps/folds follow Date.setHours semantics.
   date.setHours(0, 0, 0, 0);
@@ -130,7 +129,7 @@ export function sameDayRange(input: Date) {
   return { start, end };
 }
 
-export function reviewPeriodRange(input = new Date()) {
+export function reviewPeriodRange(input: Date) {
   const today = startOfLocalDay(input);
   return {
     start: addDays(today, -6),
@@ -138,7 +137,7 @@ export function reviewPeriodRange(input = new Date()) {
   };
 }
 
-export function millisecondsUntilNextLocalDay(input = new Date()) {
+export function millisecondsUntilNextLocalDay(input: Date) {
   return Math.max(
     0,
     addDays(startOfLocalDay(input), 1).getTime() - input.getTime()

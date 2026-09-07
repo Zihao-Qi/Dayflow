@@ -45,8 +45,5 @@ export function prepareFocusStartAttempt(
 }
 
 function createFocusStartMutationId() {
-  return typeof crypto !== "undefined" &&
-    typeof crypto.randomUUID === "function"
-    ? `focus-start-${crypto.randomUUID()}`
-    : `focus-start-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return `focus-start-${crypto.randomUUID()}`;
 }

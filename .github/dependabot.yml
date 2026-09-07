@@ -1,0 +1,28 @@
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    # Security updates arrive regardless of this schedule; the interval only
+    # governs routine version maintenance.
+    open-pull-requests-limit: 5
+    ignore:
+      # Next 16 is deferred, not unwanted — see issue #81. The upgrade breaks
+      # the startup migration-recovery screen: with an out-of-date SQLite
+      # schema the app no longer renders the panel telling the user to run
+      # `npm run db:migrate`, so they see a loading state and no instruction.
+      # Exactly one e2e case catches it (tests/e2e/startup-recovery.spec.ts).
+      #
+      # Without this entry Dependabot regenerates the upgrade on every scan.
+      # It has already arrived twice — once grouped as "Bump postcss and next"
+      # (#74), once alone (#83) — and each occurrence costs a full ~20 minute
+      # CI run before failing on the same test. There is no security reason to
+      # take it: main carries next 15.5.21, which fixes every advisory known
+      # against this project.
+      #
+      # Remove this entry when #81 is resolved.
+      - dependency-name: next
+        update-types:
+          - version-update:semver-major

@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import ts from "typescript";
 
-type Rule = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+type Rule = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
 type Violation = {
   rule: Rule;
   file: string;
@@ -34,10 +34,14 @@ type SourceRecord = {
   sourceFile: ts.SourceFile;
   moduleReferences: ModuleReference[];
 };
-type ArchitectureOptions = { activityWriteAllowlist?: ReadonlySet<string> };
+type ArchitectureOptions = {
+  activityWriteAllowlist?: ReadonlySet<string>;
+  clockReadAllowlist?: ReadonlySet<string>;
+};
 type ArchitectureReport = {
   violations: Violation[];
   activityWrites: string[];
+  clockReads: string[];
   legacyGlobalClientCalls: Record<string, number>;
 };
 type SingletonDiscovery = {
@@ -71,6 +75,12 @@ const ACTIVITY_WRITE_ALLOWLIST = new Set([
   "src/server/workflows/delete-project.ts:16:activityEntry.updateMany"
 ]);
 
+// Current explicit clock reads in server code. Rule 9 governs server paths only;
+// client layers (ui, shell, components, shared/client) and scripts are excluded.
+const CLOCK_READ_ALLOWLIST = new Set([
+  "src/shared/kernel/calendar.ts:19"
+]);
+
 // Legacy src/lib call counts are ratcheted per file so line movement is harmless,
 // while any increase (or stale decrease) fails the real-tree assertion.
 const LEGACY_GLOBAL_CLIENT_CALL_BASELINE: ReadonlyArray<ReturnType<typeof legacyClientCalls>> = [];
@@ -95,9 +105,12 @@ function scanArchitecture(
   const singletonModules = discoverSingletonModules(records);
   const activityWriteAllowlist =
     options.activityWriteAllowlist ?? ACTIVITY_WRITE_ALLOWLIST;
+  const clockReadAllowlist =
+    options.clockReadAllowlist ?? CLOCK_READ_ALLOWLIST;
   const violations: Violation[] = [];
   const occurrences = new Map<string, number>();
   const activityWrites: string[] = [];
+  const clockReads: string[] = [];
   const legacyGlobalClientCalls: Record<string, number> = {};
   const add = (
     record: SourceRecord,
@@ -128,6 +141,7 @@ function scanArchitecture(
     const isService = /^src\/modules\/[^/]+\/services(?:\/|$)/.test(
       record.relativePath
     );
+    const isServer = isServerPath(record.relativePath);
 
     for (const reference of record.moduleReferences) {
       const target = internalTarget(record.relativePath, reference.specifier);
@@ -282,6 +296,18 @@ function scanArchitecture(
           add(record, 7, node, `SQL ${operation} ActivityEntry is not allowlisted`);
         }
       }
+      if (isServer && isImplicitClockRead(node)) {
+        const key = `${record.relativePath}:${lineOf(record.sourceFile, node)}`;
+        clockReads.push(key);
+        if (!clockReadAllowlist.has(key)) {
+          add(
+            record,
+            9,
+            node,
+            `implicit clock read: ${node.getText(record.sourceFile)}`
+          );
+        }
+      }
     });
 
     if (record.relativePath.startsWith("src/") && globalBindings.size > 0) {
@@ -293,6 +319,7 @@ function scanArchitecture(
   return {
     violations: violations.sort(compareViolations),
     activityWrites: activityWrites.sort(),
+    clockReads: clockReads.sort(),
     legacyGlobalClientCalls
   };
 }
@@ -852,6 +879,51 @@ function moduleLocation(file: string) {
 
 function domainLocation(file: string) {
   return /^(src\/modules\/[^/]+\/domain)(?:\/|$)/.exec(file)?.[1] ?? null;
+}
+
+function isServerPath(file: string): boolean {
+  return (
+    file.startsWith("src/app/api/") ||
+    file === "src/app/api" ||
+    domainLocation(file) !== null ||
+    /^src\/modules\/[^/]+\/services(?:\/|$)/.test(file) ||
+    file.startsWith("src/server/") ||
+    file === "src/server" ||
+    file.startsWith("src/shared/kernel/") ||
+    file === "src/shared/kernel" ||
+    file.startsWith("src/lib/") ||
+    file === "src/lib"
+  );
+}
+
+function isZeroArgNewDate(node: ts.Node): boolean {
+  if (!ts.isNewExpression(node)) return false;
+  const callee = unwrapExpression(node.expression);
+  const isDate =
+    (ts.isIdentifier(callee) && callee.text === "Date") ||
+    propertyName(callee) === "Date";
+  return isDate && (!node.arguments || node.arguments.length === 0);
+}
+
+function isDateNowCall(node: ts.Node): boolean {
+  if (!ts.isCallExpression(node)) return false;
+  const callee = unwrapExpression(node.expression);
+  if (
+    !ts.isPropertyAccessExpression(callee) &&
+    !ts.isElementAccessExpression(callee)
+  ) {
+    return false;
+  }
+  if (propertyName(callee) !== "now") return false;
+  const receiver = unwrapExpression(callee.expression);
+  return (
+    (ts.isIdentifier(receiver) && receiver.text === "Date") ||
+    propertyName(receiver) === "Date"
+  );
+}
+
+function isImplicitClockRead(node: ts.Node): boolean {
+  return isZeroArgNewDate(node) || isDateNowCall(node);
 }
 
 function internalTarget(fromFile: string, specifier: string): string | null {
@@ -1575,6 +1647,80 @@ test("Rule 8: scripts may import src, never the reverse", () => {
   );
 });
 
+test("Rule 9: server code forbids zero-argument new Date() and Date.now()", () => {
+  withFixture(
+    {
+      "src/app/api/tasks/route.ts": "export const now = () => new Date();\n",
+      "src/modules/planning/domain/task.ts": "export const now = () => Date.now();\n",
+      "src/modules/planning/services/task.ts": "export const now = () => new Date();\n",
+      "src/server/workflows/task.ts": "export const now = () => Date.now();\n",
+      "src/shared/kernel/time.ts": "export const now = () => new Date();\n",
+      "src/lib/clock.ts": "export const now = () => Date.now();\n"
+    },
+    (root) =>
+      assert.deepEqual(locations(root, 9), [
+        "src/app/api/tasks/route.ts:1",
+        "src/lib/clock.ts:1",
+        "src/modules/planning/domain/task.ts:1",
+        "src/modules/planning/services/task.ts:1",
+        "src/server/workflows/task.ts:1",
+        "src/shared/kernel/time.ts:1"
+      ])
+  );
+});
+
+test("Rule 9: date conversions with arguments are permitted in server code", () => {
+  withFixture(
+    {
+      "src/modules/planning/domain/task.ts": [
+        "export const parse = (iso: string) => new Date(iso);",
+        "export const fromTime = (ts: number) => new Date(ts);",
+        "export const parts = (y: number, m: number, d: number) => new Date(y, m, d);"
+      ].join("\n"),
+      "src/modules/planning/services/task.ts": "export const parse = (iso: string) => new Date(iso);\n",
+      "src/server/workflows/task.ts": "export const parse = (ts: number) => new Date(ts);\n",
+      "src/lib/dates.ts": "export const parse = (iso: string) => new Date(iso);\n"
+    },
+    (root) => assert.deepEqual(locations(root, 9), [])
+  );
+});
+
+test("Rule 9: client layers and scripts may read the wall clock directly", () => {
+  withFixture(
+    {
+      "src/modules/planning/ui/clock.tsx": "export const Clock = () => [new Date(), Date.now()];\n",
+      "src/shell/timer.ts": "export const tick = () => [new Date(), Date.now()];\n",
+      "src/components/timer.tsx": "export const tick = () => [new Date(), Date.now()];\n",
+      "src/shared/client/timer.ts": "export const tick = () => [new Date(), Date.now()];\n",
+      "scripts/backup.ts": "export const run = () => [new Date(), Date.now()];\n"
+    },
+    (root) => assert.deepEqual(locations(root, 9), [])
+  );
+});
+
+test("Rule 9: system clock definition is allowlisted by exact call site", () => {
+  const file = "src/shared/kernel/calendar.ts";
+  withFixture(
+    {
+      [file]: [
+        "export interface Clock { now(): Date; }",
+        "export const systemClock: Clock = { now: () => new Date() };",
+        "export const unallowlisted = () => new Date();"
+      ].join("\n")
+    },
+    (root) => {
+      const report = scanArchitecture(root, {
+        clockReadAllowlist: new Set([`${file}:2`])
+      });
+      assert.deepEqual(report.clockReads, [`${file}:2`, `${file}:3`]);
+      assert.deepEqual(
+        report.violations.filter((v) => v.rule === 9).map(({ file, line }) => `${file}:${line}`),
+        [`${file}:3`]
+      );
+    }
+  );
+});
+
 const expressionWrappers: ReadonlyArray<[string, (value: string) => string]> = [
   ["parentheses", (value) => `(${value})`],
   ["as assertion", (value) => `(${value} as any)`],
@@ -1722,6 +1868,17 @@ for (const [label, wrap] of expressionWrappers) {
     );
   });
 
+  test(`Rule 9: wrapped clock reads in server paths: ${label}`, () => {
+    const file = "src/modules/planning/services/clock.ts";
+    withFixture(
+      { [file]: [
+        `export const a = () => new (${wrap("Date")})();`,
+        `export const b = () => ${wrap("Date.now")}();`
+      ].join("\n") },
+      (root) => assert.deepEqual(locations(root, 9), [1, 2].map((line) => `${file}:${line}`))
+    );
+  });
+
   test(`Wrapped unrelated expressions remain clean: ${label}`, () => {
     withFixture(
       {
@@ -1733,7 +1890,8 @@ for (const [label, wrap] of expressionWrappers) {
           `${wrap("ordinary.task")}.create({});`,
           `${wrap("other.task.create")}({});`,
           `${wrap("database.activityEntry")}.findMany();`,
-          `new (${wrap("OtherClient")})();`
+          `new (${wrap("OtherClient")})();`,
+          'new Date(12345);'
         ].join("\n"),
         "src/lib/unrelated.ts": [
           'import { prisma } from "@/lib/prisma";',
@@ -1746,7 +1904,7 @@ for (const [label, wrap] of expressionWrappers) {
         "src/shadow.ts": `import * as clients from "@/lib/prisma"; function shadow(clients: any, tx?: Tx) { return tx ?? ${wrap(`${wrap("clients")}.prisma`)}; }`
       },
       (root) => assert.deepEqual(scanArchitecture(root), {
-        violations: [], activityWrites: [], legacyGlobalClientCalls: {}
+        violations: [], activityWrites: [], clockReads: [], legacyGlobalClientCalls: {}
       })
     );
   });
@@ -1919,6 +2077,32 @@ test("Red-team Rule 8 (todo): indirect import via createRequire", { todo: "User-
   );
 });
 
+test("Red-team Rule 9: service reading clock via new Date() or Date.now() is caught", () => {
+  withFixture(
+    {
+      "src/modules/planning/services/clock.ts": [
+        "export const a = () => new Date();",
+        "export const b = () => Date.now();"
+      ].join("\n")
+    },
+    (root) => assert.deepEqual(locations(root, 9), [
+      "src/modules/planning/services/clock.ts:1",
+      "src/modules/planning/services/clock.ts:2"
+    ])
+  );
+});
+
+test("Red-team Rule 9 (near-miss): new Date(someIso) in service and Date.now() in shell remain clean", () => {
+  withFixture(
+    {
+      "src/modules/planning/services/task.ts": "export const parse = (someIso: string) => new Date(someIso);\n",
+      "src/shell/timer.ts": "export const tick = () => Date.now();\n",
+      "src/modules/planning/ui/timer.ts": "export const tick = () => new Date();\n"
+    },
+    (root) => assert.deepEqual(locations(root, 9), [])
+  );
+});
+
 test("the real tree has no architecture violations beyond the explicit baseline", () => {
   const repositoryRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
   const report = scanArchitecture(repositoryRoot);
@@ -1964,10 +2148,18 @@ test("the real tree has no architecture violations beyond the explicit baseline"
   console.log(`Activity write allowlist: ${report.activityWrites.length} call site(s)`);
   for (const activityWrite of report.activityWrites) console.log(activityWrite);
 
+  console.log(`Clock read allowlist: ${report.clockReads.length} call site(s)`);
+  for (const clockRead of report.clockReads) console.log(clockRead);
+
   assert.deepEqual(
     report.activityWrites,
     [...ACTIVITY_WRITE_ALLOWLIST].sort(),
     "Update the explicit ActivityEntry write allowlist when a governed call site changes."
+  );
+  assert.deepEqual(
+    report.clockReads,
+    [...CLOCK_READ_ALLOWLIST].sort(),
+    "Update the explicit clock read allowlist when a governed call site changes."
   );
   assert.deepEqual(
     Object.entries(report.legacyGlobalClientCalls).sort(([left], [right]) =>

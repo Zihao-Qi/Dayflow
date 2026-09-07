@@ -74,7 +74,7 @@ async function withDatabase(
 
 /** The window a Review saved `daysAgo` days ago would own. */
 function windowSavedDaysAgo(daysAgo: number) {
-  const today = startOfLocalDay();
+  const today = startOfLocalDay(new Date());
   const periodEnd = addDays(today, 1 - daysAgo);
   return { periodStart: addDays(periodEnd, -7), periodEnd };
 }
@@ -120,7 +120,7 @@ test("every saved Review is reachable regardless of how long ago it was saved", 
 
 test("Review history excludes the current period and orders newest first", async (context) => {
   await withDatabase(context, async ({ prisma, history }) => {
-    const current = reviewPeriodRange();
+    const current = reviewPeriodRange(new Date());
     await prisma.review.create({
       data: {
         periodStart: current.start,
@@ -188,8 +188,8 @@ test("Review history pagination reaches every saved Review exactly once", async 
 
 test("a past window derives the same summary the current period would", async (context) => {
   await withDatabase(context, async ({ prisma, history, loadBootstrap }) => {
-    const today = startOfLocalDay();
-    const current = reviewPeriodRange();
+    const today = startOfLocalDay(new Date());
+    const current = reviewPeriodRange(new Date());
 
     // Identical evidence placed in the current window and in an older one.
     const shape = [
@@ -241,7 +241,7 @@ test("a past window derives the same summary the current period would", async (c
 
 test("an unsaved Review Window derives evidence without matching an overlapping Review", async (context) => {
   await withDatabase(context, async ({ prisma, history }) => {
-    const today = startOfLocalDay();
+    const today = startOfLocalDay(new Date());
     const endingDay = addDays(today, -9);
     const expectedStart = addDays(endingDay, -6);
     const expectedEnd = addDays(endingDay, 1);
@@ -290,7 +290,7 @@ test("an unsaved Review Window derives evidence without matching an overlapping 
 
 test("a Review Window includes only a Review with its exact boundaries", async (context) => {
   await withDatabase(context, async ({ prisma, history }) => {
-    const endingDay = addDays(startOfLocalDay(), -5);
+    const endingDay = addDays(startOfLocalDay(new Date()), -5);
     const periodStart = addDays(endingDay, -6);
     const periodEnd = addDays(endingDay, 1);
     const saved = await prisma.review.create({
@@ -324,7 +324,7 @@ test("a Review Window includes only a Review with its exact boundaries", async (
 
 test("reading a Past Review Period changes no stored record", async (context) => {
   await withDatabase(context, async ({ prisma, history }) => {
-    const today = startOfLocalDay();
+    const today = startOfLocalDay(new Date());
     const saved = await prisma.review.create({
       data: {
         ...windowSavedDaysAgo(9),
@@ -383,7 +383,7 @@ test("an unknown or malformed Review identifier is rejected before querying", as
 
 test("correcting Evidence in an earlier window changes its summary, not its narrative", async (context) => {
   await withDatabase(context, async ({ prisma, history }) => {
-    const today = startOfLocalDay();
+    const today = startOfLocalDay(new Date());
     const saved = await prisma.review.create({
       data: {
         ...windowSavedDaysAgo(9),

@@ -24,7 +24,7 @@ Scope: Structural migration implementing `docs/adr/0002-modular-monolith-with-ex
   - **Phase 1:** Complete (PR #45 `0e7cee7`, PR #47 `7c29ad2`, PR #50 `7cbe2b1`, PR #53 `ac696ce`, PR #48 `64b935d`, plus gate unwrap repair PR #71 `24b04e1`).
   - **Phase 2:** Complete (PR #54 `09f642e`, PR #56 `dea5eeb`).
   - **Phase 3:** Complete (PR #59 `c01d962`, PR #60 `b3a72f7`, PR #61 `656888b`, PR #62 `0e7fd1d`, PR #66 `1d2d8ab`, PR #67 `567bd7c`). All six slices merged.
-  - **Phase 4:** Complete. Step 1 (SQLite engine move) merged in PR #63 (`8d00dfd`). Step 2 (lazy Prisma singleton getter) merged in PR #77 (`d1da0b5`), satisfying the startup-restore exit condition. Step 3 (backup split) rebuilt as candidate `arch/backup-split-v2` (`baef8ac`), not required for phase 4 terminal exit.
+  - **Phase 4:** Complete. Step 1 (SQLite engine move) merged in PR #63 (`8d00dfd`). Step 2 (lazy Prisma singleton getter) merged in PR #77 (`d1da0b5`), satisfying the startup-restore exit condition. Step 3 (backup split) merged in PR #79 (`31c39fc`); structural work, not required for phase 4 terminal exit, which #77 already satisfied.
   - **Client Track:** Extracted and coarse reads complete (PR #57 `fd68635`, PR #46 `d55af62`, PR #51 `d743e96`, PR #52 `f18fa03`, PR #55 `a1b9b67`, PR #58 `e72fd99`, PR #64 `dc9e284`). E2E flake hardening complete (PR #65 `9a8f444`).
   - **Invariant gates:** Rule 9 clock invariant gate merged in PR #76 (`3b0e921`).
   - **Maintenance & Security:** Nanoid security bump complete (PR #72 `7ae26c9`); Next 15.5.21 security bump complete (PR #73 `a4ad778`).
@@ -35,7 +35,7 @@ Scope: Structural migration implementing `docs/adr/0002-modular-monolith-with-ex
   - **PR #73** (`dependabot/npm_and_yarn/next-15.5.21`): MERGED (`a4ad778`).
   - **PR #76** (`arch/rule9-clock`): MERGED (`3b0e921`).
   - **PR #77** (`arch/lazy-prisma-v2`): MERGED (`d1da0b5`), supersedes draft PR #68.
-  - **PR #69** (`arch/phase4-backup-split`): Rebuilt candidate branch `arch/backup-split-v2` (`baef8ac`); not required for migration completion.
+  - **PR #69** (`arch/phase4-backup-split`): CLOSED, superseded by PR #79 (`31c39fc`), which rebuilt the split on landed history rather than force-pushing a stale head.
   - **PR #70** (`arch/server-integration`): DRAFT / **permanently excluded** from merge queue.
 
 
@@ -461,7 +461,7 @@ Neither gap is excused by the composition-root decision.
 **Execution status:** Complete. Both exit clauses satisfied on main at commit `d1da0b5`.
 - Step 1: PR #63 (`8d00dfd`): Moved SQLite backup and migration engines into `src/modules/data-ops/services` with clock injection (`ClockInstant`). Merged. Removes the Rule 8 baseline entry (`src/lib/backup-management.ts:42`).
 - Step 2: PR #77 (`d1da0b5`): Replaced eager module-evaluation Prisma singleton in `src/lib/prisma.ts` with lazy `getPrisma()` singleton getter; converted 28 callers across the tree. Merged (supersedes draft PR #68). Satisfies the second exit clause: startup restore precedes the first Prisma open.
-- Step 3: PR #69 (`arch/phase4-backup-split`): Splits backup management into policy/retention, restore coordinator, and automatic runner. Rebuilt on main as candidate branch `arch/backup-split-v2` (`baef8ac`); optional refactor not required for phase 4 terminal exit.
+- Step 3: PR #69 (`arch/phase4-backup-split`): Splits backup management into policy/retention, restore coordinator, and automatic runner. Rebuilt on landed history and merged as PR #79 (`31c39fc`); optional refactor not required for phase 4 terminal exit.
 - Integration PR #70: DRAFT, **permanently excluded** from merge queue.
 - Terminal exit condition reached on main: Both clauses of the phase 4 exit target are satisfied on main at commit `d1da0b5`: (1) the architecture baseline is 0 in strict mode (`BASELINE = []`, `LEGACY_GLOBAL_CLIENT_CALL_BASELINE = []`, `ARCHITECTURE_STRICT=1 npm run test:architecture` exits 0), and (2) startup restore precedes the first Prisma open via lazy `getPrisma()`.
 

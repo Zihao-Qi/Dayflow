@@ -203,7 +203,7 @@ test("Review routes pin operation-specific internal envelopes", async () => {
     (prisma.review as unknown as { upsert: unknown }).upsert = async () => {
       throw new Error("unexpected");
     };
-    const { start: periodStart, end: periodEnd } = reviewPeriodRange();
+    const { start: periodStart, end: periodEnd } = reviewPeriodRange(new Date());
     const saveFallback = await saveReview(
       jsonRequest({
         periodStart: periodStart.toISOString(),

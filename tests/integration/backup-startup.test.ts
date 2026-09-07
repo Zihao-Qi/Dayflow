@@ -123,6 +123,21 @@ test(
         ),
         false
       );
+
+      // Stop the server before inspecting active.db directly via sqlite3. In default
+      // rollback-journal mode, the sqlite3 CLI has a 0ms busy timeout and will fail with
+      // SQLITE_BUSY (database is locked) if a lingering Prisma connection from the dev
+      // server holds a lock. Stopping the server first guarantees all connection file
+      // handles are released and prevents contention against the direct file query.
+      //
+      // Nulling `server` afterward is load-bearing: if Next required SIGKILL, Node's child_process
+      // leaves exitCode === null (setting signalCode instead), so stopServer's internal
+      // exitCode guard would not catch a redundant second call in the finally block, causing
+      // waitForServerExit to wait out 15s of timeouts. Nulling here ensures the finally block
+      // only acts as a cleanup guard for premature failures.
+      await stopServer(server);
+      server = null;
+
       assert.equal(
         queryValue(
           activeDatabase,

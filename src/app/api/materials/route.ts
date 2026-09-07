@@ -7,14 +7,14 @@ import {
 } from "@/modules/journal/domain/journal";
 import { journalErrors } from "@/modules/journal/domain/journal";
 import { createMaterial, readJournalHistory, journalErrorResponse } from "@/server/journal";
-import { prisma } from "@/lib/prisma";
+import { getPrisma } from "@/lib/prisma";
 import { AppError } from "@/shared/kernel/errors";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(request: NextRequest) {
   try {
     return NextResponse.json(
-      await readJournalHistory(prisma, "material", request.nextUrl.searchParams)
+      await readJournalHistory(getPrisma(), "material", request.nextUrl.searchParams)
     );
   } catch (error) {
     return journalErrorResponse(error, journalErrors.referencesCouldNotBeLoaded);

@@ -1,6 +1,6 @@
 import { clock } from "@/lib/time";
 import { appErrorResponse } from "@/lib/http-errors";
-import { prisma } from "@/lib/prisma";
+import { getPrisma } from "@/lib/prisma";
 import { reviewErrors } from "@/lib/review-errors";
 import {
   readReviewHistoryPage
@@ -12,7 +12,7 @@ export async function GET(request: NextRequest) {
   const now = clock.now();
   try {
     const page = await readReviewHistoryPage(
-      prisma,
+      getPrisma(),
       request.nextUrl.searchParams, now
     );
     return NextResponse.json(page);

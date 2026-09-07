@@ -1,6 +1,6 @@
 import { clock, calendar } from "@/lib/time";
 import { appErrorResponse } from "@/lib/http-errors";
-import { prisma } from "@/lib/prisma";
+import { getPrisma } from "@/lib/prisma";
 import { projectErrors } from "@/modules/projects/domain/project";
 import {
   parseProjectPatchMutation,
@@ -21,7 +21,7 @@ type Params = { params: Promise<{ id: string }> };
 export async function GET(_request: NextRequest, { params }: Params) {
   const now = clock.now();
   const { id } = await params;
-  const project = await prisma.$transaction(tx => getProjectDetail(id, tx, calendar.reviewPeriodEnding(calendar.dayOf(now))));
+  const project = await getPrisma().$transaction(tx => getProjectDetail(id, tx, calendar.reviewPeriodEnding(calendar.dayOf(now))));
   if (!project) {
     return appErrorResponse(new AppError(projectErrors.projectDetailNotFound));
   }

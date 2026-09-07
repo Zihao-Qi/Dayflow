@@ -1,5 +1,5 @@
 import type { Prisma } from "@prisma/client";
-import { prisma } from "@/lib/prisma";
+import { getPrisma } from "@/lib/prisma";
 import { clock } from "@/lib/time";
 import { appErrorResponse } from "@/lib/http-errors";
 import { focusErrors, type EnrichmentDetails, type StartSessionInput } from "@/modules/focus/domain/session";
@@ -15,7 +15,7 @@ export function startFocusSession(input: StartSessionInput, tx: Prisma.Transacti
 }
 
 export function transitionFocusSession(id: string, action: string, input: EnrichmentDetails = {}, now: Date) {
-  return prisma.$transaction(tx => action === "enrich" || action === "record"
+  return getPrisma().$transaction(tx => action === "enrich" || action === "record"
     ? enrichSession(tx, id, input, now)
     : transitionSession(tx, id, action, now));
 }

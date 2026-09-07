@@ -51,11 +51,12 @@ test("Review saves upsert one period row without changing Diary evidence", async
     { cwd: repositoryRoot, stdio: "pipe" }
   );
 
-  const [{ PUT }, { GET: loadBootstrap }, { prisma }] = await Promise.all([
+  const [{ PUT }, { GET: loadBootstrap }, { getPrisma }] = await Promise.all([
     import("../../src/app/api/review/route"),
     import("../../src/app/api/bootstrap/route"),
     import("../../src/lib/prisma")
   ]);
+  const prisma = getPrisma();
   disconnectPrisma = () => prisma.$disconnect();
 
   const period = reviewPeriodRange(new Date());

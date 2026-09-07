@@ -36,11 +36,12 @@ test("Time Block writes use the day at validation and receipts remain replayable
     join(process.cwd(), "node_modules/prisma/build/index.js"),
     "db", "execute", "--file", "prisma/init.sql", "--url", process.env.DATABASE_URL
   ], { stdio: "pipe" });
-  const [{ POST }, { PUT }, { prisma }] = await Promise.all([
+  const [{ POST }, { PUT }, { getPrisma }] = await Promise.all([
     import("../../src/app/api/time-blocks/route"),
     import("../../src/app/api/time-blocks/[id]/route"),
     import("../../src/lib/prisma")
   ]);
+  const prisma = getPrisma();
   disconnect = () => prisma.$disconnect();
 
   for (const delay of ["body", "transaction", "receipt"] as const) {

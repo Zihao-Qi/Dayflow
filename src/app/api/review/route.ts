@@ -1,7 +1,7 @@
 import { saveReview } from "@/server/review";
 import { clock, calendar } from "@/lib/time";
 import { appErrorResponse } from "@/lib/http-errors";
-import { prisma } from "@/lib/prisma";
+import { getPrisma } from "@/lib/prisma";
 import {
   parseReviewMutation,
   readReviewMutationBody
@@ -14,7 +14,7 @@ export async function PUT(request: NextRequest) {
   try {
     const body = await readReviewMutationBody(request);
     const input = parseReviewMutation(body, calendar);
-    return NextResponse.json(await saveReview(prisma, input, clock.now()));
+    return NextResponse.json(await saveReview(getPrisma(), input, clock.now()));
   } catch (error) {
     if (error instanceof AppError) return appErrorResponse(error);
 

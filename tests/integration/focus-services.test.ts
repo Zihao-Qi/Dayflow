@@ -34,10 +34,11 @@ async function withDatabase(
     "db", "execute", "--file", "prisma/init.sql", "--url", process.env.DATABASE_URL
   ], { cwd: process.cwd(), stdio: "pipe" });
   // Load the transaction root only after directing its client at disposable SQLite.
-  const [{ prisma }, { runOnce }] = await Promise.all([
+  const [{ getPrisma }, { runOnce }] = await Promise.all([
     import("../../src/lib/prisma"),
     import("../../src/server/prisma/run-once")
   ]);
+  const prisma = getPrisma();
   disconnect = () => prisma.$disconnect();
   await run({ prisma, runOnce });
 }

@@ -59,7 +59,7 @@ async function withDatabase(
     { cwd: repositoryRoot, stdio: "pipe" }
   );
 
-  const [taskRoute, projectRoute, focusRoute, activityRoute, { prisma }] =
+  const [taskRoute, projectRoute, focusRoute, activityRoute, { getPrisma }] =
     await Promise.all([
       import("../../src/app/api/tasks/[id]/route"),
       import("../../src/app/api/projects/[id]/route"),
@@ -67,6 +67,7 @@ async function withDatabase(
       import("../../src/app/api/activities/[id]/route"),
       import("../../src/lib/prisma")
     ]);
+  const prisma = getPrisma();
   disconnectPrisma = () => prisma.$disconnect();
 
   await run({

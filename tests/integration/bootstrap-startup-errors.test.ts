@@ -43,10 +43,11 @@ test(
       stdio: ["pipe", "pipe", "pipe"]
     });
 
-    const [{ GET: loadBootstrap }, { prisma }] = await Promise.all([
+    const [{ GET: loadBootstrap }, { getPrisma }] = await Promise.all([
       import("../../src/app/api/bootstrap/route"),
       import("../../src/lib/prisma")
     ]);
+    const prisma = getPrisma();
     disconnectPrisma = () => prisma.$disconnect();
 
     const response = await loadBootstrap();

@@ -1,5 +1,5 @@
 import { clock } from "@/lib/time";
-import { prisma } from "@/lib/prisma";
+import { getPrisma } from "@/lib/prisma";
 import { readWorkflowMutationBody } from "@/lib/workflow-mutations";
 import { parseFocusSessionStartMutation } from "@/modules/focus/domain/session";
 import { readSnapshot, startSession, focusErrorResponse } from "@/server/focus";
@@ -15,7 +15,7 @@ const globalForFocusSessionStart = globalThis as typeof globalThis & {
 
 export async function GET() {
   const now = clock.now();
-  try { return NextResponse.json(await readSnapshot(prisma, now)); }
+  try { return NextResponse.json(await readSnapshot(getPrisma(), now)); }
   catch (error) { return focusErrorResponse(error, "read"); }
 }
 

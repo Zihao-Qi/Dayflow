@@ -50,10 +50,11 @@ test("Focus Session start idempotency", async (context) => {
     { cwd: repositoryRoot, stdio: "pipe" }
   );
 
-  const [{ POST }, { prisma }] = await Promise.all([
+  const [{ POST }, { getPrisma }] = await Promise.all([
     import("../../src/app/api/focus-session/route"),
     import("../../src/lib/prisma")
   ]);
+  const prisma = getPrisma();
   disconnectPrisma = () => prisma.$disconnect();
 
   await context.test(

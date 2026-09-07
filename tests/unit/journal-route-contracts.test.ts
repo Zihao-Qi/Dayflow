@@ -12,7 +12,8 @@ import {
 import {
   mutationRequestHash
 } from "../../src/lib/idempotent-mutations";
-import { prisma } from "../../src/lib/prisma";
+import { getPrisma } from "../../src/lib/prisma";
+const prisma = getPrisma();
 
 test("Journal GET routes keep the code-error shape for validation and internal failures", async () => {
   const noteValidation = await getNotes(

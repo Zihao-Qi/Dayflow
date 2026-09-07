@@ -45,12 +45,13 @@ test("bootstrap and agent export preserve their payload contracts", async (conte
     { cwd: repositoryRoot, stdio: "pipe" }
   );
 
-  const [{ GET: loadBootstrap }, { GET: loadAgentExport }, { prisma }] =
+  const [{ GET: loadBootstrap }, { GET: loadAgentExport }, { getPrisma }] =
     await Promise.all([
       import("../../src/app/api/bootstrap/route"),
       import("../../src/app/api/agent-export/route"),
       import("../../src/lib/prisma")
     ]);
+  const prisma = getPrisma();
   disconnectPrisma = () => prisma.$disconnect();
 
   context.mock.timers.enable({ apis: ["Date"], now: new Date("2026-09-04T12:00:00-05:00") });

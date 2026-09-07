@@ -1,6 +1,6 @@
 import { clock } from "@/lib/time";
 import { appErrorResponse } from "@/lib/http-errors";
-import { prisma } from "@/lib/prisma";
+import { getPrisma } from "@/lib/prisma";
 import { reviewErrors } from "@/lib/review-errors";
 import {
   loadReviewWindow
@@ -12,7 +12,7 @@ export async function GET(request: NextRequest) {
   const now = clock.now();
   try {
     return NextResponse.json(
-      await loadReviewWindow(prisma, request.nextUrl.searchParams, now)
+      await loadReviewWindow(getPrisma(), request.nextUrl.searchParams, now)
     );
   } catch (error) {
     if (error instanceof AppError) return appErrorResponse(error);

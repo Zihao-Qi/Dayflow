@@ -1,6 +1,6 @@
 import { clock } from "@/lib/time";
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { getPrisma } from "@/lib/prisma";
 
 export async function GET() {
   const now = clock.now();
@@ -16,7 +16,7 @@ export async function GET() {
     materials,
     timeBlocks,
     activities
-  ] = await prisma.$transaction(async (tx) => Promise.all([
+  ] = await getPrisma().$transaction(async (tx) => Promise.all([
     tx.project.findMany({ orderBy: { updatedAt: "desc" } }),
     tx.projectPhase.findMany({ orderBy: [{ projectId: "asc" }, { sortOrder: "asc" }] }),
     tx.focusSession.findMany({ orderBy: { startedAt: "desc" } }),

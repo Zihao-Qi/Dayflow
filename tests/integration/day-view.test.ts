@@ -37,10 +37,11 @@ async function withDatabase(
     { cwd: repositoryRoot, stdio: "pipe" }
   );
 
-  const [dayView, { prisma }] = await Promise.all([
+  const [dayView, { getPrisma }] = await Promise.all([
     import("../../src/lib/day-view"),
     import("../../src/lib/prisma")
   ]);
+  const prisma = getPrisma();
   disconnect = () => prisma.$disconnect();
   await run({ prisma, dayView });
 }

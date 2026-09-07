@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { GET } from "../../src/app/api/agent-export/route";
-import { prisma } from "../../src/lib/prisma";
+import { getPrisma } from "../../src/lib/prisma";
+const prisma = getPrisma();
 import { clock } from "../../src/lib/time";
 import { frozenClock } from "../../src/shared/kernel/calendar";
 

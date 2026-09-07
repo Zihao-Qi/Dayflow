@@ -8,7 +8,8 @@ import {
   PATCH as updateTask
 } from "../../src/app/api/tasks/[id]/route";
 import { mutationRequestHash } from "../../src/lib/idempotent-mutations";
-import { prisma } from "../../src/lib/prisma";
+import { getPrisma } from "../../src/lib/prisma";
+const prisma = getPrisma();
 
 test("Task create and patch return typed malformed-JSON responses", async () => {
   const createResponse = await createTask(

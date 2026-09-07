@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { NextRequest } from "next/server";
 import { GET as getDay } from "../../src/app/api/day/route";
-import { prisma } from "../../src/lib/prisma";
+import { getPrisma } from "../../src/lib/prisma";
+const prisma = getPrisma();
 
 test("Day route pins its validation envelope", async () => {
   const response = await getDay(

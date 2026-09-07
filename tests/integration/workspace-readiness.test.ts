@@ -50,10 +50,11 @@ test("bootstrap reports authoritative workspace readiness", async (context) => {
     { cwd: repositoryRoot, stdio: "pipe" }
   );
 
-  const [{ GET: loadBootstrap }, { prisma }] = await Promise.all([
+  const [{ GET: loadBootstrap }, { getPrisma }] = await Promise.all([
     import("../../src/app/api/bootstrap/route"),
     import("../../src/lib/prisma")
   ]);
+  const prisma = getPrisma();
   disconnectPrisma = () => prisma.$disconnect();
 
   async function workspaceEmpty() {

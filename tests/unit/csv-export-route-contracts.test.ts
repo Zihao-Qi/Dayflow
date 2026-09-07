@@ -6,7 +6,8 @@ import {
   isCsvExportFileName,
   parseCsvExportResponseMetadata
 } from "../../src/lib/csv-export-contract";
-import { prisma } from "../../src/lib/prisma";
+import { getPrisma } from "../../src/lib/prisma";
+const prisma = getPrisma();
 import { clock } from "../../src/lib/time";
 import { activityHeaders, taskHeaders } from "../csv-test-helpers";
 

@@ -1,7 +1,7 @@
 import { clock } from "@/lib/time";
 import { bootstrapErrors } from "@/lib/bootstrap-errors";
 import { appErrorResponse } from "@/lib/http-errors";
-import { prisma } from "@/lib/prisma";
+import { getPrisma } from "@/lib/prisma";
 import { readBootstrap } from "@/server/read-models/bootstrap";
 import { AppError } from "@/shared/kernel/errors";
 import { Prisma } from "@prisma/client";
@@ -10,7 +10,7 @@ import { NextResponse } from "next/server";
 export async function GET() {
   const now = clock.now();
   try {
-    const payload = await prisma.$transaction(tx => readBootstrap(tx, now), { timeout: 60000 });
+    const payload = await getPrisma().$transaction(tx => readBootstrap(tx, now), { timeout: 60000 });
     return NextResponse.json(payload);
   } catch (error) {
     if (

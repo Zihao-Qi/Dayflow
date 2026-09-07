@@ -1,6 +1,6 @@
 import { appErrorConstructor } from "@/lib/error-compat";
 import { idempotencyErrors } from "@/lib/idempotency-errors";
-import { prisma } from "@/lib/prisma";
+import { getPrisma } from "@/lib/prisma";
 import { AppError } from "@/shared/kernel/errors";
 import { Prisma } from "@prisma/client";
 import { createHash } from "node:crypto";
@@ -49,12 +49,12 @@ export async function runOnce<T>({
   create: (transaction: Prisma.TransactionClient) => Promise<T>;
 }): Promise<T> {
   if (!mutationId) {
-    return prisma.$transaction((transaction) => create(transaction));
+    return getPrisma().$transaction((transaction) => create(transaction));
   }
 
   const requestHash = mutationRequestHash(kind, payload);
   try {
-    return await prisma.$transaction(async (transaction) => {
+    return await getPrisma().$transaction(async (transaction) => {
       const receipt = await transaction.mutationReceipt.findUnique({
         where: { id: mutationId }
       });
@@ -78,7 +78,7 @@ export async function runOnce<T>({
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2002"
     ) {
-      const receipt = await prisma.mutationReceipt.findUnique({
+      const receipt = await getPrisma().mutationReceipt.findUnique({
         where: { id: mutationId }
       });
       if (receipt) return decodeReceipt<T>(receipt, kind, requestHash);

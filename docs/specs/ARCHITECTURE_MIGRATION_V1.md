@@ -1,18 +1,20 @@
 # Architecture Migration v1
 
-Status: Completed — Architecture exit condition reached (ARCHITECTURE_STRICT=1 passes with 0 violations)
+Status: Completed — Migration complete on main at commit d1da0b5 (PR #77 merge)
 Date: September 4, 2026 (proposed); updated September 6, 2026
-Validated main commit: dc9e28452a8bc721e75571dd19ba804f5066a389 (PR #64 merge)
+Validated main commit: d1da0b5e0c71423681b0eba38fc2ed6eda5c3b3a (PR #77 merge)
 Scope: Structural migration implementing `docs/adr/0002-modular-monolith-with-explicit-transactions.md`
 
-## Current Status (as of commit dc9e284)
+## Current Status (as of commit d1da0b5)
 
 - **Terminal exit condition reached on main:**
   - `ARCHITECTURE_STRICT=1 npm run test:architecture`: **0 violations** (exits 0; 119 tests, 111 pass, 0 fail, 8 todo).
   - `BASELINE`: **0 violations** (empty array `[]`).
   - `LEGACY_GLOBAL_CLIENT_CALL_BASELINE`: **0 call sites across 0 files** (empty array `[]`).
   - `ACTIVITY_WRITE_ALLOWLIST`: exactly **5 call sites**.
-- **Verified gate output on current main (`dc9e284`):**
+  - `CLOCK_READ_ALLOWLIST`: exactly **1 call site** (`src/shared/kernel/calendar.ts:19`).
+  - Startup restore precedes the first Prisma open: verified on main (PR #77 `d1da0b5` replaced the eager module-evaluation singleton with lazy `getPrisma()`).
+- **Verified gate output on current main (`d1da0b5`):**
   - `npm run test:architecture`: 119 tests, 111 pass, 0 fail, 8 todo.
   - `ARCHITECTURE_STRICT=1 npm run test:architecture`: 119 tests, 111 pass, 0 fail, 8 todo.
   - `npm run typecheck`: 0 errors (`tsc --noEmit` clean).
@@ -22,13 +24,18 @@ Scope: Structural migration implementing `docs/adr/0002-modular-monolith-with-ex
   - **Phase 1:** Complete (PR #45 `0e7cee7`, PR #47 `7c29ad2`, PR #50 `7cbe2b1`, PR #53 `ac696ce`, PR #48 `64b935d`, plus gate unwrap repair PR #71 `24b04e1`).
   - **Phase 2:** Complete (PR #54 `09f642e`, PR #56 `dea5eeb`).
   - **Phase 3:** Complete (PR #59 `c01d962`, PR #60 `b3a72f7`, PR #61 `656888b`, PR #62 `0e7fd1d`, PR #66 `1d2d8ab`, PR #67 `567bd7c`). All six slices merged.
-  - **Phase 4:** Engine work complete (PR #63 `8d00dfd`). Lazy Prisma (PR #68) and backup split (PR #69) pending republish as rebuilt candidates.
-  - **Client Track:** Extracted and coarse reads complete (PR #57 `fd68635`, PR #46 `d55af62`, PR #51 `d743e96`, PR #52 `f18fa03`, PR #55 `a1b9b67`, PR #58 `e72fd99`, PR #64 `dc9e284`). E2E flake hardening (PR #65) pending.
+  - **Phase 4:** Complete. Step 1 (SQLite engine move) merged in PR #63 (`8d00dfd`). Step 2 (lazy Prisma singleton getter) merged in PR #77 (`d1da0b5`), satisfying the startup-restore exit condition. Step 3 (backup split) rebuilt as candidate `arch/backup-split-v2` (`baef8ac`), not required for phase 4 terminal exit.
+  - **Client Track:** Extracted and coarse reads complete (PR #57 `fd68635`, PR #46 `d55af62`, PR #51 `d743e96`, PR #52 `f18fa03`, PR #55 `a1b9b67`, PR #58 `e72fd99`, PR #64 `dc9e284`). E2E flake hardening complete (PR #65 `9a8f444`).
+  - **Invariant gates:** Rule 9 clock invariant gate merged in PR #76 (`3b0e921`).
+  - **Maintenance & Security:** Nanoid security bump complete (PR #72 `7ae26c9`); Next 15.5.21 security bump complete (PR #73 `a4ad778`).
   - **Public readiness:** PR #75 (`e69910f`) added MIT license and gitignored local working notes (`AGENTS.md`, `docs/research/`).
-- **Remaining PRs:**
-  - **PR #65** (`arch/e2e-flake-hardening`): OPEN / pending (browser flake hardening).
-  - **PR #68** (`arch/phase4-lazy-prisma`): DRAFT / pending republish (rebuilt lazy Prisma getter; must not merge from existing published head).
-  - **PR #69** (`arch/phase4-backup-split`): DRAFT / pending republish (rebuilt backup split; must not merge from existing published head).
+- **PR status resolution:**
+  - **PR #65** (`arch/e2e-flake-hardening`): MERGED (`9a8f444`).
+  - **PR #72** (`dependabot/npm_and_yarn/nanoid-3.3.18`): MERGED (`7ae26c9`).
+  - **PR #73** (`dependabot/npm_and_yarn/next-15.5.21`): MERGED (`a4ad778`).
+  - **PR #76** (`arch/rule9-clock`): MERGED (`3b0e921`).
+  - **PR #77** (`arch/lazy-prisma-v2`): MERGED (`d1da0b5`), supersedes draft PR #68.
+  - **PR #69** (`arch/phase4-backup-split`): Rebuilt candidate branch `arch/backup-split-v2` (`baef8ac`); not required for migration completion.
   - **PR #70** (`arch/server-integration`): DRAFT / **permanently excluded** from merge queue.
 
 
@@ -157,6 +164,14 @@ rules target directories that do not exist until the migration creates them.
    the rule.
 8. **Scripts direction.** `scripts/` may reference `src/`; every reference
    under `src/` that resolves to `scripts/` is rejected.
+9. **System clock reads.** In server code (`src/app/api`, `src/lib`,
+   `src/modules/*/{domain,services}`, `src/server`, and server utilities in
+   `src/shared/kernel`), zero-argument `new Date()` and direct calls to
+   `Date.now()` are forbidden unless explicitly allowlisted in the test. Date
+   conversions with arguments (e.g. `new Date(isoString)`) are permitted;
+   client layers (`ui`, `shell`, `components`, `shared/client`) and scripts are
+   excluded. Added in PR #76 (`3b0e921`) with a 1-row allowlist
+   (`src/shared/kernel/calendar.ts:19`).
 
 ### Initial baseline
 
@@ -194,6 +209,14 @@ Exactly six keys: `src/app/api/activities/[id]/route.ts:60:activityEntry.deleteM
 `src/lib/projects.ts:162:activityEntry.updateMany`. When a call moves, its
 key is replaced with the relocated key in the same change. After phase 3
 the two focus keys point at the single creator function in `evidence`.
+
+### The four architecture ratchets
+
+The architecture test asserts exact equality across four ratchet structures (not editable to taste, moving in one direction only):
+1. `BASELINE`: empty (`[]`, 0 violations). Entries get deleted as phases eliminate violations.
+2. `LEGACY_GLOBAL_CLIENT_CALL_BASELINE`: empty (`[]`, 0 calls across 0 files). Legacy call counts decrease to zero.
+3. `ACTIVITY_WRITE_ALLOWLIST`: exactly 5 call sites. Governed ActivityEntry writes can only relocate, never expand.
+4. `CLOCK_READ_ALLOWLIST`: exactly 1 call site (`src/shared/kernel/calendar.ts:19`). Governed server clock reads added by Rule 9.
 
 `ARCHITECTURE_STRICT=1` ignores the baseline and exits non-zero while any
 violation remains.
@@ -435,12 +458,12 @@ Neither gap is excused by the composition-root decision.
 
 ## Phase 4: Backup Engine and Lazy Prisma
 
-**Execution status:** Step 1 merged on main; Steps 2 and 3 pending republish as rebuilt candidates. Terminal architecture exit condition reached on main at commit `8d00dfd` and preserved at `dc9e284`.
+**Execution status:** Complete. Both exit clauses satisfied on main at commit `d1da0b5`.
 - Step 1: PR #63 (`8d00dfd`): Moved SQLite backup and migration engines into `src/modules/data-ops/services` with clock injection (`ClockInstant`). Merged. Removes the Rule 8 baseline entry (`src/lib/backup-management.ts:42`).
-- Step 2: PR #68 (`arch/phase4-lazy-prisma`): Lazy `getPrisma()` singleton getter in `src/lib/prisma.ts`. Status: DRAFT / pending republish (rebuilt candidate; must not merge from existing published head).
-- Step 3: PR #69 (`arch/phase4-backup-split`): Splits backup management into policy/retention, restore coordinator, and automatic runner. Status: DRAFT / pending republish (rebuilt candidate; must not merge from existing published head).
+- Step 2: PR #77 (`d1da0b5`): Replaced eager module-evaluation Prisma singleton in `src/lib/prisma.ts` with lazy `getPrisma()` singleton getter; converted 28 callers across the tree. Merged (supersedes draft PR #68). Satisfies the second exit clause: startup restore precedes the first Prisma open.
+- Step 3: PR #69 (`arch/phase4-backup-split`): Splits backup management into policy/retention, restore coordinator, and automatic runner. Rebuilt on main as candidate branch `arch/backup-split-v2` (`baef8ac`); optional refactor not required for phase 4 terminal exit.
 - Integration PR #70: DRAFT, **permanently excluded** from merge queue.
-- Terminal exit condition reached on main: At commit `8d00dfd` and preserved at `dc9e284`, the architecture baseline is 0 (`BASELINE = []`), legacy global-client calls are 0 across 0 files (`LEGACY_GLOBAL_CLIENT_CALL_BASELINE = []`), the allowlist is exactly 5 rows, and `ARCHITECTURE_STRICT=1 npm run test:architecture` passes with 0 violations (111 pass, 0 fail, 8 todo).
+- Terminal exit condition reached on main: Both clauses of the phase 4 exit target are satisfied on main at commit `d1da0b5`: (1) the architecture baseline is 0 in strict mode (`BASELINE = []`, `LEGACY_GLOBAL_CLIENT_CALL_BASELINE = []`, `ARCHITECTURE_STRICT=1 npm run test:architecture` exits 0), and (2) startup restore precedes the first Prisma open via lazy `getPrisma()`.
 
 **Original plan and exit target (historical):**
 
@@ -480,22 +503,23 @@ precedes the first Prisma open.
 
 ## Operational Lessons and Critical Invariants
 
-1. **Terminal exit condition reached on main:**
-   `ARCHITECTURE_STRICT=1` passing is the migration's terminal exit condition, and it now passes directly on `origin/main` (`dc9e28452a8bc721e75571dd19ba804f5066a389`, commit `dc9e284`). Strict mode reports:
-   - Violations: 0 violations (`ARCHITECTURE_STRICT=1` exits 0; 119 tests: 111 pass, 0 fail, 8 todo).
-   - Baseline: `BASELINE` array is empty (`[]`).
-   - Legacy global-client baseline: 0 call sites across 0 files (`LEGACY_GLOBAL_CLIENT_CALL_BASELINE = []`).
-   - Activity write allowlist: exactly 5 call sites.
-   - Unit tests: 443 tests, 443 pass, 0 fail.
+1. **Terminal exit condition, premature completion correction, and specification vs scanner:**
+   - *Correction of premature completion claim:* An earlier status entry reported the migration complete when `ARCHITECTURE_STRICT=1` first passed on main (at PR #63 `8d00dfd` and PR #64 `dc9e284`). That claim was premature and is superseded. Phase 4's exit specification (`ARCHITECTURE_MIGRATION_V1.md:480-481`) defines two conjuncts:
+     > Exit: architecture baseline empty in strict mode; startup restore still precedes the first Prisma open.
+     While the first clause held from #63, the second clause did not hold until PR #77 (`d1da0b5`) landed: until then, `src/lib/prisma.ts` eagerly instantiated `new PrismaClient` during module evaluation across 28 importers. The migration became genuinely complete at #77 (`d1da0b5`).
+   - *The four ratchets on main (`d1da0b5`):*
+     - Architecture baseline: 0 violations (`BASELINE = []`).
+     - Legacy global-client baseline: 0 call sites across 0 files (`LEGACY_GLOBAL_CLIENT_CALL_BASELINE = []`).
+     - Activity write allowlist: exactly 5 call sites.
+     - Clock read allowlist: exactly 1 call site (`src/shared/kernel/calendar.ts:19`).
+     - Strict mode: `ARCHITECTURE_STRICT=1 npm run test:architecture` exits 0 (119 tests: 111 pass, 0 fail, 8 todo).
+     - Gate suites: `npm run typecheck` clean (0 errors); `npm run test:unit` 443 pass, 0 fail.
+   - *Core limitation: a green scanner is not a satisfied specification.* We treated *the gate's* exit condition as *the migration's* exit condition. The specification asked for an invariant the scanner cannot measure (Prisma client construction timing during module evaluation vs startup restore execution). No amount of green from the architecture scanner could reveal that the second exit clause remained unfulfilled; it was discovered by reading the specification text directly against the code. This is recorded as a primary lesson alongside the rehearsal limitation and the six defect classes.
 
-2. **Mechanical clock invariant gap (Proposed Rule 9):**
-   The clock invariant has no mechanical enforcement in the architecture scanner. A proposed Rule 9 would ban direct calls to `new Date()` and `Date.now()` under `src/app/api`, `src/lib`, `src/modules/*/{domain,services}` and `src/server` with an explicit allowlist — initially:
-   - `src/lib/focus-start-idempotency.ts:51` (fallback random mutation ID generation)
+2. **Mechanical clock invariant gate (Rule 9) landed:**
+   *Supersedes previous note regarding lack of mechanical clock enforcement.* PR #76 (`3b0e921`) implemented and merged Rule 9 into `tests/architecture.test.ts`. Rule 9 mechanically forbids zero-argument `new Date()` and direct `Date.now()` calls in server paths (`src/app/api`, `src/lib`, `src/modules/*/{domain,services}`, `src/server`, and server utilities in `src/shared/kernel`). The rule is ratcheted with a 1-row allowlist:
    - `src/shared/kernel/calendar.ts:19` (`systemClock.now()`)
-   - `src/shared/kernel/calendar.ts:61` (`startOfLocalDay` default parameter)
-   - `src/shared/kernel/calendar.ts:133` (`reviewPeriodRange` default parameter)
-   - `src/shared/kernel/calendar.ts:141` (`millisecondsUntilNextLocalDay` default parameter)
-   Its exact allowlist is under review. Until Rule 9 exists, strict mode passing should not be read as "all invariants hold". This is recorded as an operational follow-up rather than built during this migration.
+   Client layers (`ui`, `shell`, `components`, `shared/client`) and scripts remain permitted to read wall-clock time directly.
 
 3. **Client guard isolation gap (Proposed Rule 3 extension):**
    Ten guard names are exported by both `src/shared/client/decoders.ts` and a `src/modules/*/domain/*` module; nine are identical today, which is the hazard rather than safety as it allowed drift to accumulate unnoticed. Twelve `src/lib/*` shims use `export *` and seven are imported by client code. Three client files already import domain guards directly. Proposed rule: client layers may import types and non-guard functions from a domain module, but any value import matching `/^(is|has|parse)[A-Z]/` must come from `@/shared/client/decoders`; and shims consumed by client code may not use `export *`. Recorded as an operational follow-up.
@@ -523,4 +547,12 @@ precedes the first Prisma open.
 
 9. **PR #70 permanent exclusion:**
    Draft PR #70 (`arch/server-integration`) remains permanently excluded from the merge queue. Merges proceed per-feature in dependency order.
+
+10. **Next 16 major upgrade failure (Issue #81 / PR #74):**
+    Tracked as issue #81. Dependabot PR #74 arrived titled "Bump postcss and next", proposing a major upgrade of `next` from 15.5.21 to **16.3.4**. While 236 of 237 E2E tests passed, it failed CI deterministically on two heads at `tests/e2e/startup-recovery.spec.ts:8`: the database migration recovery screen instructing the user to run `npm run db:migrate` never renders. Because this is a real product error-recovery path rather than a test flake, PR #74 was closed unmerged. The branch and diagnostic evidence are preserved on branch `dependabot/npm_and_yarn/multi-6cecf19b89` (commit `8216bea`).
+
+11. **Outstanding transitive security advisories without upstream fix on main:**
+    `npm audit` on current main reports two unresolved high-severity vulnerabilities in transitive dependencies that cannot be resolved without breaking major version upgrades:
+    - `postcss` (<=8.5.22): GHSA-qx2v-qp2m-jg93 (XSS via unescaped `</style>` in CSS stringify output), GHSA-6g55-p6wh-862q, GHSA-fxqj-rqcc-2cmp, GHSA-r28c-9q8g-f849 (path traversal and arbitrary `.map` file disclosure via `sourceMappingURL` in CSS comments). Transitive via `next`; fix requires `next@16.3.4` which currently fails E2E startup recovery (issue #81).
+    - `deepmerge-ts` (<8.0.0): GHSA-ggr8-5vv4-36mx (stack exhaustion when merging recursive object graphs). Transitive via `@prisma/config` in `prisma`; fix requires `prisma@6.12.0` / breaking upgrade.
 

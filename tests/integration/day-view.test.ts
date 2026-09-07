@@ -48,7 +48,7 @@ async function withDatabase(
 
 test("a future day excludes Activity even when a row exists for it", async (context) => {
   await withDatabase(context, async ({ prisma, dayView }) => {
-    const today = startOfLocalDay();
+    const today = startOfLocalDay(new Date());
     const future = addDays(today, 3);
 
     // The API refuses future Activity, so plant one directly: the read must
@@ -83,7 +83,7 @@ test("a future day excludes Activity even when a row exists for it", async (cont
 
 test("a past day carries its own evidence and nothing from a neighbour", async (context) => {
   await withDatabase(context, async ({ prisma, dayView }) => {
-    const today = startOfLocalDay();
+    const today = startOfLocalDay(new Date());
     const yesterday = addDays(today, -1);
     const twoDaysAgo = addDays(today, -2);
 
@@ -109,7 +109,7 @@ test("a past day carries its own evidence and nothing from a neighbour", async (
 
 test("reading a day mutates no stored record", async (context) => {
   await withDatabase(context, async ({ prisma, dayView }) => {
-    const today = startOfLocalDay();
+    const today = startOfLocalDay(new Date());
     await prisma.task.create({ data: { title: "Untouched", date: today } });
     await prisma.activityEntry.create({
       data: {
@@ -138,7 +138,7 @@ test("reading a day mutates no stored record", async (context) => {
 
 test("the earliest recorded day spans Tasks, Activities, and Time Blocks", async (context) => {
   await withDatabase(context, async ({ prisma, dayView }) => {
-    const today = startOfLocalDay();
+    const today = startOfLocalDay(new Date());
     assert.equal(await dayView.earliestRecordedDay(prisma), null);
 
     await prisma.task.create({ data: { title: "Older", date: addDays(today, -5) } });

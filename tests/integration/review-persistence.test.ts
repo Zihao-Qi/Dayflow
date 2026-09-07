@@ -59,8 +59,8 @@ test("Review saves upsert one period row without changing Diary evidence", async
   const prisma = getPrisma();
   disconnectPrisma = () => prisma.$disconnect();
 
-  const period = reviewPeriodRange();
-  const diaryDate = startOfLocalDay();
+  const period = reviewPeriodRange(new Date());
+  const diaryDate = startOfLocalDay(new Date());
   const diary = await prisma.diaryEntry.create({
     data: {
       date: diaryDate,

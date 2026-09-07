@@ -78,7 +78,7 @@ export function useBootstrap({
           .finally(() => {
             if (!disposed) scheduleDayRefresh();
           });
-      }, millisecondsUntilNextLocalDay() + 100);
+      }, millisecondsUntilNextLocalDay(new Date()) + 100);
     }
 
     initializeActivityClock();

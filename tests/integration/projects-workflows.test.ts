@@ -391,25 +391,61 @@ test("projects services and server workflows run headlessly on SQLite", async (c
     });
 
     await context.test("SQLite P2025 update races translate locally and roll back disappearing records", async () => {
-      const project = await create();
-      const phase = await prisma.$transaction(tx => createPhase(tx, project.id, { name: "Phase" }));
-      for (const [table, operation, spec] of [
-        ["Project", () => prisma.$transaction(tx => updateProject(tx, project.id, { name: "Lost" })), projectErrors.projectNotFound],
-        ["ProjectPhase", () => prisma.$transaction(tx => updatePhase(tx, phase.id, { name: "Lost" })), projectErrors.phaseNotFound]
+      // Each case sets up its own record rather than sharing one project across
+      // iterations. ProjectPhase cascades on Project deletion, so sharing fixtures
+      // would make iteration 2 depend on iteration 1 having cleanly rolled back.
+      // The Project case creates a child phase to pin that rollback restores
+      // cascaded children alongside the parent.
+      for (const [table, setup, spec] of [
+        [
+          "Project",
+          async () => {
+            const project = await create();
+            const phase = await prisma.$transaction(tx => createPhase(tx, project.id, { name: "Phase" }));
+            return {
+              operation: () => prisma.$transaction(tx => updateProject(tx, project.id, { name: "Lost" })),
+              assertRolledBack: async () => {
+                assert.deepEqual(await prisma.project.findUniqueOrThrow({ where: { id: project.id } }), project);
+                assert.deepEqual(await prisma.projectPhase.findUniqueOrThrow({ where: { id: phase.id } }), phase);
+              }
+            };
+          },
+          projectErrors.projectNotFound
+        ],
+        [
+          "ProjectPhase",
+          async () => {
+            const project = await create();
+            const phase = await prisma.$transaction(tx => createPhase(tx, project.id, { name: "Phase" }));
+            return {
+              operation: () => prisma.$transaction(tx => updatePhase(tx, phase.id, { name: "Lost" })),
+              assertRolledBack: async () => {
+                assert.deepEqual(await prisma.projectPhase.findUniqueOrThrow({ where: { id: phase.id } }), phase);
+              }
+            };
+          },
+          projectErrors.phaseNotFound
+        ]
       ] as const) {
-        await prisma.$executeRawUnsafe(`CREATE TRIGGER disappear_before_update BEFORE UPDATE ON "${table}"
+        // Each table owns its trigger name, so no CREATE is ordered against the
+        // previous iteration's DROP having taken effect. Sharing one name made a
+        // single unlanded DROP surface here as `trigger ... already exists`.
+        const { operation, assertRolledBack } = await setup();
+        const trigger = `disappear_before_${table.toLowerCase()}_update`;
+        await prisma.$executeRawUnsafe(`CREATE TRIGGER ${trigger} BEFORE UPDATE ON "${table}"
           BEGIN DELETE FROM "${table}" WHERE id = OLD.id; END;`);
         try { await assert.rejects(operation, hasSpec(spec)); }
-        finally { await prisma.$executeRawUnsafe("DROP TRIGGER disappear_before_update"); }
+        finally { await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS ${trigger}`); }
+        await assertRolledBack();
       }
-      assert.deepEqual(await prisma.project.findUniqueOrThrow({ where: { id: project.id } }), project);
-      assert.deepEqual(await prisma.projectPhase.findUniqueOrThrow({ where: { id: phase.id } }), phase);
+
       // The parent disappears after the phase service's validation read.
+      const project = await create();
       await prisma.$executeRawUnsafe(`CREATE TRIGGER disappear_phase_parent BEFORE INSERT ON "ProjectPhase"
         BEGIN DELETE FROM "Project" WHERE id = NEW.projectId; END;`);
       try {
         await assert.rejects(() => prisma.$transaction(tx => createPhase(tx, project.id, { name: "Lost" })), hasSpec(projectErrors.theSelectedProjectIsNoLongerAvailable));
-      } finally { await prisma.$executeRawUnsafe("DROP TRIGGER disappear_phase_parent"); }
+      } finally { await prisma.$executeRawUnsafe("DROP TRIGGER IF EXISTS disappear_phase_parent"); }
       assert.deepEqual(await prisma.project.findUniqueOrThrow({ where: { id: project.id } }), project);
       await reset();
     });

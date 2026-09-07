@@ -37,3 +37,23 @@ updates:
       - dependency-name: typescript
         update-types:
           - version-update:semver-major
+      # Prisma 7 is deferred, not unwanted -- see issue #100. It removes the
+      # datasource `url` property from the schema (P1012) and requires a
+      # prisma.config.ts plus a driver adapter passed to the PrismaClient
+      # constructor. Dayflow reads DATABASE_URL from the schema in 31 files, and
+      # the integration tests work by setting that variable to a scratch file
+      # before importing the client -- a seam that has to be redesigned, not
+      # repointed. getPrisma() is also deliberately lazy (#77) so startup restore
+      # can replace the database file before any client opens; an adapter that
+      # opens a handle on construction would have to preserve that ordering.
+      #
+      # prisma and @prisma/client are halves of one upgrade and must move
+      # together, so both are listed.
+      #
+      # Remove these entries when #100 is resolved.
+      - dependency-name: prisma
+        update-types:
+          - version-update:semver-major
+      - dependency-name: "@prisma/client"
+        update-types:
+          - version-update:semver-major

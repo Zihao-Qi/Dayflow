@@ -1,8 +1,43 @@
 # Architecture Migration v1
 
-Status: Proposed
-Date: September 4, 2026
+Status: Completed — Migration complete on main at commit d1da0b5 (PR #77 merge)
+Date: September 4, 2026 (proposed); updated September 6, 2026
+Validated main commit: d1da0b5e0c71423681b0eba38fc2ed6eda5c3b3a (PR #77 merge)
 Scope: Structural migration implementing `docs/adr/0002-modular-monolith-with-explicit-transactions.md`
+
+## Current Status (as of commit d1da0b5)
+
+- **Terminal exit condition reached on main:**
+  - `ARCHITECTURE_STRICT=1 npm run test:architecture`: **0 violations** (exits 0; 119 tests, 111 pass, 0 fail, 8 todo).
+  - `BASELINE`: **0 violations** (empty array `[]`).
+  - `LEGACY_GLOBAL_CLIENT_CALL_BASELINE`: **0 call sites across 0 files** (empty array `[]`).
+  - `ACTIVITY_WRITE_ALLOWLIST`: exactly **5 call sites**.
+  - `CLOCK_READ_ALLOWLIST`: exactly **1 call site** (`src/shared/kernel/calendar.ts:19`).
+  - Startup restore precedes the first Prisma open: verified on main (PR #77 `d1da0b5` replaced the eager module-evaluation singleton with lazy `getPrisma()`).
+- **Verified gate output on current main (`d1da0b5`):**
+  - `npm run test:architecture`: 119 tests, 111 pass, 0 fail, 8 todo.
+  - `ARCHITECTURE_STRICT=1 npm run test:architecture`: 119 tests, 111 pass, 0 fail, 8 todo.
+  - `npm run typecheck`: 0 errors (`tsc --noEmit` clean).
+  - `npm run test:unit`: 443 tests, 443 pass, 0 fail.
+- **Phase completion breakdown:**
+  - **Phase 0:** Complete (PR #44 `a5e2647`, PR #49 `0cef27f`).
+  - **Phase 1:** Complete (PR #45 `0e7cee7`, PR #47 `7c29ad2`, PR #50 `7cbe2b1`, PR #53 `ac696ce`, PR #48 `64b935d`, plus gate unwrap repair PR #71 `24b04e1`).
+  - **Phase 2:** Complete (PR #54 `09f642e`, PR #56 `dea5eeb`).
+  - **Phase 3:** Complete (PR #59 `c01d962`, PR #60 `b3a72f7`, PR #61 `656888b`, PR #62 `0e7fd1d`, PR #66 `1d2d8ab`, PR #67 `567bd7c`). All six slices merged.
+  - **Phase 4:** Complete. Step 1 (SQLite engine move) merged in PR #63 (`8d00dfd`). Step 2 (lazy Prisma singleton getter) merged in PR #77 (`d1da0b5`), satisfying the startup-restore exit condition. Step 3 (backup split) merged in PR #79 (`31c39fc`); structural work, not required for phase 4 terminal exit, which #77 already satisfied.
+  - **Client Track:** Extracted and coarse reads complete (PR #57 `fd68635`, PR #46 `d55af62`, PR #51 `d743e96`, PR #52 `f18fa03`, PR #55 `a1b9b67`, PR #58 `e72fd99`, PR #64 `dc9e284`). E2E flake hardening complete (PR #65 `9a8f444`).
+  - **Invariant gates:** Rule 9 clock invariant gate merged in PR #76 (`3b0e921`).
+  - **Maintenance & Security:** Nanoid security bump complete (PR #72 `7ae26c9`); Next 15.5.21 security bump complete (PR #73 `a4ad778`).
+  - **Public readiness:** PR #75 (`e69910f`) added MIT license and gitignored local working notes (`AGENTS.md`, `docs/research/`).
+- **PR status resolution:**
+  - **PR #65** (`arch/e2e-flake-hardening`): MERGED (`9a8f444`).
+  - **PR #72** (`dependabot/npm_and_yarn/nanoid-3.3.18`): MERGED (`7ae26c9`).
+  - **PR #73** (`dependabot/npm_and_yarn/next-15.5.21`): MERGED (`a4ad778`).
+  - **PR #76** (`arch/rule9-clock`): MERGED (`3b0e921`).
+  - **PR #77** (`arch/lazy-prisma-v2`): MERGED (`d1da0b5`), supersedes draft PR #68.
+  - **PR #69** (`arch/phase4-backup-split`): CLOSED, superseded by PR #79 (`31c39fc`), which rebuilt the split on landed history rather than force-pushing a stale head.
+  - **PR #70** (`arch/server-integration`): DRAFT / **permanently excluded** from merge queue.
+
 
 ## Purpose
 
@@ -129,6 +164,14 @@ rules target directories that do not exist until the migration creates them.
    the rule.
 8. **Scripts direction.** `scripts/` may reference `src/`; every reference
    under `src/` that resolves to `scripts/` is rejected.
+9. **System clock reads.** In server code (`src/app/api`, `src/lib`,
+   `src/modules/*/{domain,services}`, `src/server`, and server utilities in
+   `src/shared/kernel`), zero-argument `new Date()` and direct calls to
+   `Date.now()` are forbidden unless explicitly allowlisted in the test. Date
+   conversions with arguments (e.g. `new Date(isoString)`) are permitted;
+   client layers (`ui`, `shell`, `components`, `shared/client`) and scripts are
+   excluded. Added in PR #76 (`3b0e921`) with a 1-row allowlist
+   (`src/shared/kernel/calendar.ts:19`).
 
 ### Initial baseline
 
@@ -167,10 +210,24 @@ Exactly six keys: `src/app/api/activities/[id]/route.ts:60:activityEntry.deleteM
 key is replaced with the relocated key in the same change. After phase 3
 the two focus keys point at the single creator function in `evidence`.
 
+### The four architecture ratchets
+
+The architecture test asserts exact equality across four ratchet structures (not editable to taste, moving in one direction only):
+1. `BASELINE`: empty (`[]`, 0 violations). Entries get deleted as phases eliminate violations.
+2. `LEGACY_GLOBAL_CLIENT_CALL_BASELINE`: empty (`[]`, 0 calls across 0 files). Legacy call counts decrease to zero.
+3. `ACTIVITY_WRITE_ALLOWLIST`: exactly 5 call sites. Governed ActivityEntry writes can only relocate, never expand.
+4. `CLOCK_READ_ALLOWLIST`: exactly 1 call site (`src/shared/kernel/calendar.ts:19`). Governed server clock reads added by Rule 9.
+
 `ARCHITECTURE_STRICT=1` ignores the baseline and exits non-zero while any
 violation remains.
 
 ## Phase 0: Characterize and Guard
+
+**Execution status:** Complete.
+- PR #44 (`a5e2647`): Added `tests/architecture.test.ts` enforcing the 8 rules, initial baseline (36 violations), and Activity write allowlist (6 keys). Added `test:architecture` to `check`.
+- PR #49 (`0cef27f`): Added error envelope inventory, route contracts, seeded conflict rollback tests, and explicit read-model invariant assertions for bootstrap and agent export.
+
+**Original plan and exit target (historical):**
 
 - Inventory every reachable non-2xx envelope per route and method: the
   triggering input, exact status, exact JSON keys and values, and the
@@ -196,6 +253,16 @@ architecture test reports the baseline and passes.
 
 ## Phase 1: Kernel and Spine
 
+**Execution status:** Complete.
+- Item 1: PR #45 (`0e7cee7`): Made transaction parameter required on all seven Rule 5 sites, reducing baseline from 36 to 29.
+- Item 2: PR #47 (`7c29ad2`): Extracted shared parsing kernel (`src/shared/kernel/parsing.ts`).
+- Item 3: PR #50 (`7cbe2b1`): Introduced `AppError`, per-boundary catalogs, and common serializer.
+- Item 4: PR #53 (`ac696ce`): Injected Clock and Calendar across domains.
+- Item 5: PR #48 (`64b935d`): Ran bootstrap and agent export in single read transactions with explicit 60-second budgets.
+- Gate repair: PR #71 (`24b04e1`): Unwrapped syntactic wrappers in architecture scanner.
+
+**Original plan and exit target (historical):**
+
 1. Make the transaction parameter required on the seven rule 5 sites and
    forward it from every caller. Behavior-preserving; empties the rule 5
    baseline. The sixteen rule 4 call-through sites, `listProjectSummaries`
@@ -218,6 +285,12 @@ interpreted outside the service that knows its meaning.
 
 ## Phase 2: Prove the Service Pattern on Planning
 
+**Execution status:** Complete.
+- Item 1: PR #54 (`09f642e`): Extracted Time Block CRUD services and relocated idempotency helper `runOnce` to `src/server/prisma/run-once.ts`.
+- Item 2: PR #56 (`dea5eeb`): Extracted Task and Focus Queue mutations into planning services with headless SQLite integration tests.
+
+**Original plan and exit target (historical):**
+
 1. Time block create as the proof: the smallest complete slice, with the
    idempotency helper `runOnce` and a headless integration test.
 2. Tasks in one PR: create, update, delete, reorder and schedule undo become
@@ -230,6 +303,17 @@ green; every planning service has an integration test that calls it without
 HTTP; the planning entries leave the baseline.
 
 ## Phase 3: Remaining Services in Graph Order
+
+**Execution status:** Complete (all six slices merged on main).
+- Item 1: PR #59 (`c01d962`): Moved Projects domain, services, workflows (`delete-project`), and read models (`projects-summary`, `project-detail`). Merged.
+- Item 2: PR #60 (`b3a72f7`): Moved Activity and Diary evidence into services with one protection rule; attribution became a domain function; `focus-activity.ts` was created with `recordFocusActivity` as the sole allowlisted writer of `origin: FOCUS`. Merged.
+- Item 3: PR #61 (`656888b`): Moved Notes and Materials into Journal services with cursor pagination. Merged.
+- Item 4: PR #62 (`0e7fd1d`): Moved Review into services and read models, providing canonical domain error catalog and current-window parsing. Merged.
+- Item 5: PR #66 (`1d2d8ab`): Focus pure state machine, timer operations, and transactional completion/enrichment. Consolidated the two legacy focus-session allowlist writes into `recordFocusActivity` and removed focus-session baseline entries. Merged.
+- Read models: PR #67 (`567bd7c`): Unified bootstrap composition and workspace readiness read model (`src/server/read-models/bootstrap.ts`, `src/server/read-models/workspace-readiness.ts`), eliminating the `workspace-readiness.ts` baseline violation. Merged.
+- Deviation note: Compatibility shims and non-violating shared utilities remain under `src/lib` rather than deleting the directory, maintaining external compatibility without violating architecture rules.
+
+**Original plan and exit target (historical):**
 
 1. Projects: placement and metrics stay in the module; completion, deletion
    and phase deletion become `server/workflows`; summaries and detail become
@@ -251,6 +335,17 @@ sites this specification names, with the focus entries moved to the single
 creator.
 
 ## Client Track, in Parallel from Day One
+
+**Execution status:** Partially complete (Items 1, 2, 3, 4, 5 merged; E2E hardening PR #65 pending).
+- Item 1: PR #57 (`fd68635`): Unified client transport with `createClientRequestHelper` and mutation ID hook. Merged.
+- Item 2: PR #46 (`d55af62`), PR #51 (`d743e96`), PR #52 (`f18fa03`): Extracted Journal, Backlog with matrix, and Today with TaskRow to module `ui` packages. Merged.
+- Item 3: PR #55 (`a1b9b67`): Split data-management dialog by concern and separated focus timer UI. Merged.
+- Item 4: PR #64 (`dc9e284`): Coarse reads for Today and Review. Merged. (Rehearsal on `merge/rehearse-64` failed to predict 38 unit test failures on merge due to an unprojected clean-merge export swap in `src/lib/review-records.ts`; resolved on merge branch).
+- Item 5: PR #58 (`e72fd99`): Dashboard became `src/shell` as composition root. Merged.
+- E2E flake hardening: PR #65 (`arch/e2e-flake-hardening`): Status: OPEN / pending merge.
+- Persistent destination controllers: Follow-up prepared locally at checkpoint `ba30c21`.
+
+**Original plan and exit target (historical):**
 
 1. One request helper and one mutation-id hook replace every raw `fetch` and
    hand-written response guard. Same behavior.
@@ -363,6 +458,15 @@ Neither gap is excused by the composition-root decision.
 
 ## Phase 4: Backup Engine and Lazy Prisma
 
+**Execution status:** Complete. Both exit clauses satisfied on main at commit `d1da0b5`.
+- Step 1: PR #63 (`8d00dfd`): Moved SQLite backup and migration engines into `src/modules/data-ops/services` with clock injection (`ClockInstant`). Merged. Removes the Rule 8 baseline entry (`src/lib/backup-management.ts:42`).
+- Step 2: PR #77 (`d1da0b5`): Replaced eager module-evaluation Prisma singleton in `src/lib/prisma.ts` with lazy `getPrisma()` singleton getter; converted 28 callers across the tree. Merged (supersedes draft PR #68). Satisfies the second exit clause: startup restore precedes the first Prisma open.
+- Step 3: PR #69 (`arch/phase4-backup-split`): Splits backup management into policy/retention, restore coordinator, and automatic runner. Rebuilt on landed history and merged as PR #79 (`31c39fc`); optional refactor not required for phase 4 terminal exit.
+- Integration PR #70: DRAFT, **permanently excluded** from merge queue.
+- Terminal exit condition reached on main: Both clauses of the phase 4 exit target are satisfied on main at commit `d1da0b5`: (1) the architecture baseline is 0 in strict mode (`BASELINE = []`, `LEGACY_GLOBAL_CLIENT_CALL_BASELINE = []`, `ARCHITECTURE_STRICT=1 npm run test:architecture` exits 0), and (2) startup restore precedes the first Prisma open via lazy `getPrisma()`.
+
+**Original plan and exit target (historical):**
+
 1. Move `scripts/database-backup.ts` and `database-migration.ts` into
    `modules/data-ops/services`; scripts keep argument parsing and import from
    there. Zero logic change. Removes the rule 8 baseline entry.
@@ -396,3 +500,59 @@ precedes the first Prisma open.
 - Every service has at least one integration test that does not construct a
   `NextRequest`.
 - The startup-restore integration test passes after each phase 4 PR.
+
+## Operational Lessons and Critical Invariants
+
+1. **Terminal exit condition, premature completion correction, and specification vs scanner:**
+   - *Correction of premature completion claim:* An earlier status entry reported the migration complete when `ARCHITECTURE_STRICT=1` first passed on main (at PR #63 `8d00dfd` and PR #64 `dc9e284`). That claim was premature and is superseded. Phase 4's exit specification (`ARCHITECTURE_MIGRATION_V1.md:480-481`) defines two conjuncts:
+     > Exit: architecture baseline empty in strict mode; startup restore still precedes the first Prisma open.
+     While the first clause held from #63, the second clause did not hold until PR #77 (`d1da0b5`) landed: until then, `src/lib/prisma.ts` eagerly instantiated `new PrismaClient` during module evaluation across 28 importers. The migration became genuinely complete at #77 (`d1da0b5`).
+   - *The four ratchets on main (`d1da0b5`):*
+     - Architecture baseline: 0 violations (`BASELINE = []`).
+     - Legacy global-client baseline: 0 call sites across 0 files (`LEGACY_GLOBAL_CLIENT_CALL_BASELINE = []`).
+     - Activity write allowlist: exactly 5 call sites.
+     - Clock read allowlist: exactly 1 call site (`src/shared/kernel/calendar.ts:19`).
+     - Strict mode: `ARCHITECTURE_STRICT=1 npm run test:architecture` exits 0 (119 tests: 111 pass, 0 fail, 8 todo).
+     - Gate suites: `npm run typecheck` clean (0 errors); `npm run test:unit` 443 pass, 0 fail.
+   - *Core limitation: a green scanner is not a satisfied specification.* We treated *the gate's* exit condition as *the migration's* exit condition. The specification asked for an invariant the scanner cannot measure (Prisma client construction timing during module evaluation vs startup restore execution). No amount of green from the architecture scanner could reveal that the second exit clause remained unfulfilled; it was discovered by reading the specification text directly against the code. This is recorded as a primary lesson alongside the rehearsal limitation and the six defect classes.
+
+2. **Mechanical clock invariant gate (Rule 9) landed:**
+   *Supersedes previous note regarding lack of mechanical clock enforcement.* PR #76 (`3b0e921`) implemented and merged Rule 9 into `tests/architecture.test.ts`. Rule 9 mechanically forbids zero-argument `new Date()` and direct `Date.now()` calls in server paths (`src/app/api`, `src/lib`, `src/modules/*/{domain,services}`, `src/server`, and server utilities in `src/shared/kernel`). The rule is ratcheted with a 1-row allowlist:
+   - `src/shared/kernel/calendar.ts:19` (`systemClock.now()`)
+   Client layers (`ui`, `shell`, `components`, `shared/client`) and scripts remain permitted to read wall-clock time directly.
+
+3. **Client guard isolation gap (Proposed Rule 3 extension):**
+   Ten guard names are exported by both `src/shared/client/decoders.ts` and a `src/modules/*/domain/*` module; nine are identical today, which is the hazard rather than safety as it allowed drift to accumulate unnoticed. Twelve `src/lib/*` shims use `export *` and seven are imported by client code. Three client files already import domain guards directly. Proposed rule: client layers may import types and non-guard functions from a domain module, but any value import matching `/^(is|has|parse)[A-Z]/` must come from `@/shared/client/decoders`; and shims consumed by client code may not use `export *`. Recorded as an operational follow-up.
+
+4. **Day-payload task filtering (Deliberate non-fix with caveat):**
+   The client day decoder does not compare a task's date to the decoded day key, so a backlog task (`date: null`) or a foreign-day task would be accepted. This was deliberately not fixed in the client decoder: the server already excludes both (`src/modules/planning/services/tasks.ts`), and the obvious client-side fix would compare a server-computed day key against a date interpreted in the browser's zone — the exact defect class the review-window geometry check exists to prevent. Anyone picking up this follow-up must preserve this boundary and avoid introducing browser timezone interpretation.
+
+5. **Limitation of the rehearsal technique:**
+   Rehearsing against a projected main catches conflicts, but not a clean-merge export swap where the projection's version of a file differs from what actually landed. Six branches were pre-resolved this way and five were fine. For PR #64 (`dc9e284`), the rehearsal ran against a projection of main that did not contain #62's rewrite of `src/lib/review-records.ts` from an explicit named export list to `export * from "@/modules/review/domain/review"`. On the real merge that file never conflicted, git took main's line cleanly, and `isReviewWindowDetail` silently re-resolved to a different implementation — the domain guard, which lacks the `hasReviewWindowGeometry` check. Every other gate stayed green, but the real merge produced 38 unit test failures that the rehearsal did not predict.
+
+6. **Timezone masking in CI:**
+   The entire automated test suite runs strictly under `TZ=America/Chicago` (pinned in `.github/workflows/ci.yml:23` as `TZ: America/Chicago`, and in `package.json` scripts `test:unit` and `test:backup`). This makes timezone-dependent defects structurally invisible in automated CI runs. Review unit tests currently fail under `TZ=UTC` and `TZ=America/New_York`; these appear to be zone-bound fixtures (e.g. Chicago daylight-saving 167-hour vs non-DST 168-hour week assertion in `tests/unit/review-domain.test.ts:136`, and Chicago midnight timestamps in `review-route-contracts.test.ts`) rather than product bugs, though only one was verified. Client decoders (`tests/unit/review-records.test.ts`) were separately verified across all three zones (`UTC`, `America/New_York`, `America/Chicago`).
+
+7. **Ungated read transaction budgets:**
+   The `{ timeout: 60000 }` options on `prisma.$transaction` calls in `src/app/api/bootstrap/route.ts` and `src/app/api/agent-export/route.ts` have no automated gate in architecture tests or linters, and were silently dropped during a merge conflict resolution before.
+
+8. **The six defect classes:**
+   Every defect shipped during this migration merged cleanly, passed CI, and was discovered later by reading:
+   - Defect 1: A transaction budget (`{ timeout: 60000 }`) dropped during a merge.
+   - Defect 2: An import of an export that a sibling branch removed.
+   - Defect 3: A reference to a re-exported class with no constructible local binding (`new SomeError(...)` where `export { AppError as SomeError }` provides no local binding, causing runtime `TypeError: ... is not a constructor` or compile error).
+   - Defect 4: Browser-side validation of a value the server computes.
+   - Defect 5: A parity test comparing two paths that turned out to share one implementation.
+   - Defect 6: An agent changing documented behaviour so a test would pass.
+
+9. **PR #70 permanent exclusion:**
+   Draft PR #70 (`arch/server-integration`) remains permanently excluded from the merge queue. Merges proceed per-feature in dependency order.
+
+10. **Next 16 major upgrade failure (Issue #81 / PR #74):**
+    Tracked as issue #81. Dependabot PR #74 arrived titled "Bump postcss and next", proposing a major upgrade of `next` from 15.5.21 to **16.3.4**. While 236 of 237 E2E tests passed, it failed CI deterministically on two heads at `tests/e2e/startup-recovery.spec.ts:8`: the database migration recovery screen instructing the user to run `npm run db:migrate` never renders. Because this is a real product error-recovery path rather than a test flake, PR #74 was closed unmerged. The branch and diagnostic evidence are preserved on branch `dependabot/npm_and_yarn/multi-6cecf19b89` (commit `8216bea`).
+
+11. **Outstanding transitive security advisories without upstream fix on main:**
+    `npm audit` on current main reports two unresolved high-severity vulnerabilities in transitive dependencies that cannot be resolved without breaking major version upgrades:
+    - `postcss` (<=8.5.22): GHSA-qx2v-qp2m-jg93 (XSS via unescaped `</style>` in CSS stringify output), GHSA-6g55-p6wh-862q, GHSA-fxqj-rqcc-2cmp, GHSA-r28c-9q8g-f849 (path traversal and arbitrary `.map` file disclosure via `sourceMappingURL` in CSS comments). Transitive via `next`; fix requires `next@16.3.4` which currently fails E2E startup recovery (issue #81).
+    - `deepmerge-ts` (<8.0.0): GHSA-ggr8-5vv4-36mx (stack exhaustion when merging recursive object graphs). Transitive via `@prisma/config` in `prisma`; fix requires `prisma@6.12.0` / breaking upgrade.
+

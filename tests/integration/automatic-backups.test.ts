@@ -79,7 +79,7 @@ test("an enabled policy creates one verified backup and then waits", { timeout: 
     setAutomaticBackupPolicy(enabled, options);
 
     const first = runDueAutomaticBackup(options);
-    assert.equal(first.status, "succeeded", first.reason);
+    assert.equal(first.status, "succeeded", first.reason ?? "automatic backup did not succeed");
     assert.equal(artifacts().length, 1);
     assert.ok(artifacts()[0].startsWith("dayflow-automatic-"));
 
@@ -165,7 +165,7 @@ test("v1 deletes nothing: a due-check-and-create leaves every artifact present",
       Date.parse(manual.createdAt) + enabled.intervalHours * 60 * 60 * 1000
     );
     const attempt = runDueAutomaticBackup({ ...options, now: dueAt });
-    assert.equal(attempt.status, "succeeded", attempt.reason);
+    assert.equal(attempt.status, "succeeded", attempt.reason ?? "automatic backup did not succeed");
 
     const after = artifacts();
     for (const name of [manual.fileName, ...planted]) {

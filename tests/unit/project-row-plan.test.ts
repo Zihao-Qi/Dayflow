@@ -3,6 +3,7 @@ import test from "node:test";
 import type { ProjectTaskRecord } from "../../src/lib/project-domain";
 import {
   createProjectRowPlan,
+  initialProjectRowPlanState,
   projectPlanKey,
   type ProjectPlanDetail,
   type ProjectRowPlanState
@@ -64,7 +65,7 @@ function createPlanDetail(tasks: ProjectTaskRecord[], counts: Counts = {}): Proj
     taskCount: counts.taskCount ?? tasks.length,
     completedTaskCount:
       counts.completedTaskCount ?? tasks.filter((t) => t.status === "DONE").length,
-    nextTaskId: counts.nextTaskId ?? (tasks[0]?.id ?? null),
+    nextTaskId: counts.nextTaskId !== undefined ? counts.nextTaskId : (tasks[0]?.id ?? null),
     progressPercent: counts.progressPercent ?? 0
   };
 }
@@ -74,7 +75,8 @@ const LOAD_FAILED = "These tasks could not be loaded. Try again.";
 function createHarness(initialKey: string) {
   const reads: Deferred<ProjectPlanDetail>[] = [];
   const refreshes: Deferred<void>[] = [];
-  const states: ProjectRowPlanState[] = [];
+  let currentState: ProjectRowPlanState = initialProjectRowPlanState;
+  const states: ProjectRowPlanState[] = [initialProjectRowPlanState];
   const view = { summaryKey: initialKey, expanded: false };
 
   const row = createProjectRowPlan({
@@ -91,6 +93,7 @@ function createHarness(initialKey: string) {
     },
     view: () => view,
     onChange: (state) => {
+      currentState = state;
       states.push(state);
     }
   });
@@ -101,8 +104,8 @@ function createHarness(initialKey: string) {
     refreshes,
     view,
     states,
-    getPublishedTaskIds: () => (row.getState().plan?.tasks ?? []).map((t) => t.id),
-    getState: () => row.getState()
+    getPublishedTaskIds: () => (currentState.plan?.tasks ?? []).map((t) => t.id),
+    getState: () => currentState
   };
 }
 

@@ -1167,4 +1167,98 @@ test("follows the winning load when delete reconciliation is superseded (Blocker
   ).toBeHidden();
 });
 
+test("reloads the open drawer when an external completion moves planKey during an in-flight mutation reload", async ({
+  page
+}) => {
+  test.setTimeout(60_000);
+  const project = await createProject(page, "Suppressed Invalidation Project");
+  const scheduledResponse = await page.request.post("/api/tasks", {
+    data: {
+      title: "Task to complete via focus",
+      projectId: project.id,
+      date: "2026-09-09",
+      estimateMinutes: 5
+    }
+  });
+  expect(scheduledResponse.status()).toBe(201);
+  const scheduledTask = (await scheduledResponse.json()) as { id: string };
+  const backlogResponse = await page.request.post("/api/tasks", {
+    data: {
+      title: "Task to rename in drawer",
+      projectId: project.id,
+      date: null,
+      estimateMinutes: 15
+    }
+  });
+  expect(backlogResponse.status()).toBe(201);
 
+  await openListProjects(page);
+  const row = projectRowFor(page, "Suppressed Invalidation Project");
+  await projectToggle(page, "Suppressed Invalidation Project").click();
+  const drawer = row.locator(".project-row-drawer");
+  await expect(drawer.locator(".project-task")).toHaveCount(2);
+
+  let detailGets = 0;
+  let releaseSnapshot = () => {};
+  const heldSnapshot = new Promise<void>((resolve) => {
+    releaseSnapshot = resolve;
+  });
+  let reportSnapshotCaptured = () => {};
+  const snapshotCaptured = new Promise<void>((resolve) => {
+    reportSnapshotCaptured = resolve;
+  });
+  await page.route(`**/api/projects/${project.id}`, async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    detailGets += 1;
+    if (detailGets !== 1) return route.continue();
+    // Capture the actual pre-completion response before allowing Focus to run.
+    // Waiting only for this handler to start would leave a race in the fixture.
+    const response = await page.request.fetch(route.request());
+    expect(response.status()).toBe(200);
+    const body = await response.text();
+    const captured = JSON.parse(body) as {
+      tasks: Array<{ id: string; title: string; status: string }>;
+    };
+    expect(captured.tasks.find((task) => task.id === scheduledTask.id)?.status).toBe("TODO");
+    expect(captured.tasks.some((task) => task.title === "Renamed Task")).toBe(true);
+    reportSnapshotCaptured();
+    await heldSnapshot;
+    return route.fulfill({ status: response.status(), headers: response.headers(), body });
+  });
+
+  try {
+    const renameInput = drawer.getByRole("textbox", {
+      name: "Task title: Task to rename in drawer",
+      exact: true
+    });
+    await renameInput.fill("Renamed Task");
+    await renameInput.blur();
+    await snapshotCaptured;
+
+    await row.getByRole("button", {
+      name: /^Focus \d+m on Task to complete via focus$/
+    }).click();
+    const rail = page.getByRole("complementary", { name: "Focus rail" });
+    const started = page.waitForResponse((response) =>
+      response.url().includes("/api/focus-session") &&
+      response.request().method() === "POST"
+    );
+    await rail.getByRole("button", { name: /^Start \d+m focus$/ }).click();
+    const { session } = (await (await started).json()) as { session: { id: string } };
+    setFocusSessionElapsedMinutes(session.id, 3);
+    await rail.getByRole("button", { name: /^Finish( \d+m)?$/ }).click();
+    await rail.getByRole("button", { name: "Mark done" }).click();
+    await rail.getByRole("button", { name: /Save|Finish without details/ }).first().click();
+    await expect(row.locator(".project-row-tasks")).toHaveText("1/2 tasks");
+  } finally {
+    releaseSnapshot();
+  }
+
+  // The drawer must catch up without collapse or another unrelated mutation.
+  await expect(drawer.getByRole("button", {
+    name: "Reopen Task to complete via focus",
+    exact: true
+  })).toBeVisible();
+  await expect(drawer.getByRole("status")).toHaveCount(0);
+  expect(detailGets).toBe(2); // The stale mutation read plus one corrective read.
+});

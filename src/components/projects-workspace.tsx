@@ -605,7 +605,10 @@ function ProjectRow({
   const loadedKey = useRef(planKey);
   const requestToken = useRef(0);
   const latestLoad = useRef<Promise<LoadPlanResult> | null>(null);
-  const inFlightMutationReload = useRef(false);
+  const inFlightMutationReload = useRef(0);
+  const skippedPlanKey = useRef<string | null>(null);
+  const latestView = useRef({ planKey, expanded });
+  latestView.current = { planKey, expanded };
   const taskCreateMutation = useRef<PendingMutation | null>(null);
   const statusLabel = projectStatusLabel(project.status);
   const plannedMinutes = project.nextTaskEstimateMinutes ?? 30;
@@ -682,12 +685,39 @@ function ProjectRow({
     initial: LoadPlanResult
   ): Promise<LoadPlanResult> {
     let current = initial;
-    while (current.status === "superseded" && latestLoad.current) {
+    while (
+      (current.status === "superseded" || current.token !== requestToken.current) &&
+      latestLoad.current
+    ) {
       const next = await latestLoad.current;
       if (next === current) break;
       current = next;
     }
     return current;
+  }
+
+  async function reconcileSkippedPlan(initial: LoadPlanResult): Promise<LoadPlanResult> {
+    let result = initial;
+    for (;;) {
+      result = await followWinningLoad(result);
+      if (result.status === "superseded") return result;
+      // Another mutation may have started a load while the await resumed.
+      if (result.token !== requestToken.current) continue;
+      if (skippedPlanKey.current === null) return result;
+      skippedPlanKey.current = null;
+
+      const { planKey: currentKey, expanded: isExpanded } = latestView.current;
+      if (loadedKey.current === currentKey) return result;
+      if (!isExpanded) {
+        loadedKey.current = currentKey;
+        setPlan(null);
+        return result;
+      }
+      // Preserve the error and explicit retry after a failed read. Only a
+      // successful but outdated snapshot calls for another automatic read.
+      if (result.status === "failed") return result;
+      result = await loadPlan();
+    }
   }
 
   function toggle() {
@@ -730,10 +760,9 @@ function ProjectRow({
     // The write has already committed; running them concurrently avoids two
     // sequential round-trips for every mutation.
     //
-    // Track inFlightMutationReload so that if onDataChanged settles before
-    // loadPlan (bootstrap-first timing), the [planKey, expanded] effect skips
-    // launching a duplicate concurrent detail GET.
-    inFlightMutationReload.current = true;
+    // Coalesce summary invalidations while mutation refreshes are active.
+    // Count overlapping mutations so an older one cannot release a newer one.
+    inFlightMutationReload.current += 1;
     let planResult: LoadPlanResult;
     let refreshError: unknown = null;
     try {
@@ -744,8 +773,18 @@ function ProjectRow({
           (error) => error
         )
       ]);
+      // Reconciliation refreshes the drawer after a skipped summary
+      // invalidation, and may run a later, unrelated read. Its outcome must not
+      // become this mutation's answer: `addTask` decides whether to merge its
+      // confirmed record from `planResult`, and only this mutation's own read
+      // can say whether that record was published. A later read that failed says
+      // nothing about it, and substituting one reinstates the stale-overlay
+      // family — a create merged back in after a delete had removed it. The
+      // token check in `addTask` still rejects a stale own-read, because any
+      // reconciling load advances `requestToken` past it.
+      await reconcileSkippedPlan(planResult);
     } finally {
-      inFlightMutationReload.current = false;
+      inFlightMutationReload.current -= 1;
     }
 
     if (refreshError) {
@@ -844,18 +883,21 @@ function ProjectRow({
 
   useEffect(() => {
     if (loadedKey.current === planKey) return;
-    loadedKey.current = planKey;
-    // When a mutation reload is already in flight, its loadPlan() will update
-    // the plan with post-mutation data and advance loadedKey. Skipping here
-    // prevents bootstrap-first timing (onDataChanged settling before loadPlan)
-    // from launching a redundant trailing fetch.
-    if (inFlightMutationReload.current) return;
+    // Observing a key does not prove that an in-flight read contains it.
+    // Keep it pending until mutation refreshes reconcile the published snapshot.
+    if (inFlightMutationReload.current > 0) {
+      skippedPlanKey.current = planKey;
+      return;
+    }
     // Keep an open drawer mounted while its data refreshes. In particular,
     // ProjectRowAddTask owns an unsubmitted draft that must survive edits to
     // neighbouring Tasks. A closed drawer can discard its cache and load on
     // the next expansion.
     if (expanded) void loadPlan();
-    else setPlan(null);
+    else {
+      loadedKey.current = planKey;
+      setPlan(null);
+    }
   }, [planKey, expanded]);
 
   return (

@@ -81,8 +81,6 @@ export type ProjectRowPlanDeps = {
 };
 
 export type ProjectRowPlan = {
-  /** The drawer state as last published. */
-  getState(): ProjectRowPlanState;
   /** The user opened or closed the row. */
   toggle(opened: boolean): void;
   /** The row rendered a new summary key or disclosure. Call from an effect. */
@@ -251,10 +249,6 @@ export function createProjectRowPlan(deps: ProjectRowPlanDeps): ProjectRowPlan {
   }
 
   return {
-    getState() {
-      return state;
-    },
-
     toggle(opened) {
       // An edit error refers to a past write, and that context is gone once the
       // row is closed or reopened.

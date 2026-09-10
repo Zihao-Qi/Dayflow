@@ -935,3 +935,236 @@ test("replays a lost drawer create instead of adding the task twice", async ({
     1
   );
 });
+
+test("does not overwrite a newer completion with a delayed rename response (Blocker 1)", async ({
+  page
+}) => {
+  const project = await createProject(page, "Rename Race Project");
+  const created = await page.request.post("/api/tasks", {
+    data: {
+      title: "Task to rename",
+      projectId: project.id,
+      date: null,
+      estimateMinutes: 30
+    }
+  });
+  expect(created.status()).toBe(201);
+  const task = (await created.json()) as { id: string };
+
+  let releaseRenameResponse: () => void = () => {};
+  const renameResponsePromise = new Promise<void>((resolve) => {
+    releaseRenameResponse = resolve;
+  });
+
+  await page.route(`**/api/tasks/${task.id}`, async (route) => {
+    const method = route.request().method();
+    if (method === "PATCH") {
+      const data = route.request().postDataJSON();
+      if (data && data.title === "Delayed Rename") {
+        const response = await page.request.fetch(route.request());
+        const body = await response.body();
+        const headers = response.headers();
+        const status = response.status();
+        await renameResponsePromise;
+        return route.fulfill({ status, headers, body });
+      }
+    }
+    return route.continue();
+  });
+
+  await openListProjects(page);
+  const row = projectRowFor(page, "Rename Race Project");
+  await projectToggle(page, "Rename Race Project").click();
+
+  const drawer = row.locator(".project-row-drawer");
+  const taskItem = drawer.locator(".project-task");
+  const titleInput = drawer.getByRole("textbox", {
+    name: "Task title: Task to rename"
+  });
+
+  await titleInput.fill("Delayed Rename");
+  const completeButton = drawer.getByRole("button", {
+    name: "Complete Task to rename"
+  });
+  await completeButton.click();
+
+  await expect(taskItem).toHaveClass(/done/);
+  await expect(taskItem.locator(".project-task-state.done")).toBeVisible();
+
+  releaseRenameResponse();
+
+  await page.waitForTimeout(600);
+  await expect(taskItem).toHaveClass(/done/);
+  await expect(taskItem.locator(".project-task-state.done")).toBeVisible();
+});
+
+test("does not resurrect a deleted task when a create response settles late (Blocker 2)", async ({
+  page
+}) => {
+  const project = await createProject(page, "Create Race Project");
+
+  let createdTaskId = "";
+  let releaseCreateResponse: () => void = () => {};
+  const createResponsePromise = new Promise<void>((resolve) => {
+    releaseCreateResponse = resolve;
+  });
+
+  await page.route("**/api/tasks", async (route) => {
+    if (route.request().method() === "POST") {
+      const response = await page.request.fetch(route.request());
+      const body = (await response.json()) as { id: string };
+      createdTaskId = body.id;
+      await createResponsePromise;
+      return route.fulfill({
+        status: response.status(),
+        headers: response.headers(),
+        body: JSON.stringify(body)
+      });
+    }
+    return route.continue();
+  });
+
+  await openListProjects(page);
+  const row = projectRowFor(page, "Create Race Project");
+  await projectToggle(page, "Create Race Project").click();
+
+  const drawer = row.locator(".project-row-drawer");
+  const input = drawer.getByRole("textbox", { name: "New Project task" });
+  await input.fill("Doomed Task");
+  await drawer.getByRole("button", { name: /^Add$/ }).click();
+
+  // Wait until the server has received and created the task
+  await expect.poll(() => createdTaskId).not.toBe("");
+
+  // While the browser's create response is held in flight, the task is deleted on the server
+  const deleted = await page.request.delete(`/api/tasks/${createdTaskId}`);
+  expect(deleted.status()).toBe(200);
+
+  // Release the create response.
+  // On broken code, addTask's unconditional setPlan overlay runs on result.ok
+  // and resurrects "Doomed Task" despite the server having deleted it.
+  // On fixed code, loadPlan succeeded ("loaded"), so addTask skips the fallback merge.
+  releaseCreateResponse();
+
+  await page.waitForTimeout(600);
+  await expect(drawer.getByText("No tasks yet.")).toBeVisible();
+  await expect(
+    drawer.getByRole("textbox", { name: "Task title: Doomed Task" })
+  ).toBeHidden();
+});
+
+test("follows the winning load when delete reconciliation is superseded (Blocker 3)", async ({
+  page
+}) => {
+  const project = await createProject(page, "Superseded Reconcile Project");
+  // Create Task to keep first with a date so it has a Focus button
+  const taskKeep = await page.request.post("/api/tasks", {
+    data: {
+      title: "Task to keep",
+      projectId: project.id,
+      date: "2026-09-09",
+      estimateMinutes: 5
+    }
+  });
+  expect(taskKeep.status()).toBe(201);
+
+  const taskDelete = await page.request.post("/api/tasks", {
+    data: {
+      title: "Task to delete",
+      projectId: project.id,
+      date: null,
+      estimateMinutes: 15
+    }
+  });
+  expect(taskDelete.status()).toBe(201);
+  const tDelete = (await taskDelete.json()) as { id: string };
+
+  let dropDelete = true;
+  await page.route(`**/api/tasks/${tDelete.id}`, async (route) => {
+    if (route.request().method() === "DELETE" && dropDelete) {
+      dropDelete = false;
+      const forwarded = await page.request.delete(`/api/tasks/${tDelete.id}`, {
+        headers: route.request().headers()
+      });
+      expect(forwarded.status()).toBe(200);
+      return route.abort("connectionfailed");
+    }
+    return route.continue();
+  });
+
+  await openListProjects(page);
+  const row = projectRowFor(page, "Superseded Reconcile Project");
+  await projectToggle(page, "Superseded Reconcile Project").click();
+
+  const drawer = row.locator(".project-row-drawer");
+  await expect(drawer.locator(".project-task")).toHaveCount(2);
+
+  let detailGetCount = 0;
+  let releaseFirstReconcileGet: () => void = () => {};
+  const firstReconcileGetPromise = new Promise<void>((resolve) => {
+    releaseFirstReconcileGet = resolve;
+  });
+
+  await page.route(`**/api/projects/${project.id}`, async (route) => {
+    if (route.request().method() === "GET") {
+      detailGetCount++;
+      if (detailGetCount === 1) {
+        // Hold reconcile GET #1 until GET #2 has started.
+        await firstReconcileGetPromise;
+      } else if (detailGetCount === 2) {
+        // GET #2 from overview refresh has started, advancing requestToken.
+        // Release GET #1 so it is genuinely superseded.
+        releaseFirstReconcileGet();
+      }
+    }
+    return route.continue();
+  });
+
+  // Trigger delete on Task to delete
+  await drawer
+    .getByRole("button", { name: "Delete task Task to delete" })
+    .click();
+  await drawer
+    .getByRole("button", { name: "Delete task", exact: true })
+    .click();
+
+  // Reconcile GET #1 is now held. Complete Task to keep via Focus rail,
+  // which updates the overview summary and triggers loadPlan #2.
+  const focusBtn = row.getByRole("button", {
+    name: /^Focus \d+m on Task to keep$/
+  });
+  await focusBtn.evaluate((el: HTMLElement) => el.click());
+  const rail = page.getByRole("complementary", { name: "Focus rail" });
+  const startFocus = page.waitForResponse(
+    (response) =>
+      response.url().includes("/api/focus-session") &&
+      response.request().method() === "POST"
+  );
+  const startBtn = rail.getByRole("button", { name: /^Start \d+m focus$/ });
+  await startBtn.evaluate((el: HTMLElement) => el.click());
+  const { session } = (await (await startFocus).json()) as {
+    session: { id: string };
+  };
+  setFocusSessionElapsedMinutes(session.id, 3);
+  const finishBtn = rail.getByRole("button", { name: /^Finish( \d+m)?$/ });
+  await finishBtn.evaluate((el: HTMLElement) => el.click());
+  const markDoneBtn = rail.getByRole("button", { name: "Mark done" });
+  await markDoneBtn.evaluate((el: HTMLElement) => el.click());
+  const saveBtn = rail
+    .getByRole("button", { name: /Save|Finish without details/ })
+    .first();
+  await saveBtn.evaluate((el: HTMLElement) => el.click());
+
+  // In broken code, deleteTask receives status: "superseded" and returns false,
+  // failing to clear editError so "The change could not be saved. Your draft is still here."
+  // remains displayed in the drawer.
+  // In fixed code, deleteTask follows the winning load, returns true, and clears editError.
+  await page.waitForTimeout(600);
+  await expect(drawer.locator(".project-row-edit-error")).toBeHidden();
+  await expect(drawer.getByRole("alert")).toBeHidden();
+  await expect(
+    drawer.getByRole("textbox", { name: "Task title: Task to delete" })
+  ).toBeHidden();
+});
+
+

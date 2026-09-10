@@ -564,6 +564,16 @@ function ProjectCreateForm({
  * the Focus button starts a session) and anything inside a `<summary>` toggles
  * it when clicked, so those would fight each other.
  */
+type ProjectRowPlan = {
+  tasks: ProjectTaskRecord[];
+  phases: ProjectPhaseRecord[];
+};
+
+type LoadPlanResult =
+  | { status: "loaded"; plan: ProjectRowPlan; token: number }
+  | { status: "superseded" }
+  | { status: "failed"; token: number };
+
 function ProjectRow({
   project,
   today,
@@ -594,6 +604,8 @@ function ProjectRow({
   ].join(":");
   const loadedKey = useRef(planKey);
   const requestToken = useRef(0);
+  const latestLoad = useRef<Promise<LoadPlanResult> | null>(null);
+  const inFlightMutationReload = useRef(false);
   const taskCreateMutation = useRef<PendingMutation | null>(null);
   const statusLabel = projectStatusLabel(project.status);
   const plannedMinutes = project.nextTaskEstimateMinutes ?? 30;
@@ -609,7 +621,7 @@ function ProjectRow({
   // Kept separate from `toggle` so a failed load can be retried in place. A
   // retry that went through `toggle` would read the drawer as open and close
   // it instead of fetching again.
-  async function loadPlan() {
+  async function executeLoadPlan(): Promise<LoadPlanResult> {
     // Each attempt takes a token and only the newest one is allowed to write.
     // A guard on `loading` would drop the reload instead: when the summary
     // moves while a fetch is already in flight, that fetch is carrying
@@ -617,63 +629,131 @@ function ProjectRow({
     // the staleness the reload exists to clear.
     const token = requestToken.current + 1;
     requestToken.current = token;
-    const requestedKey = planKey;
     setLoading(true);
     setLoadError("");
     try {
       const result = await loadProjectPlanRequest(project.id);
 
-      if (token !== requestToken.current) return null;
-      loadedKey.current = requestedKey;
-      const nextPlan = {
+      if (token !== requestToken.current) return { status: "superseded" };
+      const nextPlan: ProjectRowPlan = {
         tasks: result.tasks as ProjectTaskRecord[],
         phases: Array.isArray(result.phases)
           ? (result.phases as ProjectPhaseRecord[])
           : []
       };
+
+      // Set loadedKey to what planKey will be once onDataChanged()'s bootstrap
+      // refresh settles (using counts from the authoritative detail response,
+      // falling back to counting tasks), so when loadPlan finishes before
+      // onDataChanged, the [planKey, expanded] effect recognizes the plan is
+      // already current and skips a redundant trailing fetch.
+      const raw = result as {
+        taskCount?: number;
+        completedTaskCount?: number;
+        nextTaskId?: string | null;
+        progressPercent?: number | null;
+      };
+      loadedKey.current = [
+        raw.taskCount ?? nextPlan.tasks.length,
+        raw.completedTaskCount ??
+          nextPlan.tasks.filter((t) => t.status === "DONE").length,
+        raw.nextTaskId ?? "",
+        raw.progressPercent ?? ""
+      ].join(":");
+
       setPlan(nextPlan);
-      return nextPlan;
+      return { status: "loaded", plan: nextPlan, token };
     } catch {
-      if (token !== requestToken.current) return null;
+      if (token !== requestToken.current) return { status: "superseded" };
       setLoadError("These tasks could not be loaded. Try again.");
-      return null;
+      return { status: "failed", token };
     } finally {
       if (token === requestToken.current) setLoading(false);
     }
   }
 
+  function loadPlan(): Promise<LoadPlanResult> {
+    const promise = executeLoadPlan();
+    latestLoad.current = promise;
+    return promise;
+  }
+
+  async function followWinningLoad(
+    initial: LoadPlanResult
+  ): Promise<LoadPlanResult> {
+    let current = initial;
+    while (current.status === "superseded" && latestLoad.current) {
+      const next = await latestLoad.current;
+      if (next === current) break;
+      current = next;
+    }
+    return current;
+  }
+
   function toggle() {
     const next = !expanded;
     setExpanded(next);
-    if (next && !plan) void loadPlan();
+    // An edit error refers to a past write that failed. Once the drawer is
+    // collapsed or reopened, that mutation context is obsolete, so clear it.
+    setEditError("");
+    // A read failure represents unresolved staleness. When expanding,
+    // re-attempt the load so a transient network drop recovers automatically,
+    // while keeping the failure visible if it persists rather than silently
+    // hiding the unresolved state.
+    if (next && (!plan || loadError)) {
+      void loadPlan();
+    }
   }
 
   /**
-   * Mirrors the Project page's own request helper. A rename leaves the
-   * summary counts untouched, so the drawer is reloaded explicitly rather
-   * than waiting for the cache key to move.
+   * Runs a mutation against the server, parallelizing the plan reload and the
+   * overview bootstrap refresh. Renames leave summary counts untouched, so
+   * loadPlan() is run explicitly rather than relying only on planKey changes.
    */
-  async function mutate(operation: () => Promise<unknown>) {
+  async function mutate<T>(
+    operation: () => Promise<T>
+  ): Promise<{ ok: true; data: T; planResult: LoadPlanResult } | { ok: false }> {
     setEditError("");
+    let data: T;
     try {
-      await operation();
+      data = await operation();
     } catch (error) {
       setEditError(
         error instanceof ApiError
           ? error.message
           : "The change could not be saved. Your draft is still here."
       );
-      return false;
+      return { ok: false };
     }
-    await loadPlan();
+
+    // Concurrently reload the drawer plan and the overview bootstrap payload.
+    // The write has already committed; running them concurrently avoids two
+    // sequential round-trips for every mutation.
+    //
+    // Track inFlightMutationReload so that if onDataChanged settles before
+    // loadPlan (bootstrap-first timing), the [planKey, expanded] effect skips
+    // launching a duplicate concurrent detail GET.
+    inFlightMutationReload.current = true;
+    let planResult: LoadPlanResult;
+    let refreshError: unknown = null;
     try {
-      await onDataChanged();
-    } catch {
+      [planResult, refreshError] = await Promise.all([
+        loadPlan(),
+        onDataChanged().then(
+          () => null,
+          (error) => error
+        )
+      ]);
+    } finally {
+      inFlightMutationReload.current = false;
+    }
+
+    if (refreshError) {
       setEditError(
         "Your change was saved, but the Project list could not be refreshed."
       );
     }
-    return true;
+    return { ok: true, data, planResult };
   }
 
   function updateTask(
@@ -684,13 +764,19 @@ function ProjectRow({
   }
 
   async function deleteTask(id: string) {
-    const deleted = await mutate(() => deleteProjectTask(id));
-    if (deleted) return true;
+    const result = await mutate(() => deleteProjectTask(id));
+    if (result.ok) {
+      return true;
+    }
 
     // DELETE may have committed even when its response was lost. Reconcile
     // before inviting a retry: a second DELETE would receive 404 and could
     // otherwise leave the already-removed Task stuck in this drawer forever.
-    const reconciledPlan = await loadPlan();
+    //
+    // Await loadPlan() and follow the winning load if superseded by a concurrent
+    // reload.
+    let reconcileResult = await loadPlan();
+    reconcileResult = await followWinningLoad(reconcileResult);
     let overviewRefreshed = true;
     try {
       await onDataChanged();
@@ -700,7 +786,11 @@ function ProjectRow({
         "The task may have been deleted, but the Project list could not be refreshed."
       );
     }
-    if (reconciledPlan && !reconciledPlan.tasks.some((task) => task.id === id)) {
+    reconcileResult = await followWinningLoad(reconcileResult);
+    if (
+      reconcileResult.status === "loaded" &&
+      !reconcileResult.plan.tasks.some((task) => task.id === id)
+    ) {
       if (overviewRefreshed) setEditError("");
       return true;
     }
@@ -722,14 +812,44 @@ function ProjectRow({
       estimateMinutes: 30
     };
     const mutationId = mutationIdFor(taskCreateMutation, payload);
-    const saved = await mutate(() => createProjectTask(payload, mutationId));
-    if (saved) taskCreateMutation.current = null;
-    return saved;
+    const result = await mutate(() => createProjectTask(payload, mutationId));
+    if (result.ok) {
+      // The server confirmed creation, so clear the pending replay ID.
+      taskCreateMutation.current = null;
+      // If the background reload failed and no newer request has superseded it,
+      // merge the confirmed task into the drawer plan by ID so the user sees it
+      // and does not retype. If the reload succeeded ("loaded"), loadPlan() was
+      // the authoritative writer; if superseded, the winning load will write.
+      if (
+        result.planResult.status === "failed" &&
+        result.planResult.token === requestToken.current
+      ) {
+        setPlan((current) => {
+          if (!current) {
+            return { tasks: [result.data], phases: [] };
+          }
+          if (current.tasks.some((task) => task.id === result.data.id)) {
+            return current;
+          }
+          return {
+            ...current,
+            tasks: [...current.tasks, result.data]
+          };
+        });
+      }
+      return true;
+    }
+    return false;
   }
 
   useEffect(() => {
     if (loadedKey.current === planKey) return;
     loadedKey.current = planKey;
+    // When a mutation reload is already in flight, its loadPlan() will update
+    // the plan with post-mutation data and advance loadedKey. Skipping here
+    // prevents bootstrap-first timing (onDataChanged settling before loadPlan)
+    // from launching a redundant trailing fetch.
+    if (inFlightMutationReload.current) return;
     // Keep an open drawer mounted while its data refreshes. In particular,
     // ProjectRowAddTask owns an unsubmitted draft that must survive edits to
     // neighbouring Tasks. A closed drawer can discard its cache and load on
@@ -823,11 +943,6 @@ function ProjectRow({
     </article>
   );
 }
-
-type ProjectRowPlan = {
-  tasks: ProjectTaskRecord[];
-  phases: ProjectPhaseRecord[];
-};
 
 /**
  * Uses the Project page's own task row so both surfaces expose the same task
@@ -929,7 +1044,7 @@ function ProjectRowTasks({
         <p className="project-row-drawer-state" role="alert">
           {error}{" "}
           <button type="button" className="text-button" onClick={onRetry}>
-            Try again
+            {emptyPlan ? "Try again" : "Retry refresh"}
           </button>
         </p>
       )}
@@ -949,7 +1064,7 @@ function ProjectRowTasks({
           {group.label && (
             <span className="project-row-phase">{group.label}</span>
           )}
-          <div className="project-task-list">
+          <div className="project-task-list" role="list">
             {group.tasks.map((task) => (
               <ProjectTaskItem
                 key={task.id}
@@ -982,6 +1097,7 @@ function ProjectRowAddTask({
   const [title, setTitle] = useState("");
   const [phaseId, setPhaseId] = useState("");
   const [saving, setSaving] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     // Refreshes keep this composer mounted so its title draft survives.
@@ -998,13 +1114,25 @@ function ProjectRowAddTask({
     const added = await onAdd(trimmed, phaseId || null);
     setSaving(false);
     if (added) setTitle("");
+    // Maintain focus on the input so the user can immediately type another task
+    // without clicking back into the composer, but preserve deliberate focus moves
+    // to other controls during saving.
+    if (
+      document.activeElement === inputRef.current ||
+      document.activeElement === document.body ||
+      document.activeElement === null
+    ) {
+      inputRef.current?.focus();
+    }
   }
 
   return (
     <div className="project-row-add-task">
       <input
+        ref={inputRef}
         value={title}
-        disabled={saving}
+        readOnly={saving}
+        aria-busy={saving}
         placeholder="Add a task"
         aria-label="New Project task"
         onChange={(event) => setTitle(event.target.value)}
@@ -2194,7 +2322,7 @@ function TaskGroup({
   }) => void;
 }) {
   return (
-    <div className="project-task-list">
+    <div className="project-task-list" role="list">
       {sortTasks(tasks).map((task) => (
         <ProjectTaskItem
           key={task.id}
@@ -2274,6 +2402,7 @@ function ProjectTaskItem({
       ]
         .filter(Boolean)
         .join(" ")}
+      role="listitem"
     >
       <button
         className="check-button"

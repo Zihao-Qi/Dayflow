@@ -10480,60 +10480,6 @@ html[data-layout-mode="phone"] .data-restore-actions button {
   min-height: 34px;
 }
 
-.project-row-task-list {
-  display: grid;
-  gap: 2px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.project-row-task-list > li {
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) auto 44px;
-  align-items: center;
-  gap: 10px;
-  min-height: 28px;
-  font-size: var(--text-xs);
-}
-
-.project-row-task-mark {
-  display: grid;
-  place-items: center;
-  width: 14px;
-  height: 14px;
-  border: 1px solid var(--line);
-  border-radius: 50%;
-  color: var(--surface);
-}
-
-.project-row-task-list > li.is-done .project-row-task-mark {
-  border-color: var(--sage);
-  background: var(--sage);
-}
-
-.project-row-task-title {
-  overflow: hidden;
-  color: var(--ink);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.project-row-task-list > li.is-done .project-row-task-title {
-  color: var(--muted);
-}
-
-.project-row-task-meta {
-  color: var(--muted);
-  font-size: var(--text-2xs);
-}
-
-.project-row-task-estimate {
-  color: var(--muted);
-  font-size: var(--text-2xs);
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-}
 
 
 .project-row-dot {

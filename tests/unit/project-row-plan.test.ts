@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { ProjectTaskRecord } from "@/lib/project-domain";
+import type { ProjectTaskRecord } from "../../src/lib/project-domain";
 import {
   createProjectRowPlan,
   projectPlanKey,
   type ProjectPlanDetail,
   type ProjectRowPlanState
-} from "@/modules/projects/ui/project-row-plan";
+} from "../../src/modules/projects/ui/project-row-plan";
 
 type Deferred<T> = {
   promise: Promise<T>;
@@ -367,6 +367,11 @@ test("Scenario 5: lost-delete response reconciliation (remove)", async () => {
 
   // Seam reconciles: read settles before overview refresh starts
   assert.equal(h.reads.length, 2, "lost delete triggers reconciliation read");
+  assert.equal(
+    h.refreshes.length,
+    0,
+    "overview refresh must not start while reconciliation read is pending"
+  );
 
   // Read 2 confirms task-2 is gone on server
   const c1: Counts = { taskCount: 1, completedTaskCount: 0, nextTaskId: initialTask1.id, progressPercent: 0 };

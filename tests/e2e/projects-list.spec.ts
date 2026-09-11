@@ -344,10 +344,15 @@ test("keeps a completed Project's drawer tasks editable while disallowing new un
   await scheduleInput.fill("2026-09-15");
   await scheduleInput.dispatchEvent("change");
 
-  // Verify scheduled date persisted via API
-  const scheduledCheck = await page.request.get(`/api/tasks/${taskBacklog.id}`);
-  expect(scheduledCheck.ok()).toBe(true);
-  expect(((await scheduledCheck.json()) as { date: string }).date).toMatch(/^2026-09-15/);
+  // Verify scheduled date rendered in UI and persisted via project detail
+  const backlogRow = drawer.locator(".project-task").filter({
+    has: page.locator('input[aria-label="Task title: Unfinished backlog"]')
+  });
+  await expect(backlogRow.locator(".project-task-meta")).toContainText("Sep 15");
+  const projectCheck = await page.request.get(`/api/projects/${project.id}`);
+  expect(projectCheck.ok()).toBe(true);
+  const projectData = (await projectCheck.json()) as { tasks: Array<{ id: string; date: string | null }> };
+  expect(projectData.tasks.find((t) => t.id === taskBacklog.id)?.date).toMatch(/^2026-09-15/);
 
   // 3. Complete: clicking Complete on Unfinished backlog transitions it to DONE
   const completeBacklog = drawer.getByRole("button", {
@@ -386,7 +391,7 @@ test("keeps a completed Project's drawer tasks editable while disallowing new un
 
   // 5. Focus: exercise through the scheduled task row and observe the correct task target in Focus rail
   const scheduledRow = drawer.locator(".project-task").filter({
-    has: drawer.getByRole("textbox", { name: "Task title: Renamed scheduled in completed", exact: true })
+    has: page.locator('input[aria-label="Task title: Renamed scheduled in completed"]')
   });
   const focusBtn = scheduledRow.getByRole("button", { name: "Focus 30m", exact: true });
   await expect(focusBtn).toBeEnabled();
@@ -407,8 +412,10 @@ test("keeps a completed Project's drawer tasks editable while disallowing new un
   // Verify observable removal in drawer and API
   await expect(drawer.getByRole("textbox", { name: "Task title: Finished evidence" })).toHaveCount(0);
   await expect(drawer.locator(".project-task")).toHaveCount(2);
-  const deleteCheck = await page.request.get(`/api/tasks/${taskDone.id}`);
-  expect(deleteCheck.status()).toBe(404);
+  const deleteProjectCheck = await page.request.get(`/api/projects/${project.id}`);
+  expect(deleteProjectCheck.ok()).toBe(true);
+  const remainingTasks = ((await deleteProjectCheck.json()) as { tasks: Array<{ id: string }> }).tasks;
+  expect(remainingTasks.some((t) => t.id === taskDone.id)).toBe(false);
 
   // 7. Add task composer is hidden and Reopen banner is visible
   await expect(drawer.locator(".project-row-add-task")).toHaveCount(0);
@@ -464,10 +471,15 @@ test("keeps an archived Project's drawer tasks editable while disallowing new un
   await scheduleInput.fill("2026-09-15");
   await scheduleInput.dispatchEvent("change");
 
-  // Verify scheduled date persisted via API
-  const scheduledCheck = await page.request.get(`/api/tasks/${taskBacklog.id}`);
-  expect(scheduledCheck.ok()).toBe(true);
-  expect(((await scheduledCheck.json()) as { date: string }).date).toMatch(/^2026-09-15/);
+  // Verify scheduled date rendered in UI and persisted via project detail
+  const backlogRow = drawer.locator(".project-task").filter({
+    has: page.locator('input[aria-label="Task title: Unfinished backlog"]')
+  });
+  await expect(backlogRow.locator(".project-task-meta")).toContainText("Sep 15");
+  const projectCheck = await page.request.get(`/api/projects/${project.id}`);
+  expect(projectCheck.ok()).toBe(true);
+  const projectData = (await projectCheck.json()) as { tasks: Array<{ id: string; date: string | null }> };
+  expect(projectData.tasks.find((t) => t.id === taskBacklog.id)?.date).toMatch(/^2026-09-15/);
 
   // 3. Complete: clicking Complete on Unfinished backlog transitions it to DONE
   const completeBacklog = drawer.getByRole("button", {
@@ -506,7 +518,7 @@ test("keeps an archived Project's drawer tasks editable while disallowing new un
 
   // 5. Focus: exercise through the scheduled task row and observe the correct task target in Focus rail
   const scheduledRow = drawer.locator(".project-task").filter({
-    has: drawer.getByRole("textbox", { name: "Task title: Renamed scheduled in archived", exact: true })
+    has: page.locator('input[aria-label="Task title: Renamed scheduled in archived"]')
   });
   const focusBtn = scheduledRow.getByRole("button", { name: "Focus 30m", exact: true });
   await expect(focusBtn).toBeEnabled();
@@ -527,8 +539,10 @@ test("keeps an archived Project's drawer tasks editable while disallowing new un
   // Verify observable removal in drawer and API
   await expect(drawer.getByRole("textbox", { name: "Task title: Finished evidence" })).toHaveCount(0);
   await expect(drawer.locator(".project-task")).toHaveCount(2);
-  const deleteCheck = await page.request.get(`/api/tasks/${taskDone.id}`);
-  expect(deleteCheck.status()).toBe(404);
+  const deleteProjectCheck = await page.request.get(`/api/projects/${project.id}`);
+  expect(deleteProjectCheck.ok()).toBe(true);
+  const remainingTasks = ((await deleteProjectCheck.json()) as { tasks: Array<{ id: string }> }).tasks;
+  expect(remainingTasks.some((t) => t.id === taskDone.id)).toBe(false);
 
   // 7. Add task composer is hidden and Restore banner is visible
   await expect(drawer.locator(".project-row-add-task")).toHaveCount(0);

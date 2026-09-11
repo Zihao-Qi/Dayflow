@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { AppError } from "@/shared/kernel/errors";
 import { projectErrors, type ProjectCreateMutation, type ProjectPatchMutation, type PhaseCreateMutation, type PhasePatchMutation } from "../domain/project";
+import { gainsUnfinishedTask, projectReactivation, type TaskPlacement } from "../domain/lifecycle";
 
 export async function createProject(tx: Prisma.TransactionClient, input: ProjectCreateMutation) {
   try { return await tx.project.create({ data: input }); }
@@ -17,7 +18,6 @@ export async function createPhase(tx: Prisma.TransactionClient, projectId: strin
   try {
     const project = await tx.project.findUnique({ where: { id: projectId }, select: { status: true } });
     if (!project) throw new AppError(projectErrors.phaseParentNotFound);
-    if (project.status === "COMPLETED") throw new AppError(projectErrors.reopenTheCompletedProjectBeforeAddingUnfinishedWork);
     const lastPhase = await tx.projectPhase.findFirst({ where: { projectId }, orderBy: { sortOrder: "desc" } });
     return await tx.projectPhase.create({ data: { projectId, name: input.name, sortOrder: (lastPhase?.sortOrder ?? 0) + 1 } });
   } catch (error) { throw translateProjectPersistenceError(error, "phase-create"); }
@@ -43,11 +43,17 @@ type ProjectPlacementDatabase = {
   projectPhase: Pick<Prisma.TransactionClient["projectPhase"], "findUnique">;
 };
 
+/**
+ * Checks where a Task is placed. `transition.before` is the Task's placement
+ * before this write, or null for a new Task, and `transition.status` is its
+ * status after it: a Completed or Archived Project refuses only a write that
+ * gains it an unfinished Task.
+ */
 export async function validateProjectPlacement(
   client: ProjectPlacementDatabase,
   projectId: string | null,
   phaseId: string | null,
-  options: { allowCompleted?: boolean } = {}
+  transition: { before: TaskPlacement | null; status: string }
 ) {
   if (!projectId && phaseId) {
     throw new AppError(projectErrors.aTaskCannotHaveAPhaseWithoutAProject);
@@ -60,8 +66,9 @@ export async function validateProjectPlacement(
     select: { id: true, status: true }
   });
   if (!project) throw new AppError(projectErrors.theSelectedProjectCouldNotBeFound);
-  if (project.status === "COMPLETED" && !options.allowCompleted) {
-    throw new AppError(projectErrors.reopenTheCompletedProjectBeforeAddingUnfinishedWork);
+  const reactivation = projectReactivation(project.status);
+  if (reactivation && gainsUnfinishedTask(transition.before, { projectId, status: transition.status })) {
+    throw new AppError(reactivation.error);
   }
 
   if (!phaseId) return;

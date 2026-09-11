@@ -13,7 +13,7 @@ import { compactFocusQueue, consumeFocusQueueTask } from "./focus-queue";
 
 export async function createTask(tx: Prisma.TransactionClient, input: TaskCreateMutation) {
   try {
-    await validateProjectPlacement(tx, input.projectId, input.phaseId, { allowCompleted: input.status === "DONE" });
+    await validateProjectPlacement(tx, input.projectId, input.phaseId, { before: null, status: input.status });
     const maxTask = await tx.task.findFirst({ where: { date: input.date }, orderBy: { sortOrder: "desc" } });
     return serializeTask(await tx.task.create({ data: { ...input, sortOrder: (maxTask?.sortOrder ?? 0) + 1 } }));
   } catch (error) {
@@ -34,7 +34,7 @@ export async function updateTask(
     });
     if (!current) throw new AppError(taskErrors.taskNotFound);
     const plan = planTaskPatch(current, patch, calendar, now);
-    await validateProjectPlacement(tx, plan.projectId, plan.phaseId, { allowCompleted: plan.status === "DONE" });
+    await validateProjectPlacement(tx, plan.projectId, plan.phaseId, { before: current, status: plan.status });
     await tx.task.update({ where: { id }, data: plan.data });
     if (plan.consumeQueue) await consumeFocusQueueTask(tx, id);
     if (plan.scheduleChange) {

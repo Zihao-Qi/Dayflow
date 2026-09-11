@@ -500,6 +500,12 @@ export const projectErrors = {
     code: "RELATIONSHIP_CONFLICT",
     field: "projectId"
   },
+  restoreTheArchivedProjectBeforeAddingUnfinishedWork: {
+    status: 409,
+    message: "Restore the archived project before adding unfinished work.",
+    code: "RELATIONSHIP_CONFLICT",
+    field: "projectId"
+  },
   theSelectedPhaseCouldNotBeFound: {
     status: 404,
     message: "The selected phase could not be found.",

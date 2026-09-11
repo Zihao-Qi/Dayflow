@@ -208,7 +208,7 @@ uses, so the drawer supports completing, renaming, re-phasing, scheduling,
 focusing and deleting without a second implementation to keep in step. A
 compact add control closes the set.
 
-For a Completed Project, the drawer keeps tasks and their state visible but applies `canManagePlan` to every mutating task control in the shared Project page row, with an explanation to reopen the Project before editing tasks or adding unfinished work.
+For a Completed or Archived Project, the drawer follows [Plan changes by lifecycle state](PROJECTS_V1.md#plan-changes-by-lifecycle-state). Its tasks stay editable in the shared Project page row, but a done task cannot be made unfinished, and the add control is replaced by an explanation to reopen or restore the Project before adding unfinished tasks.
 
 This restores the "Backlog" state label, which an earlier read-only version
 of the drawer had dropped. That was the right call then and the wrong one

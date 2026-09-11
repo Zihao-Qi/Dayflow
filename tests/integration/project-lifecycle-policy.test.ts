@@ -671,24 +671,57 @@ test("Project Lifecycle Policy: Phase CRUD in COMPLETED and ARCHIVED projects", 
     // -------------------------------------------------------------------------
     // Priority 2.2: Phase Rename in Completed and Archived
     // -------------------------------------------------------------------------
+    // Phases and tasks are seeded directly, so a failure here belongs to the
+    // rename or deletion itself rather than to phase creation.
     await context.test(
-      "renaming phases succeeds in COMPLETED and ARCHIVED",
+      "renaming a phase in COMPLETED or ARCHIVED changes only its name and keeps its tasks",
       async () => {
-        const phaseC = await prisma.$transaction((tx) =>
-          createPhase(tx, completed.id, { name: "Before Rename C" })
-        );
-        const renamedC = await prisma.$transaction((tx) =>
-          updatePhase(tx, phaseC.id, { name: "After Rename C" })
-        );
-        assert.equal(renamedC.name, "After Rename C");
+        for (const [project, label] of [
+          [completed, "COMPLETED"],
+          [archived, "ARCHIVED"]
+        ] as const) {
+          const phase = await prisma.projectPhase.create({
+            data: { projectId: project.id, name: `Before rename ${label}`, sortOrder: 10 }
+          });
+          const unfinished = await prisma.task.create({
+            data: {
+              title: `Unfinished in renamed ${label} phase`,
+              status: "TODO",
+              projectId: project.id,
+              phaseId: phase.id
+            }
+          });
+          const done = await prisma.task.create({
+            data: {
+              title: `Done in renamed ${label} phase`,
+              status: "DONE",
+              completedAt: new Date("2026-09-03T12:00:00.000Z"),
+              projectId: project.id,
+              phaseId: phase.id
+            }
+          });
 
-        const phaseA = await prisma.$transaction((tx) =>
-          createPhase(tx, archived.id, { name: "Before Rename A" })
-        );
-        const renamedA = await prisma.$transaction((tx) =>
-          updatePhase(tx, phaseA.id, { name: "After Rename A" })
-        );
-        assert.equal(renamedA.name, "After Rename A");
+          const renamed = await prisma.$transaction((tx) =>
+            updatePhase(tx, phase.id, { name: `After rename ${label}` })
+          );
+
+          assert.equal(renamed.name, `After rename ${label}`);
+          const persisted = await prisma.projectPhase.findUniqueOrThrow({
+            where: { id: phase.id }
+          });
+          assert.deepEqual(
+            { ...persisted, updatedAt: phase.updatedAt },
+            { ...phase, name: `After rename ${label}` },
+            `${label}: renaming must change only the phase name`
+          );
+          for (const task of [unfinished, done]) {
+            assert.deepEqual(
+              await prisma.task.findUnique({ where: { id: task.id } }),
+              task,
+              `${label}: renaming the phase must leave "${task.title}" untouched`
+            );
+          }
+        }
       }
     );
 
@@ -696,41 +729,70 @@ test("Project Lifecycle Policy: Phase CRUD in COMPLETED and ARCHIVED projects", 
     // Priority 2.3: Phase Deletion Moves Tasks to Root and Preserves Attribution
     // -------------------------------------------------------------------------
     await context.test(
-      "deleting a phase in COMPLETED or ARCHIVED moves tasks to root and preserves attribution",
+      "deleting a phase in COMPLETED or ARCHIVED moves only its own tasks to the project root",
       async () => {
         for (const [project, label] of [
           [completed, "COMPLETED"],
           [archived, "ARCHIVED"]
         ] as const) {
-          const phase = await prisma.$transaction((tx) =>
-            createPhase(tx, project.id, { name: `Phase to delete in ${label}` })
-          );
-          const taskInPhase = await prisma.task.create({
+          const phase = await prisma.projectPhase.create({
+            data: { projectId: project.id, name: `Deleted ${label} phase`, sortOrder: 20 }
+          });
+          const kept = await prisma.projectPhase.create({
+            data: { projectId: project.id, name: `Kept ${label} phase`, sortOrder: 21 }
+          });
+          const unfinished = await prisma.task.create({
             data: {
-              title: `Task in deleted phase ${label}`,
+              title: `Unfinished in deleted ${label} phase`,
+              status: "TODO",
+              date: new Date("2026-09-04T12:00:00.000Z"),
               projectId: project.id,
-              phaseId: phase.id,
-              status: "DONE"
+              phaseId: phase.id
+            }
+          });
+          const done = await prisma.task.create({
+            data: {
+              title: `Done in deleted ${label} phase`,
+              status: "DONE",
+              completedAt: new Date("2026-09-03T12:00:00.000Z"),
+              projectId: project.id,
+              phaseId: phase.id
+            }
+          });
+          const elsewhere = await prisma.task.create({
+            data: {
+              title: `Unfinished in kept ${label} phase`,
+              status: "TODO",
+              projectId: project.id,
+              phaseId: kept.id
             }
           });
 
-          // Delete phase via deletePhase workflow
           await deletePhase(phase.id);
 
-          // Phase is deleted
           assert.equal(
             await prisma.projectPhase.findUnique({ where: { id: phase.id } }),
             null,
-            `Phase ${phase.id} was not deleted in ${label}`
+            `${label}: the phase was not deleted`
           );
-
-          // Task preserved at project root
-          const preserved = await prisma.task.findUniqueOrThrow({
-            where: { id: taskInPhase.id }
-          });
-          assert.equal(preserved.projectId, project.id);
-          assert.equal(preserved.phaseId, null);
-          assert.equal(preserved.status, "DONE");
+          assert.ok(
+            await prisma.projectPhase.findUnique({ where: { id: kept.id } }),
+            `${label}: deleting one phase removed another`
+          );
+          for (const task of [unfinished, done]) {
+            const after = await prisma.task.findUnique({ where: { id: task.id } });
+            assert.ok(after, `${label}: "${task.title}" was deleted with its phase`);
+            assert.deepEqual(
+              { ...after, updatedAt: task.updatedAt },
+              { ...task, phaseId: null },
+              `${label}: deleting the phase must move "${task.title}" to the root and change nothing else`
+            );
+          }
+          assert.deepEqual(
+            await prisma.task.findUnique({ where: { id: elsewhere.id } }),
+            elsewhere,
+            `${label}: a task in another phase must be untouched`
+          );
         }
       }
     );

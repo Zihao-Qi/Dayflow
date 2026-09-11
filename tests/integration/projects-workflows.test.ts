@@ -262,7 +262,9 @@ test("projects services and server workflows run headlessly on SQLite", async (c
       await assert.rejects(() => deletePhase(first.id), hasSpec(projectErrors.phaseNotFound));
       await assert.rejects(() => prisma.$transaction(tx => createPhase(tx, "missing", { name: "No" })), hasSpec(projectErrors.phaseParentNotFound));
       await prisma.$transaction(tx => updateProject(tx, project.id, { status: "COMPLETED" }));
-      await assert.rejects(() => prisma.$transaction(tx => createPhase(tx, project.id, { name: "No" })), hasSpec(projectErrors.reopenTheCompletedProjectBeforeAddingUnfinishedWork));
+      const completedPhase = await prisma.$transaction(tx => createPhase(tx, project.id, { name: "Allowed in completed" }));
+      assert.equal(completedPhase.name, "Allowed in completed");
+      assert.equal(completedPhase.projectId, project.id);
       await reset();
     });
 
@@ -278,12 +280,12 @@ test("projects services and server workflows run headlessly on SQLite", async (c
         [project.id, "missing", projectErrors.theSelectedPhaseCouldNotBeFound],
         [other.id, phase.id, projectErrors.theSelectedPhaseDoesNotBelongToThisProject]
       ] as const) {
-        await assert.rejects(() => prisma.$transaction(tx => validateProjectPlacement(tx, projectId, phaseId)), hasSpec(spec));
+        await assert.rejects(() => prisma.$transaction(tx => validateProjectPlacement(tx, projectId, phaseId, { before: null, status: "TODO" })), hasSpec(spec));
       }
       await prisma.$transaction(async tx => {
-        await validateProjectPlacement(tx, null, null);
-        await validateProjectPlacement(tx, project.id, phase.id);
-        await validateProjectPlacement(tx, completed.id, null, { allowCompleted: true });
+        await validateProjectPlacement(tx, null, null, { before: null, status: "TODO" });
+        await validateProjectPlacement(tx, project.id, phase.id, { before: null, status: "TODO" });
+        await validateProjectPlacement(tx, completed.id, null, { before: null, status: "DONE" });
       });
       await reset();
     });

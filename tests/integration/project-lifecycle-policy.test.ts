@@ -1,0 +1,673 @@
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, sep } from "node:path";
+import test from "node:test";
+import {
+  createTask,
+  updateTask,
+  deleteTask,
+  reorderTasks,
+  readTask
+} from "../../src/modules/planning/services/tasks";
+import {
+  parseTaskCreateMutation,
+  parseTaskPatchInput,
+  taskErrors
+} from "../../src/modules/planning/domain/task";
+import {
+  createPhase,
+  updatePhase,
+  deletePhaseRecord,
+  updateProject,
+  validateProjectPlacement
+} from "../../src/modules/projects/services/projects";
+import { deletePhase } from "../../src/server/workflows/delete-phase";
+import { completeProject } from "../../src/server/workflows/complete-project";
+import { projectErrors } from "../../src/lib/project-errors";
+import { AppError } from "../../src/shared/kernel/errors";
+import { calendarFor, frozenClock } from "../../src/shared/kernel/calendar";
+
+async function withDatabase(
+  context: { after: (fn: () => unknown) => void },
+  run: (deps: {
+    prisma: import("@prisma/client").PrismaClient;
+    runOnce: typeof import("../../src/server/prisma/run-once").runOnce;
+  }) => Promise<void>
+) {
+  const directory = mkdtempSync(join(tmpdir(), "dayflow-lifecycle-test-"));
+  const previousDatabaseUrl = process.env.DATABASE_URL;
+  let disconnect: (() => Promise<void>) | undefined;
+  process.env.DATABASE_URL = `file:${join(directory, "dayflow.db").split(sep).join("/")}`;
+  context.after(async () => {
+    try {
+      await disconnect?.();
+    } finally {
+      if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+      else process.env.DATABASE_URL = previousDatabaseUrl;
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+  execFileSync(
+    process.execPath,
+    [
+      join(process.cwd(), "node_modules/prisma/build/index.js"),
+      "db",
+      "execute",
+      "--file",
+      "prisma/init.sql",
+      "--url",
+      process.env.DATABASE_URL
+    ],
+    { cwd: process.cwd(), stdio: "pipe" }
+  );
+  const [{ getPrisma }, { runOnce }] = await Promise.all([
+    import("../../src/lib/prisma"),
+    import("../../src/server/prisma/run-once")
+  ]);
+  const prisma = getPrisma();
+  disconnect = () => prisma.$disconnect();
+  await run({ prisma, runOnce });
+}
+
+const clock = frozenClock(new Date("2026-09-04T12:00:00-05:00"));
+const calendar = calendarFor("America/Chicago");
+const reviewPeriod = {
+  start: new Date("2026-08-31T00:00:00-05:00"),
+  end: new Date("2026-09-07T00:00:00-05:00")
+};
+
+const draft = (changes: Record<string, unknown> = {}) =>
+  parseTaskCreateMutation(
+    { title: "Task title", date: "2026-09-04", ...changes },
+    clock.now()
+  );
+const patch = (changes: Record<string, unknown>) =>
+  parseTaskPatchInput(changes, clock.now());
+
+function hasCompletedRejection(error: unknown) {
+  assert.ok(error instanceof AppError, `Expected AppError, got: ${error}`);
+  assert.deepEqual(
+    error.spec,
+    projectErrors.reopenTheCompletedProjectBeforeAddingUnfinishedWork
+  );
+  return true;
+}
+
+function hasArchivedRejection(error: unknown) {
+  assert.ok(error instanceof AppError, `Expected AppError, got: ${error}`);
+  assert.equal(error.spec.status, 409);
+  assert.equal(error.spec.code, "RELATIONSHIP_CONFLICT");
+  assert.equal(error.spec.field, "projectId");
+  assert.match(error.spec.message, /restore|archived/i);
+  return true;
+}
+
+function hasSpec(spec: AppError["spec"]) {
+  return (error: unknown) => {
+    assert.ok(error instanceof AppError, `Expected AppError, got: ${error}`);
+    assert.deepEqual(error.spec, spec);
+    return true;
+  };
+}
+
+test("Project Lifecycle Policy: Task Mutations in COMPLETED and ARCHIVED projects", async (context) => {
+  await withDatabase(context, async ({ prisma }) => {
+    const create = (changes: Record<string, unknown> = {}) =>
+      prisma.$transaction((tx) => createTask(tx, draft(changes)));
+    const update = (id: string, changes: Record<string, unknown>) =>
+      prisma.$transaction((tx) =>
+        updateTask(tx, id, patch(changes), calendar, clock.now())
+      );
+
+    const active = await prisma.project.create({
+      data: { name: "Active project", status: "ACTIVE" }
+    });
+    const paused = await prisma.project.create({
+      data: { name: "Paused project", status: "PAUSED" }
+    });
+    const completed = await prisma.project.create({
+      data: { name: "Completed project", status: "COMPLETED" }
+    });
+    const archived = await prisma.project.create({
+      data: { name: "Archived project", status: "ARCHIVED" }
+    });
+
+    const activePhase = await prisma.$transaction((tx) =>
+      createPhase(tx, active.id, { name: "Active phase" })
+    );
+    const completedPhase = await prisma.projectPhase.create({
+      data: { projectId: completed.id, name: "Completed phase", sortOrder: 1 }
+    });
+    const archivedPhase = await prisma.projectPhase.create({
+      data: { projectId: archived.id, name: "Archived phase", sortOrder: 1 }
+    });
+
+    // -------------------------------------------------------------------------
+    // Priority 1.1: Unfinished Task Creation
+    // -------------------------------------------------------------------------
+    await context.test(
+      "creating unfinished tasks is rejected in COMPLETED and ARCHIVED, but allowed in ACTIVE and PAUSED",
+      async () => {
+        // COMPLETED rejects unfinished task create
+        await assert.rejects(
+          () => create({ projectId: completed.id, status: "TODO" }),
+          hasCompletedRejection
+        );
+
+        // ARCHIVED rejects unfinished task create
+        await assert.rejects(
+          () => create({ projectId: archived.id, status: "TODO" }),
+          hasArchivedRejection
+        );
+
+        // ACTIVE allows unfinished task create
+        const activeTask = await create({ projectId: active.id, status: "TODO" });
+        assert.equal(activeTask.projectId, active.id);
+        assert.equal(activeTask.status, "TODO");
+
+        // PAUSED allows unfinished task create
+        const pausedTask = await create({ projectId: paused.id, status: "TODO" });
+        assert.equal(pausedTask.projectId, paused.id);
+        assert.equal(pausedTask.status, "TODO");
+      }
+    );
+
+    // -------------------------------------------------------------------------
+    // Priority 1.2: Already-DONE Task Creation
+    // -------------------------------------------------------------------------
+    await context.test(
+      "creating already-DONE tasks is allowed in all states including COMPLETED and ARCHIVED",
+      async () => {
+        const doneCompleted = await create({
+          projectId: completed.id,
+          status: "DONE"
+        });
+        assert.equal(doneCompleted.projectId, completed.id);
+        assert.equal(doneCompleted.status, "DONE");
+
+        const doneArchived = await create({
+          projectId: archived.id,
+          status: "DONE"
+        });
+        assert.equal(doneArchived.projectId, archived.id);
+        assert.equal(doneArchived.status, "DONE");
+      }
+    );
+
+    // -------------------------------------------------------------------------
+    // Priority 1.3: Moving Tasks In (Placement Changes)
+    // -------------------------------------------------------------------------
+    await context.test(
+      "moving unfinished tasks INTO COMPLETED or ARCHIVED is rejected, while moving already-DONE is allowed",
+      async () => {
+        // Unfinished standalone task
+        const standaloneTodo = await create({ status: "TODO" });
+        assert.equal(standaloneTodo.projectId, null);
+
+        // Moving unfinished task into COMPLETED rejected
+        await assert.rejects(
+          () => update(standaloneTodo.id, { projectId: completed.id }),
+          hasCompletedRejection
+        );
+
+        // Moving unfinished task into ARCHIVED rejected
+        await assert.rejects(
+          () => update(standaloneTodo.id, { projectId: archived.id }),
+          hasArchivedRejection
+        );
+
+        // Task remains unaffected at null project
+        const unchanged = await readTask(prisma, standaloneTodo.id);
+        assert.equal(unchanged?.projectId, null);
+
+        // Standalone DONE task
+        const standaloneDone = await create({ status: "DONE" });
+        assert.equal(standaloneDone.projectId, null);
+
+        // Moving already-DONE task into COMPLETED succeeds
+        const movedToCompleted = await update(standaloneDone.id, {
+          projectId: completed.id
+        });
+        assert.equal(movedToCompleted.projectId, completed.id);
+        assert.equal(movedToCompleted.status, "DONE");
+
+        // Moving already-DONE task into ARCHIVED succeeds
+        const standaloneDone2 = await create({ status: "DONE" });
+        const movedToArchived = await update(standaloneDone2.id, {
+          projectId: archived.id
+        });
+        assert.equal(movedToArchived.projectId, archived.id);
+        assert.equal(movedToArchived.status, "DONE");
+      }
+    );
+
+    // -------------------------------------------------------------------------
+    // Priority 1.4: DONE -> TODO Reopening Transitions
+    // -------------------------------------------------------------------------
+    await context.test(
+      "reopening (DONE -> TODO) within COMPLETED or ARCHIVED is rejected",
+      async () => {
+        const doneInCompleted = await create({
+          projectId: completed.id,
+          status: "DONE"
+        });
+        await assert.rejects(
+          () => update(doneInCompleted.id, { status: "TODO" }),
+          hasCompletedRejection
+        );
+
+        const doneInArchived = await create({
+          projectId: archived.id,
+          status: "DONE"
+        });
+        await assert.rejects(
+          () => update(doneInArchived.id, { status: "TODO" }),
+          hasArchivedRejection
+        );
+
+        // In ACTIVE project, reopening is allowed
+        const doneInActive = await create({
+          projectId: active.id,
+          status: "DONE"
+        });
+        const reopenedActive = await update(doneInActive.id, { status: "TODO" });
+        assert.equal(reopenedActive.status, "TODO");
+      }
+    );
+
+    // -------------------------------------------------------------------------
+    // Priority 1.5: TODO -> DONE Completion of Existing Tasks
+    // -------------------------------------------------------------------------
+    await context.test(
+      "completing an existing TODO task (TODO -> DONE) succeeds in COMPLETED and ARCHIVED",
+      async () => {
+        // Direct seed of existing TODO task left over in completed project
+        const leftoverCompleted = await prisma.task.create({
+          data: {
+            title: "Leftover in completed",
+            status: "TODO",
+            projectId: completed.id
+          }
+        });
+        const completedResult = await update(leftoverCompleted.id, {
+          status: "DONE"
+        });
+        assert.equal(completedResult.status, "DONE");
+        assert.equal(completedResult.completedAt, clock.now().toISOString());
+
+        // Direct seed of existing TODO task in archived project
+        const leftoverArchived = await prisma.task.create({
+          data: {
+            title: "Leftover in archived",
+            status: "TODO",
+            projectId: archived.id
+          }
+        });
+        const archivedResult = await update(leftoverArchived.id, {
+          status: "DONE"
+        });
+        assert.equal(archivedResult.status, "DONE");
+        assert.equal(archivedResult.completedAt, clock.now().toISOString());
+      }
+    );
+
+    // -------------------------------------------------------------------------
+    // Priority 1.6: Same-Project Non-Status Updates (Rename, Re-phase, Schedule)
+    // -------------------------------------------------------------------------
+    await context.test(
+      "same-project TODO updates (rename, identical projectId, re-phase, schedule) succeed in COMPLETED and ARCHIVED",
+      async () => {
+        // Lingering TODO task in completed project
+        const existingTodo = await prisma.task.create({
+          data: {
+            title: "Original title",
+            status: "TODO",
+            projectId: completed.id,
+            date: new Date("2026-09-04T12:00:00.000Z")
+          }
+        });
+
+        // 1. Rename without projectId
+        const renamed = await update(existingTodo.id, {
+          title: "Corrected title"
+        });
+        assert.equal(renamed.title, "Corrected title");
+        assert.equal(renamed.projectId, completed.id);
+        assert.equal(renamed.status, "TODO");
+
+        // 2. Rename with identical explicit projectId supplied
+        const renamedExplicit = await update(existingTodo.id, {
+          title: "Corrected title 2",
+          projectId: completed.id
+        });
+        assert.equal(renamedExplicit.title, "Corrected title 2");
+        assert.equal(renamedExplicit.projectId, completed.id);
+
+        // 3. Re-phase within same project
+        const rephased = await update(existingTodo.id, {
+          phaseId: completedPhase.id
+        });
+        assert.equal(rephased.phaseId, completedPhase.id);
+        assert.equal(rephased.projectId, completed.id);
+
+        // 4. Reschedule date
+        const rescheduled = await update(existingTodo.id, {
+          date: "2026-09-10"
+        });
+        assert.ok(rescheduled.date?.startsWith("2026-09-10"));
+
+        // 5. Unschedule (backlog)
+        const unscheduled = await update(existingTodo.id, { date: null });
+        assert.equal(unscheduled.date, null);
+
+        // Repeat on ARCHIVED project
+        const existingArchivedTodo = await prisma.task.create({
+          data: {
+            title: "Original archived title",
+            status: "TODO",
+            projectId: archived.id,
+            date: new Date("2026-09-04T12:00:00.000Z")
+          }
+        });
+
+        const renamedArchived = await update(existingArchivedTodo.id, {
+          title: "Corrected archived title",
+          projectId: archived.id,
+          phaseId: archivedPhase.id,
+          date: "2026-09-11"
+        });
+        assert.equal(renamedArchived.title, "Corrected archived title");
+        assert.equal(renamedArchived.projectId, archived.id);
+        assert.equal(renamedArchived.phaseId, archivedPhase.id);
+        assert.ok(renamedArchived.date?.startsWith("2026-09-11"));
+      }
+    );
+
+    // -------------------------------------------------------------------------
+    // Priority 1.7: Moving Unfinished Tasks OUT of Completed / Archived
+    // -------------------------------------------------------------------------
+    await context.test(
+      "moving unfinished tasks OUT of COMPLETED or ARCHIVED into ACTIVE or null succeeds",
+      async () => {
+        const inCompleted = await prisma.task.create({
+          data: {
+            title: "Move out of completed",
+            status: "TODO",
+            projectId: completed.id
+          }
+        });
+        const movedToActive = await update(inCompleted.id, {
+          projectId: active.id
+        });
+        assert.equal(movedToActive.projectId, active.id);
+        assert.equal(movedToActive.status, "TODO");
+
+        const inArchived = await prisma.task.create({
+          data: {
+            title: "Move out of archived",
+            status: "TODO",
+            projectId: archived.id
+          }
+        });
+        const movedToNull = await update(inArchived.id, { projectId: null });
+        assert.equal(movedToNull.projectId, null);
+        assert.equal(movedToNull.status, "TODO");
+      }
+    );
+
+    // -------------------------------------------------------------------------
+    // Priority 1.8: Task Deletion and Reordering
+    // -------------------------------------------------------------------------
+    await context.test(
+      "deleting and reordering tasks is allowed in COMPLETED and ARCHIVED",
+      async () => {
+        const t1 = await prisma.task.create({
+          data: {
+            title: "T1",
+            status: "DONE",
+            projectId: completed.id,
+            sortOrder: 1
+          }
+        });
+        const t2 = await prisma.task.create({
+          data: {
+            title: "T2",
+            status: "DONE",
+            projectId: completed.id,
+            sortOrder: 2
+          }
+        });
+
+        // Reordering in completed succeeds
+        const reordered = await prisma.$transaction((tx) =>
+          reorderTasks(tx, [t2.id, t1.id])
+        );
+        assert.deepEqual(
+          reordered.map((t) => [t.id, t.sortOrder]),
+          [
+            [t2.id, 1],
+            [t1.id, 2]
+          ]
+        );
+
+        // Deleting in completed succeeds
+        const deleteResult = await prisma.$transaction((tx) =>
+          deleteTask(tx, t1.id)
+        );
+        assert.deepEqual(deleteResult, { ok: true });
+        assert.equal(await readTask(prisma, t1.id), null);
+
+        // Deleting in archived succeeds
+        const tArchived = await prisma.task.create({
+          data: { title: "TArchived", status: "DONE", projectId: archived.id }
+        });
+        const deleteArchived = await prisma.$transaction((tx) =>
+          deleteTask(tx, tArchived.id)
+        );
+        assert.deepEqual(deleteArchived, { ok: true });
+        assert.equal(await readTask(prisma, tArchived.id), null);
+      }
+    );
+
+    // -------------------------------------------------------------------------
+    // Priority 1.9: Destination and Relationship Integrity Preservation
+    // -------------------------------------------------------------------------
+    await context.test(
+      "relationship integrity (missing project, phase mismatch) is preserved across all states",
+      async () => {
+        const standalone = await create();
+        for (const badPlacement of [
+          { projectId: "missing-project-id" },
+          { projectId: active.id, phaseId: completedPhase.id },
+          { projectId: completed.id, phaseId: activePhase.id },
+          { projectId: archived.id, phaseId: activePhase.id }
+        ]) {
+          await assert.rejects(() => create(badPlacement));
+          await assert.rejects(() => update(standalone.id, badPlacement));
+        }
+      }
+    );
+  });
+});
+
+test("Project Lifecycle Policy: Phase CRUD in COMPLETED and ARCHIVED projects", async (context) => {
+  await withDatabase(context, async ({ prisma }) => {
+    const completed = await prisma.project.create({
+      data: { name: "Completed Phase Target", status: "COMPLETED" }
+    });
+    const archived = await prisma.project.create({
+      data: { name: "Archived Phase Target", status: "ARCHIVED" }
+    });
+
+    // -------------------------------------------------------------------------
+    // Priority 2.1: Empty Phase Creation in Completed and Archived
+    // -------------------------------------------------------------------------
+    await context.test(
+      "creating phases (including empty) succeeds in COMPLETED and ARCHIVED",
+      async () => {
+        // COMPLETED project phase create
+        const completedPhase = await prisma.$transaction((tx) =>
+          createPhase(tx, completed.id, { name: "Retrospective Phase" })
+        );
+        assert.equal(completedPhase.projectId, completed.id);
+        assert.equal(completedPhase.name, "Retrospective Phase");
+
+        // ARCHIVED project phase create
+        const archivedPhase = await prisma.$transaction((tx) =>
+          createPhase(tx, archived.id, { name: "Archived Phase 1" })
+        );
+        assert.equal(archivedPhase.projectId, archived.id);
+        assert.equal(archivedPhase.name, "Archived Phase 1");
+      }
+    );
+
+    // -------------------------------------------------------------------------
+    // Priority 2.2: Phase Rename in Completed and Archived
+    // -------------------------------------------------------------------------
+    await context.test(
+      "renaming phases succeeds in COMPLETED and ARCHIVED",
+      async () => {
+        const phaseC = await prisma.$transaction((tx) =>
+          createPhase(tx, completed.id, { name: "Before Rename C" })
+        );
+        const renamedC = await prisma.$transaction((tx) =>
+          updatePhase(tx, phaseC.id, { name: "After Rename C" })
+        );
+        assert.equal(renamedC.name, "After Rename C");
+
+        const phaseA = await prisma.$transaction((tx) =>
+          createPhase(tx, archived.id, { name: "Before Rename A" })
+        );
+        const renamedA = await prisma.$transaction((tx) =>
+          updatePhase(tx, phaseA.id, { name: "After Rename A" })
+        );
+        assert.equal(renamedA.name, "After Rename A");
+      }
+    );
+
+    // -------------------------------------------------------------------------
+    // Priority 2.3: Phase Deletion Moves Tasks to Root and Preserves Attribution
+    // -------------------------------------------------------------------------
+    await context.test(
+      "deleting a phase in COMPLETED or ARCHIVED moves tasks to root and preserves attribution",
+      async () => {
+        const phase = await prisma.$transaction((tx) =>
+          createPhase(tx, completed.id, { name: "Phase to delete" })
+        );
+        const taskInPhase = await prisma.task.create({
+          data: {
+            title: "Task in deleted phase",
+            projectId: completed.id,
+            phaseId: phase.id,
+            status: "DONE"
+          }
+        });
+
+        // Delete phase via deletePhase workflow
+        await deletePhase(phase.id);
+
+        // Phase is deleted
+        assert.equal(
+          await prisma.projectPhase.findUnique({ where: { id: phase.id } }),
+          null
+        );
+
+        // Task preserved at project root
+        const preserved = await prisma.task.findUniqueOrThrow({
+          where: { id: taskInPhase.id }
+        });
+        assert.equal(preserved.projectId, completed.id);
+        assert.equal(preserved.phaseId, null);
+        assert.equal(preserved.status, "DONE");
+      }
+    );
+  });
+});
+
+test("Project Lifecycle Policy: Project Status Transitions and Form Preservation", async (context) => {
+  await withDatabase(context, async ({ prisma }) => {
+    const archived = await prisma.project.create({
+      data: {
+        name: "Preserve Archived",
+        status: "ARCHIVED",
+        desiredOutcome: "Unchanged"
+      }
+    });
+
+    const completed = await prisma.project.create({
+      data: {
+        name: "Completed Project",
+        status: "COMPLETED",
+        desiredOutcome: "Finished"
+      }
+    });
+
+    // -------------------------------------------------------------------------
+    // Priority 4: Ordinary Edits Preserve ARCHIVED; Explicit Restoration to ACTIVE
+    // -------------------------------------------------------------------------
+    await context.test(
+      "ordinary edits preserve ARCHIVED status, while explicit restore/reopen sets ACTIVE",
+      async () => {
+        // Unrelated edit on ARCHIVED project (e.g. updating name or desiredOutcome)
+        const patchResult = await completeProject(
+          archived.id,
+          {
+            data: { desiredOutcome: "Updated Outcome" },
+            confirmCompletion: false
+          },
+          reviewPeriod
+        );
+        assert.equal(patchResult.kind, "saved");
+        if (patchResult.kind === "saved") {
+          assert.equal(patchResult.detail.status, "ARCHIVED");
+          assert.equal(patchResult.detail.desiredOutcome, "Updated Outcome");
+        }
+
+        // Explicit restoration to ACTIVE
+        const restoreResult = await completeProject(
+          archived.id,
+          {
+            data: { status: "ACTIVE" },
+            confirmCompletion: false
+          },
+          reviewPeriod
+        );
+        assert.equal(restoreResult.kind, "saved");
+        if (restoreResult.kind === "saved") {
+          assert.equal(restoreResult.detail.status, "ACTIVE");
+        }
+
+        // Ordinary edit on COMPLETED project preserves COMPLETED
+        const editCompleted = await completeProject(
+          completed.id,
+          {
+            data: { name: "Completed Renamed" },
+            confirmCompletion: false
+          },
+          reviewPeriod
+        );
+        assert.equal(editCompleted.kind, "saved");
+        if (editCompleted.kind === "saved") {
+          assert.equal(editCompleted.detail.status, "COMPLETED");
+          assert.equal(editCompleted.detail.name, "Completed Renamed");
+        }
+
+        // Explicit reopen of COMPLETED to ACTIVE
+        const reopenCompleted = await completeProject(
+          completed.id,
+          {
+            data: { status: "ACTIVE" },
+            confirmCompletion: false
+          },
+          reviewPeriod
+        );
+        assert.equal(reopenCompleted.kind, "saved");
+        if (reopenCompleted.kind === "saved") {
+          assert.equal(reopenCompleted.detail.status, "ACTIVE");
+        }
+      }
+    );
+  });
+});

@@ -1,5 +1,6 @@
 "use client";
 import { isProjectDetailResponse, isProjectPhaseResponse, isProjectTaskResponse } from "@/modules/projects/domain/project";
+import { projectReactivation, type ProjectReactivation } from "@/modules/projects/domain/lifecycle";
 
 import {
   createPhase,
@@ -40,6 +41,7 @@ import {
 } from "@/lib/project-domain";
 import {
   Archive,
+  ArchiveRestore,
   ArrowLeft,
   ArrowUpRight,
   CalendarDays,
@@ -83,8 +85,6 @@ type ProjectsWorkspaceProps = {
 type ProjectView = "cards" | "list";
 
 const PROJECTS_VIEW_STORAGE_KEY = "dayflow-projects-view";
-const PROJECT_PLAN_READ_ONLY_MESSAGE =
-  "Reopen this Project before editing tasks or adding unfinished work.";
 const PROJECT_VIEW_OPTIONS: Array<[ProjectView, string]> = [
   ["cards", "Cards"],
   ["list", "List"]
@@ -726,9 +726,7 @@ function ProjectRow({
             error={rowState.loadError}
             editError={rowState.editError}
             today={today}
-            canManagePlan={
-              project.status !== "COMPLETED" && project.status !== "ARCHIVED"
-            }
+            status={project.status}
             onRetry={() => rowPlan.retry()}
             onUpdateTask={updateTask}
             onDeleteTask={deleteTask}
@@ -741,6 +739,11 @@ function ProjectRow({
   );
 }
 
+/** Explains the missing add-task control on a Project that must be reactivated first. */
+function unfinishedTaskLockMessage(reactivation: ProjectReactivation) {
+  return `${reactivation.action} this Project to add unfinished tasks.`;
+}
+
 /**
  * Uses the Project page's own task row so both surfaces expose the same task
  * editing, scheduling, focusing and deletion behavior.
@@ -751,7 +754,7 @@ function ProjectRowTasks({
   error,
   editError,
   today,
-  canManagePlan,
+  status,
   onRetry,
   onUpdateTask,
   onDeleteTask,
@@ -763,7 +766,7 @@ function ProjectRowTasks({
   error: string;
   editError: string;
   today: string;
-  canManagePlan: boolean;
+  status: ProjectStatus;
   onRetry: () => void;
   onUpdateTask: (
     id: string,
@@ -797,6 +800,7 @@ function ProjectRowTasks({
   // Falls through rather than returning: an empty Project is exactly when the
   // add control is most useful, and it is now right here in the drawer.
   const emptyPlan = plan.tasks.length === 0;
+  const reactivation = projectReactivation(status);
 
   // Seeded from `plan.phases`, which the API returns in the Project's own
   // sortOrder, so the drawer keeps the configured sequence. Deriving the order
@@ -853,8 +857,8 @@ function ProjectRowTasks({
       {emptyPlan && (
         <p className="project-row-drawer-state">No tasks yet.</p>
       )}
-      {!canManagePlan && (
-        <p className="project-row-drawer-state">{PROJECT_PLAN_READ_ONLY_MESSAGE}</p>
+      {reactivation && (
+        <p className="project-row-drawer-state">{unfinishedTaskLockMessage(reactivation)}</p>
       )}
       {filledGroups.map((group) => (
         <div key={group.key} className="project-row-task-group">
@@ -868,7 +872,7 @@ function ProjectRowTasks({
                 task={task}
                 phases={plan.phases}
                 today={today}
-                canManagePlan={canManagePlan}
+                canReopenTasks={!reactivation}
                 onUpdate={onUpdateTask}
                 onDelete={onDeleteTask}
                 onStartFocus={onStartFocus}
@@ -877,7 +881,7 @@ function ProjectRowTasks({
           </div>
         </div>
       ))}
-      {canManagePlan && (
+      {!reactivation && (
         <ProjectRowAddTask phases={plan.phases} onAdd={onAddTask} />
       )}
     </>
@@ -1133,7 +1137,7 @@ function ProjectDetailWorkspace({
     ? detail.phases.find((phase) => phase.id === nextTask.phaseId) ?? null
     : null;
   const allTasksDone = detail.taskCount > 0 && detail.completedTaskCount === detail.taskCount;
-  const canAddWork = detail.status !== "COMPLETED" && detail.status !== "ARCHIVED";
+  const reactivation = projectReactivation(detail.status);
 
   async function confirmProjectChange(operation: () => Promise<unknown>) {
     onError("");
@@ -1276,13 +1280,17 @@ function ProjectDetailWorkspace({
               <Play size={15} />
             </button>
           )}
-          {(detail.status === "COMPLETED" || detail.status === "ARCHIVED") && (
+          {reactivation && (
             <button
               className="secondary-button"
               onClick={() => void onUpdateProject({ status: "ACTIVE" })}
             >
-              <RotateCcw size={15} />
-              Reopen
+              {reactivation.action === "Restore" ? (
+                <ArchiveRestore size={15} />
+              ) : (
+                <RotateCcw size={15} />
+              )}
+              {reactivation.action}
             </button>
           )}
           {detail.status !== "ARCHIVED" && (
@@ -1430,7 +1438,7 @@ function ProjectDetailWorkspace({
               </h3>
               <p>Choose one action that can be finished in a sitting.</p>
             </div>
-            {canAddWork && (
+            {!reactivation && (
               <button
                 className="secondary-button"
                 onClick={() => document.getElementById("project-new-task")?.focus()}
@@ -1446,7 +1454,7 @@ function ProjectDetailWorkspace({
       <section className="project-plan-section" aria-labelledby="project-plan-heading">
         <div className="project-plan-heading">
           <h2 id="project-plan-heading">Plan</h2>
-          {canAddWork ? (
+          {!reactivation ? (
             <div className="project-plan-add">
               <input
                 id="project-new-task"
@@ -1481,7 +1489,7 @@ function ProjectDetailWorkspace({
               </button>
             </div>
           ) : (
-            <p>{PROJECT_PLAN_READ_ONLY_MESSAGE}</p>
+            <p>{unfinishedTaskLockMessage(reactivation)}</p>
           )}
         </div>
 
@@ -1491,7 +1499,7 @@ function ProjectDetailWorkspace({
             tasks={directTasks}
             phases={detail.phases}
             today={today}
-            canManagePlan={canAddWork}
+            canReopenTasks={!reactivation}
             onUpdate={updateTask}
             onDelete={deleteTask}
             onStartFocus={onStartFocus}
@@ -1511,7 +1519,7 @@ function ProjectDetailWorkspace({
               tasks={directTasks}
               phases={detail.phases}
               today={today}
-              canManagePlan={canAddWork}
+              canReopenTasks={!reactivation}
               onUpdate={updateTask}
               onDelete={deleteTask}
               onStartFocus={onStartFocus}
@@ -1532,7 +1540,7 @@ function ProjectDetailWorkspace({
                 phases={detail.phases}
                 today={today}
                 collapsed={collapsed}
-                canManagePlan={canAddWork}
+                canReopenTasks={!reactivation}
                 onToggle={() =>
                   setCollapsedPhases((current) => {
                     const next = new Set(current);
@@ -1558,7 +1566,7 @@ function ProjectDetailWorkspace({
           </p>
         )}
 
-        {canAddWork && detail.phases.length === 0 && (
+        {detail.phases.length === 0 && (
           <section className="project-phases-empty">
             <strong>Phases are optional</strong>
             <p>
@@ -1581,7 +1589,7 @@ function ProjectDetailWorkspace({
           </section>
         )}
 
-        {canAddWork && (detail.phases.length > 0 || phaseComposerOpen) && (
+        {(detail.phases.length > 0 || phaseComposerOpen) && (
           <div className="phase-create">
             <input
               id="project-new-phase"
@@ -1638,9 +1646,8 @@ function ProjectEditForm({
   const [weeklyMinutesBudget, setWeeklyMinutesBudget] = useState(
     project.weeklyMinutesBudget?.toString() ?? ""
   );
-  const [status, setStatus] = useState<ProjectStatus>(
-    project.status === "ARCHIVED" ? "PAUSED" : project.status
-  );
+  // Saving other details keeps the current state, Archived included.
+  const [status, setStatus] = useState<ProjectStatus>(project.status);
   const [removeOpen, setRemoveOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -1678,7 +1685,9 @@ function ProjectEditForm({
       ? "Active projects appear in the main list and can accept new work."
       : status === "PAUSED"
         ? "Paused projects keep their plan and history, but step out of the active list."
-        : "Completed projects keep their evidence and stop accepting unfinished work until reopened.";
+        : status === "COMPLETED"
+          ? "Completed projects keep their evidence and stop accepting unfinished work until reopened."
+          : "Archived projects keep everything, stay out of the active list, and stop accepting unfinished work until restored.";
 
   async function saveChanges() {
     if (!dirty || !name.trim()) return;
@@ -1928,7 +1937,7 @@ function ProjectPhaseSection({
   phase,
   today,
   collapsed = false,
-  canManagePlan,
+  canReopenTasks,
   onToggle,
   onUpdate,
   onDelete,
@@ -1943,7 +1952,7 @@ function ProjectPhaseSection({
   phase?: ProjectPhaseRecord;
   today: string;
   collapsed?: boolean;
-  canManagePlan: boolean;
+  canReopenTasks: boolean;
   onToggle?: () => void;
   onUpdate: (
     id: string,
@@ -1999,7 +2008,7 @@ function ProjectPhaseSection({
             : "0/0"}
         </span>
         <i className="phase-rule" />
-        {phase && canManagePlan && onDeletePhase && (
+        {phase && onDeletePhase && (
           <button
             ref={deleteTriggerRef}
             className="phase-delete"
@@ -2030,7 +2039,7 @@ function ProjectPhaseSection({
             tasks={tasks}
             phases={phases}
             today={today}
-            canManagePlan={canManagePlan}
+            canReopenTasks={canReopenTasks}
             onUpdate={onUpdate}
             onDelete={onDelete}
             onStartFocus={onStartFocus}
@@ -2097,7 +2106,7 @@ function TaskGroup({
   tasks,
   phases,
   today,
-  canManagePlan,
+  canReopenTasks,
   onUpdate,
   onDelete,
   onStartFocus
@@ -2105,7 +2114,7 @@ function TaskGroup({
   tasks: ProjectTaskRecord[];
   phases: ProjectPhaseRecord[];
   today: string;
-  canManagePlan: boolean;
+  canReopenTasks: boolean;
   onUpdate: (
     id: string,
     patch: Partial<ProjectTaskRecord> & { scheduleSource?: string }
@@ -2126,7 +2135,7 @@ function TaskGroup({
           task={task}
           phases={phases}
           today={today}
-          canManagePlan={canManagePlan}
+          canReopenTasks={canReopenTasks}
           onUpdate={onUpdate}
           onDelete={onDelete}
           onStartFocus={onStartFocus}
@@ -2140,7 +2149,7 @@ function ProjectTaskItem({
   task,
   phases,
   today,
-  canManagePlan,
+  canReopenTasks,
   onUpdate,
   onDelete,
   onStartFocus
@@ -2148,7 +2157,7 @@ function ProjectTaskItem({
   task: ProjectTaskRecord;
   phases: ProjectPhaseRecord[];
   today: string;
-  canManagePlan: boolean;
+  canReopenTasks: boolean;
   onUpdate: (
     id: string,
     patch: Partial<ProjectTaskRecord> & { scheduleSource?: string }
@@ -2203,7 +2212,7 @@ function ProjectTaskItem({
     >
       <button
         className="check-button"
-        disabled={!canManagePlan}
+        disabled={done && !canReopenTasks}
         aria-label={done ? `Reopen ${task.title}` : `Complete ${task.title}`}
         onClick={() =>
           void onUpdate(task.id, { status: done ? "TODO" : "DONE" })
@@ -2214,10 +2223,9 @@ function ProjectTaskItem({
       <input
         className="project-task-title"
         value={title}
-        disabled={!canManagePlan}
         onChange={(event) => setTitle(event.target.value)}
         onBlur={() => {
-          if (canManagePlan && title.trim() && title !== task.title) {
+          if (title.trim() && title !== task.title) {
             void onUpdate(task.id, { title: title.trim() });
           }
         }}
@@ -2227,7 +2235,6 @@ function ProjectTaskItem({
         <select
           className="project-task-phase"
           value={task.phaseId ?? ""}
-          disabled={!canManagePlan}
           aria-label={`Phase for ${task.title}`}
           onChange={(event) =>
             void onUpdate(task.id, { phaseId: event.target.value || null })
@@ -2248,7 +2255,6 @@ function ProjectTaskItem({
       ) : (
         <button
           className="project-task-focus"
-          disabled={!canManagePlan}
           onClick={() =>
             onStartFocus({
               taskId: task.id,
@@ -2267,7 +2273,6 @@ function ProjectTaskItem({
           Schedule
           <input
             type="date"
-            disabled={!canManagePlan}
             aria-label={`Schedule ${task.title}`}
             onChange={(event) => {
               if (event.target.value) {
@@ -2292,21 +2297,19 @@ function ProjectTaskItem({
       ) : (
         <span className="project-task-deadline-spacer" aria-hidden="true" />
       )}
-      {canManagePlan && (
-        <button
-          ref={deleteTriggerRef}
-          className="icon-button project-task-delete"
-          title={`Delete task ${task.title}`}
-          aria-label={`Delete task ${task.title}`}
-          onClick={() => {
-            setDeleteFailed(false);
-            setDeleteConfirmOpen(true);
-          }}
-        >
-          <Trash2 size={14} />
-        </button>
-      )}
-      {canManagePlan && deleteConfirmOpen && (
+      <button
+        ref={deleteTriggerRef}
+        className="icon-button project-task-delete"
+        title={`Delete task ${task.title}`}
+        aria-label={`Delete task ${task.title}`}
+        onClick={() => {
+          setDeleteFailed(false);
+          setDeleteConfirmOpen(true);
+        }}
+      >
+        <Trash2 size={14} />
+      </button>
+      {deleteConfirmOpen && (
         <div
           className="project-delete-confirm-overlay"
           role="presentation"

@@ -69,7 +69,7 @@ These exclusions should not block later additions. In particular, Areas and opti
 - When all current tasks are done, Dayflow prompts the user to complete the Project or add another task.
 - The user may explicitly complete a Project with unfinished tasks after confirming the choice.
 - A Completed Project can be reopened.
-- Adding unfinished work to a Completed Project requires reopening it.
+- A Completed or Archived Project must be explicitly reactivated before it gains an unfinished task. See [Plan changes by lifecycle state](#plan-changes-by-lifecycle-state).
 
 ### Phase
 
@@ -286,13 +286,52 @@ Automatic carry-forward may be added later as an explicit preference, but `Ask m
 - Project completion always requires explicit user confirmation.
 - Completing the final current task may trigger a completion prompt but never changes Project state on its own.
 - Completing preserves tasks, activities, notes, materials, and progress history.
+- Reopening a Completed Project makes it Active.
 
 ### Archive
 
 - Archive is the normal non-destructive removal action.
 - Archived Projects are hidden from the default Projects view.
 - Archiving does not delete or reschedule associated content.
-- An Archived Project can be restored.
+- An Archived Project can be restored. Restoring makes it Active.
+
+### Plan changes by lifecycle state
+
+Active and Paused Projects accept every plan change. A Completed or Archived
+Project keeps its plan editable, but it must be explicitly reactivated —
+reopened or restored — before it gains an unfinished task.
+
+A Project gains an unfinished task when a task that is not done:
+
+- is created in it;
+- moves into it from another Project or from no Project; or
+- was done in it and is changed back to an unfinished status.
+
+The rule compares the task's placement before and after the change, not only
+its resulting status. A change that leaves an unfinished task in the Project it
+was already in gains nothing.
+
+| Change | Completed | Archived |
+|---|---|---|
+| Create an unfinished task, or move one in | Reopen first | Restore first |
+| Change a done task back to unfinished | Reopen first | Restore first |
+| Create a task that is already done, or move one in | Allowed | Allowed |
+| Complete an existing unfinished task | Allowed | Allowed |
+| Rename a task, or move it to another Phase of the same Project | Allowed | Allowed |
+| Schedule, reschedule, reorder, or focus an existing task | Allowed | Allowed |
+| Delete a task | Allowed | Allowed |
+| Move a task out to another Project | Follows the destination Project's rule | Follows the destination Project's rule |
+| Create a Phase (including an empty one), rename it, or delete it | Allowed | Allowed |
+
+- An empty Phase adds no unfinished task.
+- Deleting a Phase still moves its tasks to the Project root without deleting them.
+- Changing lifecycle state never reschedules, detaches, hides, or completes tasks.
+
+### Editing a Project
+
+- Saving a Project's details keeps its current lifecycle state, Archived included.
+- The state changes only when the user chooses a different one: Pause, Resume,
+  Complete, Reopen, Archive, Restore, or another state in the edit form.
 
 ### Delete
 

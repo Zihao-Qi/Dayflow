@@ -296,7 +296,7 @@ test("keeps each List row's drawer independent", async ({ page }) => {
   await expect(firstDrawerTask).toBeVisible();
 });
 
-test("keeps a completed Project's drawer tasks visible without mutating controls", async ({
+test("keeps a completed Project's drawer tasks editable while disallowing new unfinished tasks", async ({
   page
 }) => {
   const project = await createProject(page, "Completed drawer Project");
@@ -307,17 +307,18 @@ test("keeps a completed Project's drawer tasks visible without mutating controls
   const phaseId = ((await phase.json()) as { id: string }).id;
 
   // Completion can be confirmed with unfinished work still in the plan.
-  // Exercise the Done, Backlog and scheduled rows, including Schedule/Focus.
-  for (const [title, status, date] of [
-    ["Finished evidence", "DONE", null],
-    ["Unfinished backlog", "TODO", null],
-    ["Unfinished scheduled", "TODO", "2026-09-05"]
-  ] as const) {
-    const task = await page.request.post("/api/tasks", {
-      data: { title, status, date, projectId: project.id, phaseId, estimateMinutes: 30 }
-    });
-    expect(task.status()).toBe(201);
-  }
+  const taskDone = ((await (await page.request.post("/api/tasks", {
+    data: { title: "Finished evidence", status: "DONE", date: null, projectId: project.id, phaseId, estimateMinutes: 30 }
+  })).json()) as { id: string });
+
+  const taskBacklog = ((await (await page.request.post("/api/tasks", {
+    data: { title: "Unfinished backlog", status: "TODO", date: null, projectId: project.id, phaseId, estimateMinutes: 30 }
+  })).json()) as { id: string });
+
+  const taskScheduled = ((await (await page.request.post("/api/tasks", {
+    data: { title: "Unfinished scheduled", status: "TODO", date: "2026-09-05", projectId: project.id, phaseId, estimateMinutes: 30 }
+  })).json()) as { id: string });
+
   const completed = await page.request.patch(`/api/projects/${project.id}`, {
     data: { status: "COMPLETED", confirm: true }
   });
@@ -331,38 +332,286 @@ test("keeps a completed Project's drawer tasks visible without mutating controls
     ".project-row-drawer"
   );
   await expect(drawer.locator(".project-task")).toHaveCount(3);
-  // This assertion fails on the original code: Reopen is enabled and sends
-  // status: TODO, which the API rejects for a completed Project.
+
+  // 1. Reopen gate: disabled on already-DONE tasks
   await expect(
     drawer.getByRole("button", { name: "Reopen Finished evidence", exact: true })
   ).toBeDisabled();
 
-  for (const title of ["Finished evidence", "Unfinished backlog", "Unfinished scheduled"]) {
-    const input = drawer.getByRole("textbox", { name: `Task title: ${title}`, exact: true });
-    await expect(input).toBeVisible();
-    await expect(input).toHaveValue(title);
-    await expect(input).toBeDisabled();
-    const phaseSelect = drawer.getByRole("combobox", { name: `Phase for ${title}`, exact: true });
-    await expect(phaseSelect).toBeDisabled();
-    await expect(phaseSelect).toHaveValue(phaseId);
-  }
-  for (const title of ["Unfinished backlog", "Unfinished scheduled"]) {
-    await expect(
-      drawer.getByRole("button", { name: `Complete ${title}`, exact: true })
-    ).toBeDisabled();
-  }
-  await expect(drawer.locator(".project-task-state.done")).toHaveText("Done");
-  await expect(drawer.locator(".project-task-state.backlog")).toHaveText("Backlog");
-  await expect(drawer.getByText("Preserved phase", { exact: true }).first()).toBeVisible();
-  await expect(drawer.getByLabel("Schedule Unfinished backlog", { exact: true })).toBeDisabled();
-  await expect(drawer.getByRole("button", { name: "Focus 30m", exact: true })).toBeDisabled();
-  await expect(drawer.locator(".project-task:not(.done):not(.backlog) .project-task-meta")).toBeVisible();
-  await expect(drawer.getByRole("button", { name: /^Delete task/ })).toHaveCount(0);
-  await expect(drawer.locator(".project-row-add-task")).toHaveCount(0);
-  await expect(drawer.locator("button:enabled, input:enabled, select:enabled")).toHaveCount(0);
+  // 2. Schedule: Unfinished backlog task is unscheduled (backlog), so Schedule date picker is rendered
+  const scheduleInput = drawer.getByLabel("Schedule Unfinished backlog", { exact: true });
+  await expect(scheduleInput).toBeEnabled();
+  await scheduleInput.fill("2026-09-15");
+  await scheduleInput.dispatchEvent("change");
+
+  // Verify scheduled date rendered in UI and persisted via project detail
+  const backlogRow = drawer.locator(".project-task").filter({
+    has: page.locator('input[aria-label="Task title: Unfinished backlog"]')
+  });
+  // The row labels a date that is today as "today", so accept either label;
+  // the exact persisted date is checked through the API below.
+  await expect(backlogRow.locator(".project-task-meta")).toContainText(/\b(?:today|Sep 15)\b/);
+  const projectCheck = await page.request.get(`/api/projects/${project.id}`);
+  expect(projectCheck.ok()).toBe(true);
+  const projectData = (await projectCheck.json()) as { tasks: Array<{ id: string; date: string | null }> };
+  expect(projectData.tasks.find((t) => t.id === taskBacklog.id)?.date).toMatch(/^2026-09-15/);
+
+  // 3. Complete: clicking Complete on Unfinished backlog transitions it to DONE
+  const completeBacklog = drawer.getByRole("button", {
+    name: "Complete Unfinished backlog",
+    exact: true
+  });
+  await expect(completeBacklog).toBeEnabled();
+  await completeBacklog.click();
+  // Now completed, its reopen button is disabled under the policy
   await expect(
-    drawer.getByText("Reopen this Project before editing tasks or adding unfinished work.", { exact: true })
+    drawer.getByRole("button", { name: "Reopen Unfinished backlog", exact: true })
+  ).toBeDisabled();
+
+  // 4. Rename: renaming an unfinished task in Completed succeeds
+  const scheduledInput = drawer.getByRole("textbox", {
+    name: "Task title: Unfinished scheduled",
+    exact: true
+  });
+  await expect(scheduledInput).toBeEnabled();
+  await scheduledInput.fill("Renamed scheduled in completed");
+  await scheduledInput.blur();
+  await expect(
+    drawer.getByRole("textbox", {
+      name: "Task title: Renamed scheduled in completed",
+      exact: true
+    })
   ).toBeVisible();
+
+  // Phase select is enabled
+  const phaseSelect = drawer.getByRole("combobox", {
+    name: "Phase for Renamed scheduled in completed",
+    exact: true
+  });
+  await expect(phaseSelect).toBeEnabled();
+  await expect(phaseSelect).toHaveValue(phaseId);
+
+  // 5. Focus: exercise through the scheduled task row and observe the correct task target in Focus rail
+  const scheduledRow = drawer.locator(".project-task").filter({
+    has: page.locator('input[aria-label="Task title: Renamed scheduled in completed"]')
+  });
+  const focusBtn = scheduledRow.getByRole("button", { name: "Focus 30m", exact: true });
+  await expect(focusBtn).toBeEnabled();
+  await focusBtn.click();
+
+  const rail = page.getByRole("complementary", { name: "Focus rail" });
+  await expect(rail).toBeVisible();
+  await expect(rail.getByLabel("Intention")).toHaveValue("Renamed scheduled in completed");
+  await expect(rail.getByRole("combobox", { name: "Focus task" })).toHaveValue(taskScheduled.id);
+
+  // 6. Delete via confirmation with observable removal
+  await drawer.getByRole("button", { name: "Delete task Finished evidence", exact: true }).click();
+  const confirmDialog = page.getByRole("alertdialog", { name: "Delete task Finished evidence" });
+  await expect(confirmDialog).toBeVisible();
+  await confirmDialog.getByRole("button", { name: "Delete task", exact: true }).click();
+  await expect(confirmDialog).not.toBeVisible();
+
+  // Verify observable removal in drawer and API
+  await expect(drawer.getByRole("textbox", { name: "Task title: Finished evidence" })).toHaveCount(0);
+  await expect(drawer.locator(".project-task")).toHaveCount(2);
+  const deleteProjectCheck = await page.request.get(`/api/projects/${project.id}`);
+  expect(deleteProjectCheck.ok()).toBe(true);
+  const remainingTasks = ((await deleteProjectCheck.json()) as { tasks: Array<{ id: string }> }).tasks;
+  expect(remainingTasks.some((t) => t.id === taskDone.id)).toBe(false);
+
+  // 7. Add task composer is hidden and Reopen banner is visible
+  await expect(drawer.locator(".project-row-add-task")).toHaveCount(0);
+  await expect(
+    drawer.getByText("Reopen this Project to add unfinished tasks.", { exact: true })
+  ).toBeVisible();
+});
+
+test("keeps an archived Project's drawer tasks editable while disallowing new unfinished tasks", async ({
+  page
+}) => {
+  const project = await createProject(page, "Archived drawer Project");
+  const phase = await page.request.post(`/api/projects/${project.id}/phases`, {
+    data: { name: "Archived phase" }
+  });
+  expect(phase.status()).toBe(201);
+  const phaseId = ((await phase.json()) as { id: string }).id;
+
+  const taskDone = ((await (await page.request.post("/api/tasks", {
+    data: { title: "Finished evidence", status: "DONE", date: null, projectId: project.id, phaseId, estimateMinutes: 30 }
+  })).json()) as { id: string });
+
+  const taskBacklog = ((await (await page.request.post("/api/tasks", {
+    data: { title: "Unfinished backlog", status: "TODO", date: null, projectId: project.id, phaseId, estimateMinutes: 30 }
+  })).json()) as { id: string });
+
+  const taskScheduled = ((await (await page.request.post("/api/tasks", {
+    data: { title: "Unfinished scheduled", status: "TODO", date: "2026-09-05", projectId: project.id, phaseId, estimateMinutes: 30 }
+  })).json()) as { id: string });
+
+  const archived = await page.request.patch(`/api/projects/${project.id}`, {
+    data: { status: "ARCHIVED" }
+  });
+  expect(archived.ok()).toBe(true);
+
+  await openListProjects(page);
+  await page.getByRole("button", { name: /^Archived/ }).click();
+  await projectToggle(page, "Archived drawer Project").click();
+
+  const drawer = projectRowFor(page, "Archived drawer Project").locator(
+    ".project-row-drawer"
+  );
+  await expect(drawer.locator(".project-task")).toHaveCount(3);
+
+  // 1. Reopen gate: disabled on already-DONE tasks
+  await expect(
+    drawer.getByRole("button", { name: "Reopen Finished evidence", exact: true })
+  ).toBeDisabled();
+
+  // 2. Schedule: Unfinished backlog task is unscheduled (backlog), so Schedule date picker is rendered
+  const scheduleInput = drawer.getByLabel("Schedule Unfinished backlog", { exact: true });
+  await expect(scheduleInput).toBeEnabled();
+  await scheduleInput.fill("2026-09-15");
+  await scheduleInput.dispatchEvent("change");
+
+  // Verify scheduled date rendered in UI and persisted via project detail
+  const backlogRow = drawer.locator(".project-task").filter({
+    has: page.locator('input[aria-label="Task title: Unfinished backlog"]')
+  });
+  // The row labels a date that is today as "today", so accept either label;
+  // the exact persisted date is checked through the API below.
+  await expect(backlogRow.locator(".project-task-meta")).toContainText(/\b(?:today|Sep 15)\b/);
+  const projectCheck = await page.request.get(`/api/projects/${project.id}`);
+  expect(projectCheck.ok()).toBe(true);
+  const projectData = (await projectCheck.json()) as { tasks: Array<{ id: string; date: string | null }> };
+  expect(projectData.tasks.find((t) => t.id === taskBacklog.id)?.date).toMatch(/^2026-09-15/);
+
+  // 3. Complete: clicking Complete on Unfinished backlog transitions it to DONE
+  const completeBacklog = drawer.getByRole("button", {
+    name: "Complete Unfinished backlog",
+    exact: true
+  });
+  await expect(completeBacklog).toBeEnabled();
+  await completeBacklog.click();
+  // Now completed, its reopen button is disabled under the policy
+  await expect(
+    drawer.getByRole("button", { name: "Reopen Unfinished backlog", exact: true })
+  ).toBeDisabled();
+
+  // 4. Rename: renaming an unfinished task in Archived succeeds
+  const scheduledInput = drawer.getByRole("textbox", {
+    name: "Task title: Unfinished scheduled",
+    exact: true
+  });
+  await expect(scheduledInput).toBeEnabled();
+  await scheduledInput.fill("Renamed scheduled in archived");
+  await scheduledInput.blur();
+  await expect(
+    drawer.getByRole("textbox", {
+      name: "Task title: Renamed scheduled in archived",
+      exact: true
+    })
+  ).toBeVisible();
+
+  // Phase select is enabled
+  const phaseSelect = drawer.getByRole("combobox", {
+    name: "Phase for Renamed scheduled in archived",
+    exact: true
+  });
+  await expect(phaseSelect).toBeEnabled();
+  await expect(phaseSelect).toHaveValue(phaseId);
+
+  // 5. Focus: exercise through the scheduled task row and observe the correct task target in Focus rail
+  const scheduledRow = drawer.locator(".project-task").filter({
+    has: page.locator('input[aria-label="Task title: Renamed scheduled in archived"]')
+  });
+  const focusBtn = scheduledRow.getByRole("button", { name: "Focus 30m", exact: true });
+  await expect(focusBtn).toBeEnabled();
+  await focusBtn.click();
+
+  const rail = page.getByRole("complementary", { name: "Focus rail" });
+  await expect(rail).toBeVisible();
+  await expect(rail.getByLabel("Intention")).toHaveValue("Renamed scheduled in archived");
+  await expect(rail.getByRole("combobox", { name: "Focus task" })).toHaveValue(taskScheduled.id);
+
+  // 6. Delete via confirmation with observable removal
+  await drawer.getByRole("button", { name: "Delete task Finished evidence", exact: true }).click();
+  const confirmDialog = page.getByRole("alertdialog", { name: "Delete task Finished evidence" });
+  await expect(confirmDialog).toBeVisible();
+  await confirmDialog.getByRole("button", { name: "Delete task", exact: true }).click();
+  await expect(confirmDialog).not.toBeVisible();
+
+  // Verify observable removal in drawer and API
+  await expect(drawer.getByRole("textbox", { name: "Task title: Finished evidence" })).toHaveCount(0);
+  await expect(drawer.locator(".project-task")).toHaveCount(2);
+  const deleteProjectCheck = await page.request.get(`/api/projects/${project.id}`);
+  expect(deleteProjectCheck.ok()).toBe(true);
+  const remainingTasks = ((await deleteProjectCheck.json()) as { tasks: Array<{ id: string }> }).tasks;
+  expect(remainingTasks.some((t) => t.id === taskDone.id)).toBe(false);
+
+  // 7. Add task composer is hidden and Restore banner is visible
+  await expect(drawer.locator(".project-row-add-task")).toHaveCount(0);
+  await expect(
+    drawer.getByText("Restore this Project to add unfinished tasks.", { exact: true })
+  ).toBeVisible();
+});
+
+test("preserves ARCHIVED status across ordinary edits in ProjectEditForm and restores explicitly", async ({
+  page
+}) => {
+  const project = await createProject(page, "Archived Form Project");
+  const archived = await page.request.patch(`/api/projects/${project.id}`, {
+    data: { status: "ARCHIVED", desiredOutcome: "Initial outcome" }
+  });
+  expect(archived.ok()).toBe(true);
+
+  await openListProjects(page);
+  await page.getByRole("button", { name: /^Archived/ }).click();
+
+  // Open the project detail page
+  const row = projectRowFor(page, "Archived Form Project");
+  await row.getByRole("button", { name: "Open Archived Form Project overview", exact: true }).click();
+
+  // Click Edit to open ProjectEditForm
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+
+  const dialog = page.getByRole("dialog", { name: "Edit Archived Form Project" });
+  await expect(dialog).toBeVisible();
+
+  // Initial form is clean: "No changes" is visible, Save changes is disabled
+  // (Control against mutant: status initialized to PAUSED makes dirty immediately true)
+  await expect(dialog.getByText("No changes", { exact: true })).toBeVisible();
+  const saveBtn = dialog.getByRole("button", { name: "Save changes", exact: true });
+  await expect(saveBtn).toBeDisabled();
+
+  // Edit desiredOutcome
+  const outcomeInput = dialog.getByRole("textbox", { name: "Desired outcome" });
+  await outcomeInput.fill("Updated outcome via browser edit");
+
+  // Form is now dirty
+  await expect(dialog.getByText("Unsaved changes", { exact: true })).toBeVisible();
+  await expect(saveBtn).toBeEnabled();
+  await saveBtn.click();
+  await expect(dialog).not.toBeVisible();
+
+  // Verify status remains ARCHIVED: Restore button remains visible in header
+  await expect(page.getByRole("button", { name: "Restore", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Archive project", exact: true })).toHaveCount(0);
+
+  // Verify via API that desiredOutcome updated and status remained ARCHIVED
+  const check = await page.request.get(`/api/projects/${project.id}`);
+  expect(check.ok()).toBe(true);
+  const detail = (await check.json()) as { status: string; desiredOutcome: string };
+  expect(detail.status).toBe("ARCHIVED");
+  expect(detail.desiredOutcome).toBe("Updated outcome via browser edit");
+
+  // Explicit Restore sets ACTIVE
+  await page.getByRole("button", { name: "Restore", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Restore", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Pause project", exact: true })).toBeVisible();
+
+  const activeCheck = await page.request.get(`/api/projects/${project.id}`);
+  expect(activeCheck.ok()).toBe(true);
+  expect(((await activeCheck.json()) as { status: string }).status).toBe("ACTIVE");
 });
 
 test("retries a failed task load in place instead of collapsing", async ({

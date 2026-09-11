@@ -423,51 +423,83 @@ test("Project Lifecycle Policy: Task Mutations in COMPLETED and ARCHIVED project
     await context.test(
       "deleting and reordering tasks is allowed in COMPLETED and ARCHIVED",
       async () => {
-        const t1 = await prisma.task.create({
-          data: {
-            title: "T1",
-            status: "DONE",
-            projectId: completed.id,
-            sortOrder: 1
-          }
-        });
-        const t2 = await prisma.task.create({
-          data: {
-            title: "T2",
-            status: "DONE",
-            projectId: completed.id,
-            sortOrder: 2
-          }
-        });
+        for (const [project, label] of [
+          [completed, "COMPLETED"],
+          [archived, "ARCHIVED"]
+        ] as const) {
+          // Reordering DONE tasks
+          const t1 = await prisma.task.create({
+            data: {
+              title: `${label} T1`,
+              status: "DONE",
+              projectId: project.id,
+              sortOrder: 1
+            }
+          });
+          const t2 = await prisma.task.create({
+            data: {
+              title: `${label} T2`,
+              status: "DONE",
+              projectId: project.id,
+              sortOrder: 2
+            }
+          });
 
-        // Reordering in completed succeeds
-        const reordered = await prisma.$transaction((tx) =>
-          reorderTasks(tx, [t2.id, t1.id])
-        );
-        assert.deepEqual(
-          reordered.map((t) => [t.id, t.sortOrder]),
-          [
-            [t2.id, 1],
-            [t1.id, 2]
-          ]
-        );
+          const reordered = await prisma.$transaction((tx) =>
+            reorderTasks(tx, [t2.id, t1.id])
+          );
+          assert.deepEqual(
+            reordered.map((t) => [t.id, t.sortOrder]),
+            [
+              [t2.id, 1],
+              [t1.id, 2]
+            ],
+            `Failed to reorder DONE tasks in ${label}`
+          );
 
-        // Deleting in completed succeeds
-        const deleteResult = await prisma.$transaction((tx) =>
-          deleteTask(tx, t1.id)
-        );
-        assert.deepEqual(deleteResult, { ok: true });
-        assert.equal(await readTask(prisma, t1.id), null);
+          // Reordering existing TODO tasks without triggering unfinished gain
+          const todo1 = await prisma.task.create({
+            data: {
+              title: `${label} Todo 1`,
+              status: "TODO",
+              projectId: project.id,
+              sortOrder: 3
+            }
+          });
+          const todo2 = await prisma.task.create({
+            data: {
+              title: `${label} Todo 2`,
+              status: "TODO",
+              projectId: project.id,
+              sortOrder: 4
+            }
+          });
+          const reorderedTodos = await prisma.$transaction((tx) =>
+            reorderTasks(tx, [todo2.id, todo1.id])
+          );
+          assert.deepEqual(
+            reorderedTodos.map((t) => [t.id, t.sortOrder]),
+            [
+              [todo2.id, 1],
+              [todo1.id, 2]
+            ],
+            `Failed to reorder TODO tasks in ${label}`
+          );
 
-        // Deleting in archived succeeds
-        const tArchived = await prisma.task.create({
-          data: { title: "TArchived", status: "DONE", projectId: archived.id }
-        });
-        const deleteArchived = await prisma.$transaction((tx) =>
-          deleteTask(tx, tArchived.id)
-        );
-        assert.deepEqual(deleteArchived, { ok: true });
-        assert.equal(await readTask(prisma, tArchived.id), null);
+          // Deleting DONE task
+          const deleteDoneResult = await prisma.$transaction((tx) =>
+            deleteTask(tx, t1.id)
+          );
+          assert.deepEqual(deleteDoneResult, { ok: true });
+          assert.equal(await readTask(prisma, t1.id), null);
+
+          // Deleting TODO task
+          const deleteTodoResult = await prisma.$transaction((tx) =>
+            deleteTask(tx, todo1.id)
+          );
+          assert.deepEqual(deleteTodoResult, { ok: true });
+          assert.equal(await readTask(prisma, todo1.id), null);
+        }
       }
     );
 
@@ -475,18 +507,131 @@ test("Project Lifecycle Policy: Task Mutations in COMPLETED and ARCHIVED project
     // Priority 1.9: Destination and Relationship Integrity Preservation
     // -------------------------------------------------------------------------
     await context.test(
-      "relationship integrity (missing project, phase mismatch) is preserved across all states",
+      "relationship integrity (missing project, phase mismatch) is preserved and not masked by lifecycle guards",
       async () => {
-        const standalone = await create();
-        for (const badPlacement of [
-          { projectId: "missing-project-id" },
-          { projectId: active.id, phaseId: completedPhase.id },
-          { projectId: completed.id, phaseId: activePhase.id },
-          { projectId: archived.id, phaseId: activePhase.id }
-        ]) {
-          await assert.rejects(() => create(badPlacement));
-          await assert.rejects(() => update(standalone.id, badPlacement));
+        // Use already-DONE tasks so lifecycle guards do not trigger or mask phase/project checks
+        const existingDone = await create({ status: "DONE" });
+
+        // Missing project check (404 RELATIONSHIP_NOT_FOUND)
+        await assert.rejects(
+          () => create({ projectId: "missing-project-id", status: "DONE" }),
+          (error: unknown) => {
+            assert.ok(error instanceof AppError);
+            assert.equal(error.status, 404);
+            assert.equal(error.code, "RELATIONSHIP_NOT_FOUND");
+            assert.equal(error.field, "projectId");
+            assert.equal(error.message, "The selected project could not be found.");
+            return true;
+          }
+        );
+        await assert.rejects(
+          () => update(existingDone.id, { projectId: "missing-project-id" }),
+          (error: unknown) => {
+            assert.ok(error instanceof AppError);
+            assert.equal(error.status, 404);
+            assert.equal(error.code, "RELATIONSHIP_NOT_FOUND");
+            assert.equal(error.field, "projectId");
+            assert.equal(error.message, "The selected project could not be found.");
+            return true;
+          }
+        );
+
+        // Missing phase check in COMPLETED and ARCHIVED (404 RELATIONSHIP_NOT_FOUND)
+        for (const targetProject of [completed, archived]) {
+          await assert.rejects(
+            () =>
+              create({
+                projectId: targetProject.id,
+                phaseId: "missing-phase-id",
+                status: "DONE"
+              }),
+            (error: unknown) => {
+              assert.ok(error instanceof AppError);
+              assert.equal(error.status, 404);
+              assert.equal(error.code, "RELATIONSHIP_NOT_FOUND");
+              assert.equal(error.field, "phaseId");
+              assert.equal(error.message, "The selected phase could not be found.");
+              return true;
+            }
+          );
         }
+
+        // Cross-project phase mismatch on CREATE of DONE task (409 RELATIONSHIP_CONFLICT)
+        // Lifecycle guard allows DONE tasks, so phase membership check runs directly.
+        for (const targetProject of [completed, archived]) {
+          await assert.rejects(
+            () =>
+              create({
+                projectId: targetProject.id,
+                phaseId: activePhase.id,
+                status: "DONE"
+              }),
+            (error: unknown) => {
+              assert.ok(error instanceof AppError);
+              assert.equal(error.status, 409);
+              assert.equal(error.code, "RELATIONSHIP_CONFLICT");
+              assert.equal(error.field, "phaseId");
+              assert.equal(
+                error.message,
+                "The selected phase does not belong to this project."
+              );
+              return true;
+            }
+          );
+        }
+
+        // Cross-project phase mismatch on UPDATE of existing same-project TODO task
+        // Because the task is already in the project, gainsUnfinishedTask returns false.
+        // Thus, lifecycle guard does NOT fire, and phase membership check is verified.
+        const sameProjectCompletedTodo = await prisma.task.create({
+          data: {
+            title: "Existing Completed Todo",
+            status: "TODO",
+            projectId: completed.id
+          }
+        });
+        await assert.rejects(
+          () =>
+            update(sameProjectCompletedTodo.id, {
+              phaseId: activePhase.id
+            }),
+          (error: unknown) => {
+            assert.ok(error instanceof AppError);
+            assert.equal(error.status, 409);
+            assert.equal(error.code, "RELATIONSHIP_CONFLICT");
+            assert.equal(error.field, "phaseId");
+            assert.equal(
+              error.message,
+              "The selected phase does not belong to this project."
+            );
+            return true;
+          }
+        );
+
+        const sameProjectArchivedTodo = await prisma.task.create({
+          data: {
+            title: "Existing Archived Todo",
+            status: "TODO",
+            projectId: archived.id
+          }
+        });
+        await assert.rejects(
+          () =>
+            update(sameProjectArchivedTodo.id, {
+              phaseId: activePhase.id
+            }),
+          (error: unknown) => {
+            assert.ok(error instanceof AppError);
+            assert.equal(error.status, 409);
+            assert.equal(error.code, "RELATIONSHIP_CONFLICT");
+            assert.equal(error.field, "phaseId");
+            assert.equal(
+              error.message,
+              "The selected phase does not belong to this project."
+            );
+            return true;
+          }
+        );
       }
     );
   });
@@ -553,34 +698,40 @@ test("Project Lifecycle Policy: Phase CRUD in COMPLETED and ARCHIVED projects", 
     await context.test(
       "deleting a phase in COMPLETED or ARCHIVED moves tasks to root and preserves attribution",
       async () => {
-        const phase = await prisma.$transaction((tx) =>
-          createPhase(tx, completed.id, { name: "Phase to delete" })
-        );
-        const taskInPhase = await prisma.task.create({
-          data: {
-            title: "Task in deleted phase",
-            projectId: completed.id,
-            phaseId: phase.id,
-            status: "DONE"
-          }
-        });
+        for (const [project, label] of [
+          [completed, "COMPLETED"],
+          [archived, "ARCHIVED"]
+        ] as const) {
+          const phase = await prisma.$transaction((tx) =>
+            createPhase(tx, project.id, { name: `Phase to delete in ${label}` })
+          );
+          const taskInPhase = await prisma.task.create({
+            data: {
+              title: `Task in deleted phase ${label}`,
+              projectId: project.id,
+              phaseId: phase.id,
+              status: "DONE"
+            }
+          });
 
-        // Delete phase via deletePhase workflow
-        await deletePhase(phase.id);
+          // Delete phase via deletePhase workflow
+          await deletePhase(phase.id);
 
-        // Phase is deleted
-        assert.equal(
-          await prisma.projectPhase.findUnique({ where: { id: phase.id } }),
-          null
-        );
+          // Phase is deleted
+          assert.equal(
+            await prisma.projectPhase.findUnique({ where: { id: phase.id } }),
+            null,
+            `Phase ${phase.id} was not deleted in ${label}`
+          );
 
-        // Task preserved at project root
-        const preserved = await prisma.task.findUniqueOrThrow({
-          where: { id: taskInPhase.id }
-        });
-        assert.equal(preserved.projectId, completed.id);
-        assert.equal(preserved.phaseId, null);
-        assert.equal(preserved.status, "DONE");
+          // Task preserved at project root
+          const preserved = await prisma.task.findUniqueOrThrow({
+            where: { id: taskInPhase.id }
+          });
+          assert.equal(preserved.projectId, project.id);
+          assert.equal(preserved.phaseId, null);
+          assert.equal(preserved.status, "DONE");
+        }
       }
     );
   });

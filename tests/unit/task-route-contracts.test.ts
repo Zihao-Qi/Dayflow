@@ -347,6 +347,9 @@ test("Task POST and PATCH pin each placement error independently", async () => {
         [{ projectId: "project" }, { status: "COMPLETED" }, null, 409, {
           error: "Reopen the completed project before adding unfinished work.", code: "RELATIONSHIP_CONFLICT", field: "projectId"
         }],
+        [{ projectId: "project" }, { status: "ARCHIVED" }, null, 409, {
+          error: "Restore the archived project before adding unfinished work.", code: "RELATIONSHIP_CONFLICT", field: "projectId"
+        }],
         [{ projectId: "project", phaseId: "phase" }, { status: "ACTIVE" }, { projectId: "other" }, 409, {
           error: "The selected phase does not belong to this project.", code: "RELATIONSHIP_CONFLICT", field: "phaseId"
         }]

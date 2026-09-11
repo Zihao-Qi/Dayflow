@@ -4,7 +4,8 @@ import { useState } from "react";
 import { Check, ChevronDown, ChevronUp, Circle, GripVertical, Play, Trash2 } from "lucide-react";
 import { formatShortDate } from "@/components/dashboard-formatters";
 import { SaveStateChip, useSaveState } from "@/components/save-state";
-import type { ProjectSummary } from "@/lib/project-domain";
+import { projectStatusLabel, type ProjectSummary } from "@/lib/project-domain";
+import { gainsUnfinishedTask, projectReactivation } from "@/modules/projects/domain/lifecycle";
 import type { QueuePlacement } from "@/lib/focus-queue";
 import { taskQuadrant, type FocusTarget, type Task, type TaskStatus } from "@/modules/planning/ui/backlog-model";
 
@@ -100,6 +101,11 @@ export function TaskRow({
     save: (value) => onSaveField(task.id, { status: value }),
     ...saveCallbacks
   });
+  const reactivation = project ? projectReactivation(project.status) : null;
+  const reopenDisabled = Boolean(done && reactivation);
+  const reopenTooltip = reopenDisabled && project && reactivation
+    ? `${reactivation.action} ${project.name} to mark this task incomplete.`
+    : undefined;
 
   return (
     <article
@@ -116,6 +122,8 @@ export function TaskRow({
     >
       <button
         className="check-button"
+        disabled={reopenDisabled}
+        title={reopenTooltip}
         aria-label={done ? `Mark ${task.title} incomplete` : `Complete ${task.title}`}
         onClick={() =>
           void onUpdate(task.id, { status: done ? "TODO" : "DONE" })
@@ -300,11 +308,22 @@ export function TaskRow({
                 {...projectSave.inputProps}
               >
                 <option value="">No project</option>
-                {projects.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
+                {projects.map((item) => {
+                  const itemReactivation = projectReactivation(item.status);
+                  const optionDisabled =
+                    itemReactivation !== null &&
+                    gainsUnfinishedTask(
+                      { projectId: task.projectId, status: task.status },
+                      { projectId: item.id, status: task.status }
+                    );
+                  const optionSuffix =
+                    itemReactivation !== null ? ` (${projectStatusLabel(item.status)})` : "";
+                  return (
+                    <option key={item.id} value={item.id} disabled={optionDisabled}>
+                      {item.name}{optionSuffix}
+                    </option>
+                  );
+                })}
               </select>
             </label>
             <label>
@@ -323,9 +342,26 @@ export function TaskRow({
                 }
                 {...statusSave.inputProps}
               >
-                <option value="TODO">To do</option>
-                <option value="IN_PROGRESS">In progress</option>
-                <option value="DONE">Done</option>
+                {(["TODO", "IN_PROGRESS", "DONE"] as const).map((statusOption) => {
+                  const statusDisabled = Boolean(
+                    project &&
+                    projectReactivation(project.status) !== null &&
+                    gainsUnfinishedTask(
+                      { projectId: task.projectId, status: task.status },
+                      { projectId: task.projectId, status: statusOption }
+                    )
+                  );
+                  const labels: Record<TaskStatus, string> = {
+                    TODO: "To do",
+                    IN_PROGRESS: "In progress",
+                    DONE: "Done"
+                  };
+                  return (
+                    <option key={statusOption} value={statusOption} disabled={statusDisabled}>
+                      {labels[statusOption]}
+                    </option>
+                  );
+                })}
               </select>
             </label>
           </div>

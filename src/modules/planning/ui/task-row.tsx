@@ -9,6 +9,12 @@ import { gainsUnfinishedTask, projectReactivation } from "@/modules/projects/dom
 import type { QueuePlacement } from "@/lib/focus-queue";
 import { taskQuadrant, type FocusTarget, type Task, type TaskStatus } from "@/modules/planning/ui/backlog-model";
 
+const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
+  TODO: "To do",
+  IN_PROGRESS: "In progress",
+  DONE: "Done"
+};
+
 export function TaskRow({
   task,
   suggested = false,
@@ -344,21 +350,15 @@ export function TaskRow({
               >
                 {(["TODO", "IN_PROGRESS", "DONE"] as const).map((statusOption) => {
                   const statusDisabled = Boolean(
-                    project &&
-                    projectReactivation(project.status) !== null &&
+                    reactivation &&
                     gainsUnfinishedTask(
                       { projectId: task.projectId, status: task.status },
                       { projectId: task.projectId, status: statusOption }
                     )
                   );
-                  const labels: Record<TaskStatus, string> = {
-                    TODO: "To do",
-                    IN_PROGRESS: "In progress",
-                    DONE: "Done"
-                  };
                   return (
                     <option key={statusOption} value={statusOption} disabled={statusDisabled}>
-                      {labels[statusOption]}
+                      {TASK_STATUS_LABELS[statusOption]}
                     </option>
                   );
                 })}

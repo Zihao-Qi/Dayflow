@@ -269,4 +269,9 @@ test("unfinished task already in a closed project keeps its current option enabl
 
   const otherOption = projectSelect.locator("option", { hasText: "Other Archived (Archived)" });
   await expect(otherOption).toHaveJSProperty("disabled", true);
+
+  const statusSelect = row.getByLabel("Task status");
+  await expect(statusSelect.locator('option[value="TODO"]')).toHaveJSProperty("disabled", false);
+  await expect(statusSelect.locator('option[value="IN_PROGRESS"]')).toHaveJSProperty("disabled", false);
+  await expect(statusSelect.locator('option[value="DONE"]')).toHaveJSProperty("disabled", false);
 });

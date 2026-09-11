@@ -14,6 +14,13 @@ import {
   renamePhase as renamePhaseRequest,
   updateProject as updateProjectRequest
 } from "@/modules/projects/ui/api";
+import {
+  createProjectRowPlan,
+  initialProjectRowPlanState,
+  projectPlanKey,
+  type ProjectPlan,
+  type ProjectRowPlanState
+} from "@/modules/projects/ui/project-row-plan";
 import { type ProjectPatch } from "@/shared/client/decoders";
 import { mutationIdFor, type PendingMutation } from "@/shared/client/mutation-ids";
 import { ApiError } from "@/shared/client/api-client";
@@ -564,16 +571,6 @@ function ProjectCreateForm({
  * the Focus button starts a session) and anything inside a `<summary>` toggles
  * it when clicked, so those would fight each other.
  */
-type ProjectRowPlan = {
-  tasks: ProjectTaskRecord[];
-  phases: ProjectPhaseRecord[];
-};
-
-type LoadPlanResult =
-  | { status: "loaded"; plan: ProjectRowPlan; token: number }
-  | { status: "superseded" }
-  | { status: "failed"; token: number };
-
 function ProjectRow({
   project,
   today,
@@ -588,27 +585,25 @@ function ProjectRow({
   onDataChanged: () => Promise<void>;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const [plan, setPlan] = useState<ProjectRowPlan | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [loadError, setLoadError] = useState("");
-  const [editError, setEditError] = useState("");
+  const [rowState, setRowState] = useState<ProjectRowPlanState>(initialProjectRowPlanState);
   // The overview payload refreshes whenever Project data changes, so its own
   // counts stand in for "the plan moved". Without this, completing a Focus
   // Session started from this row updates the summary beside a drawer still
   // showing the Task as unfinished, and collapsing does not repair it.
-  const planKey = [
-    project.taskCount,
-    project.completedTaskCount,
-    project.nextTaskId ?? "",
-    project.progressPercent ?? ""
-  ].join(":");
-  const loadedKey = useRef(planKey);
-  const requestToken = useRef(0);
-  const latestLoad = useRef<Promise<LoadPlanResult> | null>(null);
-  const inFlightMutationReload = useRef(0);
-  const skippedPlanKey = useRef<string | null>(null);
-  const latestView = useRef({ planKey, expanded });
-  latestView.current = { planKey, expanded };
+  const planKey = projectPlanKey(project);
+  // Assigned during render: the plan consults it while a refresh settles,
+  // which can happen before this render's effects run.
+  const latest = useRef({ planKey, expanded, onDataChanged });
+  latest.current = { planKey, expanded, onDataChanged };
+  const [rowPlan] = useState(() =>
+    createProjectRowPlan({
+      summaryKey: planKey,
+      readPlan: () => loadProjectPlanRequest(project.id),
+      refreshSummary: () => latest.current.onDataChanged(),
+      view: () => ({ summaryKey: latest.current.planKey, expanded: latest.current.expanded }),
+      onChange: setRowState
+    })
+  );
   const taskCreateMutation = useRef<PendingMutation | null>(null);
   const statusLabel = projectStatusLabel(project.status);
   const plannedMinutes = project.nextTaskEstimateMinutes ?? 30;
@@ -618,222 +613,21 @@ function ProjectRow({
     : "No tasks yet";
   const drawerId = `project-tasks-${project.id}`;
 
-  // Tasks are not in the overview payload, so the first expand fetches the
-  // same detail the Project page uses and keeps it for later toggles.
-  //
-  // Kept separate from `toggle` so a failed load can be retried in place. A
-  // retry that went through `toggle` would read the drawer as open and close
-  // it instead of fetching again.
-  async function executeLoadPlan(): Promise<LoadPlanResult> {
-    // Each attempt takes a token and only the newest one is allowed to write.
-    // A guard on `loading` would drop the reload instead: when the summary
-    // moves while a fetch is already in flight, that fetch is carrying
-    // pre-change data, and letting it settle unchallenged reinstates exactly
-    // the staleness the reload exists to clear.
-    const token = requestToken.current + 1;
-    requestToken.current = token;
-    setLoading(true);
-    setLoadError("");
-    try {
-      const result = await loadProjectPlanRequest(project.id);
-
-      if (token !== requestToken.current) return { status: "superseded" };
-      const nextPlan: ProjectRowPlan = {
-        tasks: result.tasks as ProjectTaskRecord[],
-        phases: Array.isArray(result.phases)
-          ? (result.phases as ProjectPhaseRecord[])
-          : []
-      };
-
-      // Set loadedKey to what planKey will be once onDataChanged()'s bootstrap
-      // refresh settles (using counts from the authoritative detail response,
-      // falling back to counting tasks), so when loadPlan finishes before
-      // onDataChanged, the [planKey, expanded] effect recognizes the plan is
-      // already current and skips a redundant trailing fetch.
-      const raw = result as {
-        taskCount?: number;
-        completedTaskCount?: number;
-        nextTaskId?: string | null;
-        progressPercent?: number | null;
-      };
-      loadedKey.current = [
-        raw.taskCount ?? nextPlan.tasks.length,
-        raw.completedTaskCount ??
-          nextPlan.tasks.filter((t) => t.status === "DONE").length,
-        raw.nextTaskId ?? "",
-        raw.progressPercent ?? ""
-      ].join(":");
-
-      setPlan(nextPlan);
-      return { status: "loaded", plan: nextPlan, token };
-    } catch {
-      if (token !== requestToken.current) return { status: "superseded" };
-      setLoadError("These tasks could not be loaded. Try again.");
-      return { status: "failed", token };
-    } finally {
-      if (token === requestToken.current) setLoading(false);
-    }
-  }
-
-  function loadPlan(): Promise<LoadPlanResult> {
-    const promise = executeLoadPlan();
-    latestLoad.current = promise;
-    return promise;
-  }
-
-  async function followWinningLoad(
-    initial: LoadPlanResult
-  ): Promise<LoadPlanResult> {
-    let current = initial;
-    while (
-      (current.status === "superseded" || current.token !== requestToken.current) &&
-      latestLoad.current
-    ) {
-      const next = await latestLoad.current;
-      if (next === current) break;
-      current = next;
-    }
-    return current;
-  }
-
-  async function reconcileSkippedPlan(initial: LoadPlanResult): Promise<LoadPlanResult> {
-    let result = initial;
-    for (;;) {
-      result = await followWinningLoad(result);
-      if (result.status === "superseded") return result;
-      // Another mutation may have started a load while the await resumed.
-      if (result.token !== requestToken.current) continue;
-      if (skippedPlanKey.current === null) return result;
-      skippedPlanKey.current = null;
-
-      const { planKey: currentKey, expanded: isExpanded } = latestView.current;
-      if (loadedKey.current === currentKey) return result;
-      if (!isExpanded) {
-        loadedKey.current = currentKey;
-        setPlan(null);
-        return result;
-      }
-      // Preserve the error and explicit retry after a failed read. Only a
-      // successful but outdated snapshot calls for another automatic read.
-      if (result.status === "failed") return result;
-      result = await loadPlan();
-    }
-  }
-
   function toggle() {
     const next = !expanded;
     setExpanded(next);
-    // An edit error refers to a past write that failed. Once the drawer is
-    // collapsed or reopened, that mutation context is obsolete, so clear it.
-    setEditError("");
-    // A read failure represents unresolved staleness. When expanding,
-    // re-attempt the load so a transient network drop recovers automatically,
-    // while keeping the failure visible if it persists rather than silently
-    // hiding the unresolved state.
-    if (next && (!plan || loadError)) {
-      void loadPlan();
-    }
-  }
-
-  /**
-   * Runs a mutation against the server, parallelizing the plan reload and the
-   * overview bootstrap refresh. Renames leave summary counts untouched, so
-   * loadPlan() is run explicitly rather than relying only on planKey changes.
-   */
-  async function mutate<T>(
-    operation: () => Promise<T>
-  ): Promise<{ ok: true; data: T; planResult: LoadPlanResult } | { ok: false }> {
-    setEditError("");
-    let data: T;
-    try {
-      data = await operation();
-    } catch (error) {
-      setEditError(
-        error instanceof ApiError
-          ? error.message
-          : "The change could not be saved. Your draft is still here."
-      );
-      return { ok: false };
-    }
-
-    // Concurrently reload the drawer plan and the overview bootstrap payload.
-    // The write has already committed; running them concurrently avoids two
-    // sequential round-trips for every mutation.
-    //
-    // Coalesce summary invalidations while mutation refreshes are active.
-    // Count overlapping mutations so an older one cannot release a newer one.
-    inFlightMutationReload.current += 1;
-    let planResult: LoadPlanResult;
-    let refreshError: unknown = null;
-    try {
-      [planResult, refreshError] = await Promise.all([
-        loadPlan(),
-        onDataChanged().then(
-          () => null,
-          (error) => error
-        )
-      ]);
-      // Reconciliation refreshes the drawer after a skipped summary
-      // invalidation, and may run a later, unrelated read. Its outcome must not
-      // become this mutation's answer: `addTask` decides whether to merge its
-      // confirmed record from `planResult`, and only this mutation's own read
-      // can say whether that record was published. A later read that failed says
-      // nothing about it, and substituting one reinstates the stale-overlay
-      // family — a create merged back in after a delete had removed it. The
-      // token check in `addTask` still rejects a stale own-read, because any
-      // reconciling load advances `requestToken` past it.
-      await reconcileSkippedPlan(planResult);
-    } finally {
-      inFlightMutationReload.current -= 1;
-    }
-
-    if (refreshError) {
-      setEditError(
-        "Your change was saved, but the Project list could not be refreshed."
-      );
-    }
-    return { ok: true, data, planResult };
+    rowPlan.toggle(next);
   }
 
   function updateTask(
     id: string,
     patch: Partial<ProjectTaskRecord> & { scheduleSource?: string }
   ) {
-    return mutate(() => updateProjectTask(id, patch)).then(() => undefined);
+    return rowPlan.update(() => updateProjectTask(id, patch));
   }
 
-  async function deleteTask(id: string) {
-    const result = await mutate(() => deleteProjectTask(id));
-    if (result.ok) {
-      return true;
-    }
-
-    // DELETE may have committed even when its response was lost. Reconcile
-    // before inviting a retry: a second DELETE would receive 404 and could
-    // otherwise leave the already-removed Task stuck in this drawer forever.
-    //
-    // Await loadPlan() and follow the winning load if superseded by a concurrent
-    // reload.
-    let reconcileResult = await loadPlan();
-    reconcileResult = await followWinningLoad(reconcileResult);
-    let overviewRefreshed = true;
-    try {
-      await onDataChanged();
-    } catch {
-      overviewRefreshed = false;
-      setEditError(
-        "The task may have been deleted, but the Project list could not be refreshed."
-      );
-    }
-    reconcileResult = await followWinningLoad(reconcileResult);
-    if (
-      reconcileResult.status === "loaded" &&
-      !reconcileResult.plan.tasks.some((task) => task.id === id)
-    ) {
-      if (overviewRefreshed) setEditError("");
-      return true;
-    }
-    return false;
+  function deleteTask(id: string) {
+    return rowPlan.remove(id, () => deleteProjectTask(id));
   }
 
   /**
@@ -851,54 +645,15 @@ function ProjectRow({
       estimateMinutes: 30
     };
     const mutationId = mutationIdFor(taskCreateMutation, payload);
-    const result = await mutate(() => createProjectTask(payload, mutationId));
-    if (result.ok) {
-      // The server confirmed creation, so clear the pending replay ID.
-      taskCreateMutation.current = null;
-      // If the background reload failed and no newer request has superseded it,
-      // merge the confirmed task into the drawer plan by ID so the user sees it
-      // and does not retype. If the reload succeeded ("loaded"), loadPlan() was
-      // the authoritative writer; if superseded, the winning load will write.
-      if (
-        result.planResult.status === "failed" &&
-        result.planResult.token === requestToken.current
-      ) {
-        setPlan((current) => {
-          if (!current) {
-            return { tasks: [result.data], phases: [] };
-          }
-          if (current.tasks.some((task) => task.id === result.data.id)) {
-            return current;
-          }
-          return {
-            ...current,
-            tasks: [...current.tasks, result.data]
-          };
-        });
-      }
-      return true;
-    }
-    return false;
+    const confirmed = await rowPlan.create(() => createProjectTask(payload, mutationId));
+    // The server confirmed creation, so the replay ID is no longer needed.
+    if (confirmed) taskCreateMutation.current = null;
+    return confirmed;
   }
 
   useEffect(() => {
-    if (loadedKey.current === planKey) return;
-    // Observing a key does not prove that an in-flight read contains it.
-    // Keep it pending until mutation refreshes reconcile the published snapshot.
-    if (inFlightMutationReload.current > 0) {
-      skippedPlanKey.current = planKey;
-      return;
-    }
-    // Keep an open drawer mounted while its data refreshes. In particular,
-    // ProjectRowAddTask owns an unsubmitted draft that must survive edits to
-    // neighbouring Tasks. A closed drawer can discard its cache and load on
-    // the next expansion.
-    if (expanded) void loadPlan();
-    else {
-      loadedKey.current = planKey;
-      setPlan(null);
-    }
-  }, [planKey, expanded]);
+    rowPlan.observe();
+  }, [planKey, expanded, rowPlan]);
 
   return (
     <article className={expanded ? "project-row is-expanded" : "project-row"}>
@@ -966,15 +721,15 @@ function ProjectRow({
       {expanded && (
         <div className="project-row-drawer" id={drawerId}>
           <ProjectRowTasks
-            plan={plan}
-            loading={loading}
-            error={loadError}
-            editError={editError}
+            plan={rowState.plan}
+            loading={rowState.loading}
+            error={rowState.loadError}
+            editError={rowState.editError}
             today={today}
             canManagePlan={
               project.status !== "COMPLETED" && project.status !== "ARCHIVED"
             }
-            onRetry={() => void loadPlan()}
+            onRetry={() => rowPlan.retry()}
             onUpdateTask={updateTask}
             onDeleteTask={deleteTask}
             onAddTask={addTask}
@@ -1003,7 +758,7 @@ function ProjectRowTasks({
   onAddTask,
   onStartFocus
 }: {
-  plan: ProjectRowPlan | null;
+  plan: ProjectPlan | null;
   loading: boolean;
   error: string;
   editError: string;

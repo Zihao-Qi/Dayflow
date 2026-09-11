@@ -348,7 +348,9 @@ test("keeps a completed Project's drawer tasks editable while disallowing new un
   const backlogRow = drawer.locator(".project-task").filter({
     has: page.locator('input[aria-label="Task title: Unfinished backlog"]')
   });
-  await expect(backlogRow.locator(".project-task-meta")).toContainText("Sep 15");
+  // The row labels a date that is today as "today", so accept either label;
+  // the exact persisted date is checked through the API below.
+  await expect(backlogRow.locator(".project-task-meta")).toContainText(/\b(?:today|Sep 15)\b/);
   const projectCheck = await page.request.get(`/api/projects/${project.id}`);
   expect(projectCheck.ok()).toBe(true);
   const projectData = (await projectCheck.json()) as { tasks: Array<{ id: string; date: string | null }> };
@@ -475,7 +477,9 @@ test("keeps an archived Project's drawer tasks editable while disallowing new un
   const backlogRow = drawer.locator(".project-task").filter({
     has: page.locator('input[aria-label="Task title: Unfinished backlog"]')
   });
-  await expect(backlogRow.locator(".project-task-meta")).toContainText("Sep 15");
+  // The row labels a date that is today as "today", so accept either label;
+  // the exact persisted date is checked through the API below.
+  await expect(backlogRow.locator(".project-task-meta")).toContainText(/\b(?:today|Sep 15)\b/);
   const projectCheck = await page.request.get(`/api/projects/${project.id}`);
   expect(projectCheck.ok()).toBe(true);
   const projectData = (await projectCheck.json()) as { tasks: Array<{ id: string; date: string | null }> };

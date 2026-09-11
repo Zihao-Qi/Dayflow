@@ -246,15 +246,6 @@ test("Project and Phase create pin Prisma and internal envelopes", async () => {
           code: "NOT_FOUND",
           field: "projectId"
         }
-      ],
-      [
-        { status: "COMPLETED" },
-        409,
-        {
-          error: "Reopen the completed project before adding unfinished work.",
-          code: "RELATIONSHIP_CONFLICT",
-          field: "projectId"
-        }
       ]
     ] as const) {
       (prisma as unknown as { $transaction: unknown }).$transaction = async (

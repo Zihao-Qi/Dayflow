@@ -149,21 +149,40 @@ export function useTaskActions({
     id: string,
     patch: Partial<Task> & { scheduleSource?: string }
   ) {
-    const { scheduleSource: _scheduleSource, ...taskPatch } = patch;
-    patchTask(id, taskPatch);
-    setData((current) =>
-      current
-        ? {
-            ...current,
-            tasks: current.tasks.map((task) =>
-              task.id === id ? { ...task, ...taskPatch } : task
-            )
-          }
-        : current
-    );
+    const {
+      scheduleSource: _scheduleSource,
+      status,
+      projectId,
+      phaseId,
+      ...optimisticPatch
+    } = patch;
+
+    if (Object.keys(optimisticPatch).length > 0) {
+      patchTask(id, optimisticPatch);
+      setData((current) =>
+        current
+          ? {
+              ...current,
+              tasks: current.tasks.map((task) =>
+                task.id === id ? { ...task, ...optimisticPatch } : task
+              )
+            }
+          : current
+      );
+    }
     try {
       const result = await updateTaskRequest(id, patch);
       acceptTask(result);
+      setData((current) =>
+        current
+          ? {
+              ...current,
+              tasks: current.tasks.map((task) =>
+                task.id === id ? { ...task, ...result } : task
+              )
+            }
+          : current
+      );
       setAppError("");
 
       refreshSucceeded.current = await refreshAfterConfirmedMutation();

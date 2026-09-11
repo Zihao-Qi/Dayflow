@@ -275,3 +275,164 @@ test("unfinished task already in a closed project keeps its current option enabl
   await expect(statusSelect.locator('option[value="IN_PROGRESS"]')).toHaveJSProperty("disabled", false);
   await expect(statusSelect.locator('option[value="DONE"]')).toHaveJSProperty("disabled", false);
 });
+
+test("T1: failed Complete keeps row in open list with enabled Complete button", async ({
+  page
+}) => {
+  const boot = (await (await page.request.get("/api/bootstrap")).json()) as {
+    todayKey: string;
+  };
+  const todayKey = boot.todayKey;
+
+  const completedProj = await createProject(page, "Completed T1", "ACTIVE");
+  const task = await createTask(page, {
+    title: "Unfinished T1",
+    projectId: completedProj.id,
+    date: todayKey,
+    status: "TODO"
+  });
+  const patchProjRes = await page.request.patch(`/api/projects/${completedProj.id}`, {
+    data: { status: "COMPLETED", confirm: true }
+  });
+  expect(patchProjRes.status()).toBe(200);
+
+  await openToday(page);
+
+  await page.route(`**/api/tasks/${task.id}`, async (route) => {
+    if (route.request().method() === "PATCH") {
+      await route.fulfill({ status: 500, json: { error: "Simulated failure" } });
+      return;
+    }
+    await route.continue();
+  });
+
+  const row = taskRow(page, "Unfinished T1");
+  await row.getByRole("button", { name: "Complete Unfinished T1" }).click();
+
+  await expect(page.locator(".sr-only[role='status']")).toHaveText("Changes were not saved.", {
+    timeout: 10_000
+  });
+
+  const openRow = taskRow(page, "Unfinished T1");
+  await expect(openRow).toBeVisible();
+  await expect(page.locator(".completed-group")).toBeHidden();
+
+  const completeBtn = openRow.getByRole("button", { name: "Complete Unfinished T1" });
+  await expect(completeBtn).toBeVisible();
+  await expect(completeBtn).toBeEnabled();
+
+  const bootAfter = (await (await page.request.get("/api/bootstrap")).json()) as {
+    tasks: Array<{ id: string; status: string }>;
+  };
+  expect(bootAfter.tasks.find((t) => t.id === task.id)?.status).toBe("TODO");
+});
+
+test("T2: failed status select keeps row in open list with error chip and enabled options", async ({
+  page
+}) => {
+  const boot = (await (await page.request.get("/api/bootstrap")).json()) as {
+    todayKey: string;
+  };
+  const todayKey = boot.todayKey;
+
+  const completedProj = await createProject(page, "Completed T2", "ACTIVE");
+  const task = await createTask(page, {
+    title: "Unfinished T2",
+    projectId: completedProj.id,
+    date: todayKey,
+    status: "TODO"
+  });
+  const patchProjRes = await page.request.patch(`/api/projects/${completedProj.id}`, {
+    data: { status: "COMPLETED", confirm: true }
+  });
+  expect(patchProjRes.status()).toBe(200);
+
+  await openToday(page);
+
+  const row = taskRow(page, "Unfinished T2");
+  await row.getByLabel("Show task details: Unfinished T2").click();
+
+  await page.route(`**/api/tasks/${task.id}`, async (route) => {
+    if (route.request().method() === "PATCH") {
+      await route.fulfill({ status: 500, json: { error: "Simulated failure" } });
+      return;
+    }
+    await route.continue();
+  });
+
+  const statusSelect = row.getByLabel("Task status");
+  await statusSelect.selectOption("DONE");
+
+  const openRow = taskRow(page, "Unfinished T2");
+  await expect(openRow).toBeVisible();
+  await expect(page.locator(".completed-group")).toBeHidden();
+
+  const statusChip = openRow
+    .getByLabel("Task status")
+    .locator("xpath=ancestor::label")
+    .locator(".save-state-chip.error");
+  await expect(statusChip).toContainText("Not saved", { timeout: 10_000 });
+  await expect(statusChip.locator("button")).toContainText("Retry");
+
+  await expect(statusSelect.locator('option[value="TODO"]')).toHaveJSProperty("disabled", false);
+  await expect(statusSelect.locator('option[value="IN_PROGRESS"]')).toHaveJSProperty("disabled", false);
+
+  const bootAfter = (await (await page.request.get("/api/bootstrap")).json()) as {
+    tasks: Array<{ id: string; status: string }>;
+  };
+  expect(bootAfter.tasks.find((t) => t.id === task.id)?.status).toBe("TODO");
+});
+
+test("T3: failed project move leaves original project option enabled with error chip", async ({
+  page
+}) => {
+  const boot = (await (await page.request.get("/api/bootstrap")).json()) as {
+    todayKey: string;
+  };
+  const todayKey = boot.todayKey;
+
+  const completedProj = await createProject(page, "Completed T3", "ACTIVE");
+  const activeProj = await createProject(page, "Active T3", "ACTIVE");
+
+  const task = await createTask(page, {
+    title: "Unfinished T3",
+    projectId: completedProj.id,
+    date: todayKey,
+    status: "TODO"
+  });
+  const patchProjRes = await page.request.patch(`/api/projects/${completedProj.id}`, {
+    data: { status: "COMPLETED", confirm: true }
+  });
+  expect(patchProjRes.status()).toBe(200);
+
+  await openToday(page);
+
+  const row = taskRow(page, "Unfinished T3");
+  await row.getByLabel("Show task details: Unfinished T3").click();
+
+  await page.route(`**/api/tasks/${task.id}`, async (route) => {
+    if (route.request().method() === "PATCH") {
+      await route.fulfill({ status: 500, json: { error: "Simulated failure" } });
+      return;
+    }
+    await route.continue();
+  });
+
+  const projectSelect = row.getByLabel("Project name");
+  await projectSelect.selectOption(activeProj.id);
+
+  const projectChip = row
+    .getByLabel("Project name")
+    .locator("xpath=ancestor::label")
+    .locator(".save-state-chip.error");
+  await expect(projectChip).toContainText("Not saved", { timeout: 10_000 });
+  await expect(projectChip.locator("button")).toContainText("Retry");
+
+  const originalOption = projectSelect.locator(`option[value="${completedProj.id}"]`);
+  await expect(originalOption).toHaveJSProperty("disabled", false);
+
+  const bootAfter = (await (await page.request.get("/api/bootstrap")).json()) as {
+    tasks: Array<{ id: string; projectId: string | null }>;
+  };
+  expect(bootAfter.tasks.find((t) => t.id === task.id)?.projectId).toBe(completedProj.id);
+});

@@ -1,4 +1,5 @@
 import difflib
+import os
 import pathlib
 import tempfile
 import unittest
@@ -6,7 +7,7 @@ from common import QUEUE_PATH, GATEMERGE_PATH
 from test_queue import TestQueue
 from test_gatemerge import TestGateMerge
 
-PROOF_DIR = pathlib.Path("/private/tmp/dayflow-gate-gemini/proof-mutants")
+PROOF_DIR = pathlib.Path(os.environ.get("MERGE_GATE_PROOF_DIR", tempfile.gettempdir())) / "merge-gate-proof-mutants"
 
 class TestMutants(unittest.TestCase):
     @classmethod
@@ -26,7 +27,7 @@ class TestMutants(unittest.TestCase):
         (PROOF_DIR / f"{name}.log").write_text(failure_msg)
 
     def _run_queue_test(self, test_name, mutated_queue_text):
-        with tempfile.TemporaryDirectory(dir="/private/tmp/dayflow-gate-gemini") as tmpdir:
+        with tempfile.TemporaryDirectory() as tmpdir:
             mutant_path = pathlib.Path(tmpdir) / "queue.py"
             mutant_path.write_text(mutated_queue_text)
             mutant_path.chmod(0o755)
@@ -42,7 +43,7 @@ class TestMutants(unittest.TestCase):
             return result
 
     def _run_gatemerge_test(self, test_name, mutated_gatemerge_text=None, mutated_queue_text=None):
-        with tempfile.TemporaryDirectory(dir="/private/tmp/dayflow-gate-gemini") as tmpdir:
+        with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = pathlib.Path(tmpdir)
             gm_path = tmp_path / "gatemerge.py"
             q_path = tmp_path / "queue.py"
@@ -99,15 +100,11 @@ class TestMutants(unittest.TestCase):
         self._write_proof("mutant_4_wrong_head_app", self.orig_queue, mutated, err)
 
     def test_mutant_5_cancelled_supersede_bypass(self):
-        target = """            best=max((c['id'] for c in matching if c['status']=='completed' and c['conclusion']=='success'),default=None)
-            live=[c for c in matching if not (c['conclusion']=='cancelled' and best is not None and c['id']<best)]
-            if not live or any(c['status']!='completed' or c['conclusion']!='success' for c in live): raise Blocked('Required check pending/failed: '+r['context'])"""
+        target = "live=[c for c in matching if not (c['conclusion']=='cancelled' and best is not None and c['id']<best)]"
         self.assertIn(target, self.orig_queue)
-        # Buggy mutant: allows cancelled check even if no later success
-        mutated_target = """            live=[c for c in matching if c['conclusion']!='cancelled']
-            if any(c['status']!='completed' or c['conclusion']!='success' for c in live): raise Blocked('Required check pending/failed: '+r['context'])"""
-        mutated = self.orig_queue.replace(target, mutated_target)
-        res = self._run_queue_test("test_unsuperseded_cancelled_check_blocked", mutated)
+        # Claude's break: unconditionally drops any cancelled run, ignoring ordering vs best
+        mutated = self.orig_queue.replace(target, "live=[c for c in matching if c['conclusion']!='cancelled']")
+        res = self._run_queue_test("test_later_cancelled_check_after_earlier_success_blocked", mutated)
         self.assertFalse(res.wasSuccessful(), "Test passed against mutant 5 (should have failed)")
         err = res.failures[0][1] if res.failures else res.errors[0][1]
         self._write_proof("mutant_5_cancelled_supersede", self.orig_queue, mutated, err)

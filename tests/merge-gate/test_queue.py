@@ -555,6 +555,48 @@ class TestQueue(MergeGateTestCase):
         self.assertEqual(r_merge.returncode, 2)
         self.assert_no_merge_attempted()
 
+    def test_later_cancelled_check_after_earlier_success_blocked(self):
+        # Run 1001 success, Run 1002 cancelled (later run cancelled) -> must fail closed
+        runs = [
+            {
+                "id": 1001,
+                "name": "Reliability gates",
+                "head_sha": DEFAULT_HEAD_SHA,
+                "app": {"id": 15368},
+                "status": "completed",
+                "conclusion": "success",
+                "html_url": "https://github.com/.../1001"
+            },
+            {
+                "id": 1002,
+                "name": "Reliability gates",
+                "head_sha": DEFAULT_HEAD_SHA,
+                "app": {"id": 15368},
+                "status": "completed",
+                "conclusion": "cancelled",
+                "html_url": "https://github.com/.../1002"
+            }
+        ]
+        self.set_route(
+            ["api", f"repos/{DEFAULT_REPO}/commits/{DEFAULT_HEAD_SHA}/check-runs?per_page=100&filter=latest"],
+            [{"check_runs": runs}],
+            match="prefix"
+        )
+        ev_file = self._setup_evidence_file()
+        r = self.run_queue("inspect", str(DEFAULT_PR_NUMBER), "--evidence", str(ev_file))
+        data = json.loads(r.stdout)
+        self.assertEqual(data.get("decision"), "blocked")
+        self.assertIn("Required check pending/failed: Reliability gates", data.get("reason", ""))
+
+        r_merge = self.run_queue(
+            "merge", str(DEFAULT_PR_NUMBER),
+            "--expected-head", DEFAULT_HEAD_SHA,
+            "--expected-base", DEFAULT_BASE_SHA,
+            "--evidence", str(ev_file)
+        )
+        self.assertEqual(r_merge.returncode, 2)
+        self.assert_no_merge_attempted()
+
     def test_historical_exclusion_pr70(self):
         state = self.read_state()
         state["routes"] = build_default_routes(number=70)

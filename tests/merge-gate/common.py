@@ -11,11 +11,6 @@ import unittest
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 QUEUE_PATH = REPO_ROOT / "tools" / "merge-gate" / "queue.py"
 GATEMERGE_PATH = REPO_ROOT / "tools" / "merge-gate" / "gatemerge.py"
-CLAUDE_TOOLS = pathlib.Path("/Users/Zihaoqi/Documents/Dayflow-worktrees/durable-merge-gate/tools/merge-gate")
-if not QUEUE_PATH.exists() and (CLAUDE_TOOLS / "queue.py").exists():
-    QUEUE_PATH = CLAUDE_TOOLS / "queue.py"
-if not GATEMERGE_PATH.exists() and (CLAUDE_TOOLS / "gatemerge.py").exists():
-    GATEMERGE_PATH = CLAUDE_TOOLS / "gatemerge.py"
 
 DEFAULT_HEAD_SHA = "c026349239ca287422dfec095c9ec3873f63b215"
 DEFAULT_BASE_SHA = "e9db471edf745e800a5bc775fff50c18a8c09a84"
@@ -156,9 +151,7 @@ def build_default_routes(number=DEFAULT_PR_NUMBER, head_sha=DEFAULT_HEAD_SHA, ba
 
 class MergeGateTestCase(unittest.TestCase):
     def setUp(self):
-        scratch_base = pathlib.Path("/private/tmp/dayflow-gate-gemini")
-        scratch_base.mkdir(parents=True, exist_ok=True)
-        self.test_dir = pathlib.Path(tempfile.mkdtemp(prefix="mg-test-", dir=scratch_base))
+        self.test_dir = pathlib.Path(tempfile.mkdtemp(prefix="mg-test-"))
         self.bin_dir = self.test_dir / "bin"
         self.bin_dir.mkdir(parents=True, exist_ok=True)
         self.state_dir = self.test_dir / "state"

@@ -86,23 +86,33 @@ name; that also means test files import sibling helpers as top-level modules.
 
 These files were run from `/private/tmp/dayflow-resume-queue` while merging
 PRs #84 through #110 — the last thing they gated was the merge that brought
-them into this repository. That directory is not durable: `queue.py` once
-vanished mid-migration and had to be recovered byte-for-byte from an archived
-transcript. Packaging the pair here is what fixes that.
+them into this repository. `queue.py` did that alone at first: #84, #90 and #92
+were gated before `gatemerge.py` existed, and the wrapper was written on
+2026-09-07 at 11:29, minutes before it gated #94. That directory is not
+durable: `queue.py` once vanished mid-migration and had to be recovered
+byte-for-byte from an archived transcript. Packaging the pair here is what
+fixes that.
 
 The archive was copied to `~/.local/state/dayflow-merge-gate/archive` during the
 cutover. Only part of it survived to be copied: macOS had already reaped the
 records for #84 through #104 from `/tmp`, which is the hazard this packaging
-exists to remove. What is preserved, 22 files and 116K:
+exists to remove. What is preserved, 22 files — 116K of allocated blocks,
+about 55 KiB of actual content:
 
 | Content | Files |
 |---|---|
 | `queue.py`, `gatemerge.py` | 2 |
 | `pr<N>-evidence.json`, `pr<N>-gated.json`, `pr<N>-merge.json`, `pr<N>-live.json` | 5 each |
 
-Those five are #105, #107, #108, #109 and #110. The merge records for the PRs
-before them are gone and are not reconstructable from the filesystem. The
-`legacy/` and `__pycache__/` directories came across empty.
+Those five are #105, #107, #108, #109 and #110. The `legacy/` and
+`__pycache__/` directories came across empty.
+
+The merge records for the PRs before them are absent from both the archive and
+`/private/tmp`. Do not read that as total loss: the evidence for #84, #90 and
+#92 survives verbatim in this machine's Claude session transcript, where it was
+written as a heredoc and can be recovered the same way `queue.py` once was. For
+#94 through #104 the transcript holds only directory listings — names and byte
+counts, not content — so those records are genuinely unrecoverable.
 
 - `queue.py` sha256 `4887f62c94646dfe4a0f1993db5b0a8f3008bd54a7c5e4e84512da999a920a8b`, copied here byte for byte.
 - `gatemerge.py` sha256 `e3e821a79cfdbff83d9bb6f4845cb86889e5f459f354e24a750b7a500e1af23b` is the

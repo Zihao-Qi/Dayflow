@@ -29,6 +29,9 @@ prisma/backups/
 playwright-report
 test-results
 
+# Python bytecode from the merge-gate tooling and its tests.
+__pycache__/
+
 # Local working notes, deliberately not published.
 AGENTS.md
 docs/research/

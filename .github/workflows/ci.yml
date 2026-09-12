@@ -35,6 +35,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Merge-gate tool tests
+        run: python3 -m unittest discover -s tests/merge-gate -t tests/merge-gate
+
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:

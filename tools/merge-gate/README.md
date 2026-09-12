@@ -38,9 +38,10 @@ into the checkout:
 - otherwise `~/.local/state/dayflow-merge-gate`.
 
 Each run writes `pr<N>-live.json`, `pr<N>-evidence.json`, `pr<N>-gated.json` and,
-on a real merge, `pr<N>-merge.json`. Archive the previous files before rerunning,
-and check that the new ones are freshly written: a stale `gated.json` read as a
-fresh decision is exactly the failure this tooling exists to prevent.
+on a real merge, `pr<N>-merge.json`. Every step deletes its own output file before
+running and refuses to continue unless that run rewrote it, so a file left by an
+earlier run can never be read as a fresh snapshot, a fresh `ready`, or a merge
+that did not happen. Archiving previous runs is still worth doing as a record.
 
 ## What must not be weakened
 
@@ -64,6 +65,8 @@ the failure mode this file is here to prevent.
 - The historical exclusions stay: #70 is permanently excluded, and the old
   unreconstructed #68/#69 heads are blocked.
 - Everything is re-fetched and re-gated immediately before the merge call.
+- Every `queue.py` call is checked: a non-zero exit, or an output file this run
+  did not write, stops the wrapper instead of reusing a retained file.
 
 ## Tests
 

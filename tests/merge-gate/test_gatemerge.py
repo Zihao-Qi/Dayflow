@@ -191,3 +191,91 @@ class TestGateMerge(MergeGateTestCase):
         self.assertEqual(r.returncode, 1)
         self.assertIn("inspect failed:", r.stdout)
         self.assert_no_merge_attempted()
+
+    def test_failing_inspect_with_retained_live_snapshot(self):
+        stale_head = "1111111111111111111111111111111111111111"
+        stale_live = self.state_dir / f"pr{DEFAULT_PR_NUMBER}-live.json"
+        stale_live.write_text(json.dumps({
+            "number": DEFAULT_PR_NUMBER,
+            "head_sha": stale_head,
+            "base_sha": DEFAULT_BASE_SHA,
+            "state": "OPEN",
+            "draft": False,
+            "discussions": []
+        }, indent=2))
+
+        self.set_route(
+            ["api", f"repos/{DEFAULT_REPO}/pulls/{DEFAULT_PR_NUMBER}"],
+            {},
+            exit_code=1,
+            stderr="500 Internal Server Error"
+        )
+
+        r = self.run_gatemerge(
+            str(DEFAULT_PR_NUMBER),
+            "--summary", "Failing inspect with retained live",
+            "--reviewer", "Codex",
+            "--reviewed-at", "2026-09-11T12:00:00Z"
+        )
+        self.assertEqual(r.returncode, 1)
+        self.assertTrue(r.stdout.startswith("inspect failed:"))
+        self.assertFalse((self.state_dir / f"pr{DEFAULT_PR_NUMBER}-evidence.json").exists())
+        self.assertFalse(stale_live.exists())
+        self.assert_no_merge_attempted()
+
+    def test_failing_gated_inspect_with_retained_ready_gated_json(self):
+        stale_gated = self.state_dir / f"pr{DEFAULT_PR_NUMBER}-gated.json"
+        stale_gated.write_text(json.dumps({
+            "number": DEFAULT_PR_NUMBER,
+            "decision": "ready",
+            "reason": "Retained ready from prior run"
+        }, indent=2))
+
+        # First call to git/ref/heads/main succeeds (for live inspect), second call fails (for gated inspect)
+        self.set_route(
+            ["api", f"repos/{DEFAULT_REPO}/git/ref/heads/main"],
+            {},
+            exit_code=1,
+            stderr="500 Server Error"
+        )
+        self.set_route(
+            ["api", f"repos/{DEFAULT_REPO}/git/ref/heads/main"],
+            {"object": {"sha": DEFAULT_BASE_SHA}},
+            once=True
+        )
+
+        r = self.run_gatemerge(
+            str(DEFAULT_PR_NUMBER),
+            "--summary", "Failing gated inspect with retained ready",
+            "--reviewer", "Codex",
+            "--reviewed-at", "2026-09-11T12:00:00Z"
+        )
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("gated inspect failed:", r.stdout)
+        self.assertFalse(stale_gated.exists())
+        self.assert_no_merge_attempted()
+
+    def test_failing_merge_with_retained_merge_json(self):
+        retained_sha = "retained_fake_sha_99999"
+        stale_merge = self.state_dir / f"pr{DEFAULT_PR_NUMBER}-merge.json"
+        stale_merge.write_text(json.dumps({
+            "decision": "merged",
+            "merge_commit_sha": retained_sha,
+            "output": "Merged pull request"
+        }, indent=2))
+
+        # Make merge call fail
+        state = self.read_state()
+        state["fail_merge"] = True
+        self.write_state(state)
+
+        r = self.run_gatemerge(
+            str(DEFAULT_PR_NUMBER),
+            "--summary", "Failing merge with retained merge.json",
+            "--reviewer", "Codex",
+            "--reviewed-at", "2026-09-11T12:00:00Z"
+        )
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("merge failed:", r.stdout)
+        self.assertNotIn(retained_sha, r.stdout)
+        self.assertFalse(stale_merge.exists())

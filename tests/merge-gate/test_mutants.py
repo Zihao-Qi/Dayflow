@@ -201,3 +201,44 @@ class TestMutants(unittest.TestCase):
         self.assertFalse(res.wasSuccessful(), "Test passed against mutant 15 (should have failed)")
         err = res.failures[0][1] if res.failures else res.errors[0][1]
         self._write_proof("mutant_15_mergeable_clean", self.orig_queue, mutated, err)
+
+    def test_mutant_16_retained_live_snapshot_bypass(self):
+        target = 's = run_to(snap, ["inspect", str(a.number)], "inspect")'
+        self.assertIn(target, self.orig_gatemerge)
+        old_form = """r = run(["inspect", str(a.number), "--output", str(snap)])
+    if not snap.exists():
+        print("inspect failed:", r.stdout, r.stderr); sys.exit(1)
+    s = json.loads(snap.read_text())"""
+        mutated = self.orig_gatemerge.replace(target, old_form)
+        res = self._run_gatemerge_test("test_failing_inspect_with_retained_live_snapshot", mutated_gatemerge_text=mutated)
+        self.assertFalse(res.wasSuccessful(), "Test passed against mutant 16 (should have failed)")
+        err = res.failures[0][1] if res.failures else res.errors[0][1]
+        self._write_proof("mutant_16_retained_live_snapshot", self.orig_gatemerge, mutated, err)
+
+    def test_mutant_17_retained_gated_inspect_bypass(self):
+        target = """gated = run_to(state / f"pr{a.number}-gated.json",
+                   ["inspect", str(a.number), "--evidence", str(evp)],
+                   "gated inspect")"""
+        self.assertIn(target, self.orig_gatemerge)
+        old_form = """g = run(["inspect", str(a.number), "--evidence", str(evp),
+             "--output", str(state / f"pr{a.number}-gated.json")])
+    gated = json.loads((state / f"pr{a.number}-gated.json").read_text())"""
+        mutated = self.orig_gatemerge.replace(target, old_form)
+        res = self._run_gatemerge_test("test_failing_gated_inspect_with_retained_ready_gated_json", mutated_gatemerge_text=mutated)
+        self.assertFalse(res.wasSuccessful(), "Test passed against mutant 17 (should have failed)")
+        err = res.failures[0][1] if res.failures else res.errors[0][1]
+        self._write_proof("mutant_17_retained_gated_inspect", self.orig_gatemerge, mutated, err)
+
+    def test_mutant_18_retained_merge_json_bypass(self):
+        target = """run_to(merge_path, ["merge", str(a.number), "--expected-head", s["head_sha"],
+                        "--expected-base", s["base_sha"], "--evidence", str(evp)],
+           "merge")"""
+        self.assertIn(target, self.orig_gatemerge)
+        old_form = """m = run(["merge", str(a.number), "--expected-head", s["head_sha"],
+             "--expected-base", s["base_sha"], "--evidence", str(evp),
+             "--output", str(merge_path)])"""
+        mutated = self.orig_gatemerge.replace(target, old_form)
+        res = self._run_gatemerge_test("test_failing_merge_with_retained_merge_json", mutated_gatemerge_text=mutated)
+        self.assertFalse(res.wasSuccessful(), "Test passed against mutant 18 (should have failed)")
+        err = res.failures[0][1] if res.failures else res.errors[0][1]
+        self._write_proof("mutant_18_retained_merge_json", self.orig_gatemerge, mutated, err)

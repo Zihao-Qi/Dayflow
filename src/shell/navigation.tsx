@@ -15,6 +15,7 @@ import {
   NotebookPen,
   Play,
   Plus,
+  Settings,
   Sparkles
 } from "lucide-react";
 
@@ -41,6 +42,7 @@ export function Navigation({
   setFocusDraft,
   setRailExpanded,
   setDataManagementOpen,
+  setSettingsOpen,
   data,
   liveFocus,
   isToday,
@@ -58,6 +60,7 @@ export function Navigation({
   | "setFocusDraft"
   | "setRailExpanded"
   | "setDataManagementOpen"
+  | "setSettingsOpen"
 > & {
   data: Bootstrap;
   liveFocus: ReturnType<typeof useFocusSession>["active"] | ReturnType<typeof useFocusSession>["pendingCompletion"];
@@ -125,6 +128,14 @@ export function Navigation({
           </button>
         )}
         <button
+          className="sidebar-settings-button"
+          aria-label="Settings"
+          onClick={() => setSettingsOpen(true)}
+        >
+          <Settings size={15} />
+          <span>Settings</span>
+        </button>
+        <button
           className="sidebar-data-button"
           aria-label="Data & backups"
           onClick={() => setDataManagementOpen(true)}
@@ -152,7 +163,8 @@ export function MobileMoreMenu({
   navigate,
   backlogTasks,
   setMobileMoreOpen,
-  setDataManagementOpen
+  setDataManagementOpen,
+  setSettingsOpen
 }: Pick<
   ShellModel,
   | "mobileMoreOpen"
@@ -160,6 +172,7 @@ export function MobileMoreMenu({
   | "backlogTasks"
   | "setMobileMoreOpen"
   | "setDataManagementOpen"
+  | "setSettingsOpen"
 >) {
   return (
     <>
@@ -173,6 +186,16 @@ export function MobileMoreMenu({
           <button role="menuitem" onClick={() => navigate("journal")}>
             <NotebookPen size={17} />
             Journal
+          </button>
+          <button
+            role="menuitem"
+            onClick={() => {
+              setMobileMoreOpen(false);
+              setSettingsOpen(true);
+            }}
+          >
+            <Settings size={17} />
+            Settings
           </button>
           <button
             role="menuitem"

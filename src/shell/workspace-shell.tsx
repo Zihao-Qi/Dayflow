@@ -3,6 +3,7 @@
 import { CommandPalette } from "@/components/command-palette";
 import { formatLongLocalDateKey } from "@/components/dashboard-formatters";
 import { ProjectsWorkspace } from "@/components/projects-workspace";
+import { SettingsDialog } from "@/components/settings-dialog";
 import { TimeBlockDialog } from "@/components/time-block-dialog";
 import { DataManagementDialog } from "@/modules/data-ops/ui/data-management-dialog";
 import { FocusRail } from "@/modules/focus/ui/focus-rail";
@@ -56,6 +57,8 @@ export function WorkspaceShell() {
     setDismissedUnfinished,
     dataManagementOpen,
     setDataManagementOpen,
+    settingsOpen,
+    setSettingsOpen,
     firstRunSeen,
     appAnnouncement,
     setAppAnnouncement,
@@ -472,6 +475,15 @@ export function WorkspaceShell() {
         <DataManagementDialog
           onClose={() => setDataManagementOpen(false)}
           onAnnounce={setAppAnnouncement}
+        />
+      )}
+      {settingsOpen && (
+        <SettingsDialog
+          onClose={() => setSettingsOpen(false)}
+          onOpenDataManagement={() => {
+            setSettingsOpen(false);
+            setDataManagementOpen(true);
+          }}
         />
       )}
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">

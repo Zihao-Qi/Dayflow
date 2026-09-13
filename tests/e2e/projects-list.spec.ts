@@ -341,8 +341,13 @@ test("keeps a completed Project's drawer tasks editable while disallowing new un
   // 2. Schedule: Unfinished backlog task is unscheduled (backlog), so Schedule date picker is rendered
   const scheduleInput = drawer.getByLabel("Schedule Unfinished backlog", { exact: true });
   await expect(scheduleInput).toBeEnabled();
+  // `fill` already dispatches input and change, and that change is what saves
+  // the date. Saving flips the task out of backlog, so React swaps the date
+  // input for `.project-task-meta` - asserted just below. A second
+  // dispatchEvent then waits on an element that is already gone. `next dev`
+  // hid this by delaying the mutation behind on-demand compilation; the
+  // production server returns fast enough to lose the race every time.
   await scheduleInput.fill("2026-09-15");
-  await scheduleInput.dispatchEvent("change");
 
   // Verify scheduled date rendered in UI and persisted via project detail
   const backlogRow = drawer.locator(".project-task").filter({
@@ -470,8 +475,13 @@ test("keeps an archived Project's drawer tasks editable while disallowing new un
   // 2. Schedule: Unfinished backlog task is unscheduled (backlog), so Schedule date picker is rendered
   const scheduleInput = drawer.getByLabel("Schedule Unfinished backlog", { exact: true });
   await expect(scheduleInput).toBeEnabled();
+  // `fill` already dispatches input and change, and that change is what saves
+  // the date. Saving flips the task out of backlog, so React swaps the date
+  // input for `.project-task-meta` - asserted just below. A second
+  // dispatchEvent then waits on an element that is already gone. `next dev`
+  // hid this by delaying the mutation behind on-demand compilation; the
+  // production server returns fast enough to lose the race every time.
   await scheduleInput.fill("2026-09-15");
-  await scheduleInput.dispatchEvent("change");
 
   // Verify scheduled date rendered in UI and persisted via project detail
   const backlogRow = drawer.locator(".project-task").filter({

@@ -6,6 +6,7 @@ import {
   ReviewMutationRequestError,
   assertCurrentReviewPeriod,
   buildReviewSummary,
+  latestReviewWindowEnding,
   parseReviewMutation,
   readReviewMutationBody
 } from "../../src/lib/review-domain";
@@ -240,4 +241,42 @@ test("ISO period validation retains legacy behavior at Calendar year boundaries"
   }), (error: unknown) => error instanceof ReviewMutationRequestError && error.code === "VALIDATION_ERROR" && error.field === "periodEnd");
   assert.throws(() => assertCurrentReviewPeriod(period, new Date("2026-09-04T17:00:00.000Z")),
     (error: unknown) => error instanceof ReviewMutationRequestError && error.code === "REVIEW_PERIOD_CHANGED" && error.status === 409);
+});
+
+test("The latest Review window ending is two days before a readable period end", () => {
+  // TZ is pinned to America/Chicago by the test script, so the local key of
+  // 2026-09-20T05:00:00.000Z is 2026-09-20 and two days earlier is 2026-09-18.
+  assert.equal(
+    latestReviewWindowEnding("2026-09-20T05:00:00.000Z"),
+    "2026-09-18"
+  );
+});
+
+test("An unreadable period end yields no bound instead of a NaN date key", () => {
+  // A local-day rollover can refresh the period underneath the history panel.
+  // Before this guard the component wrote localDateKey(Invalid Date) into the
+  // date input's `max`, producing "NaN-NaN-NaN": a constraint no value can
+  // satisfy, and one that raised RangeError in any caller doing arithmetic on
+  // it. Absent input must produce an absent bound.
+  for (const unreadable of [undefined, null, "", "   ", "garbage", "2026-13-45"]) {
+    const bound = latestReviewWindowEnding(unreadable as string | null | undefined);
+    assert.equal(
+      bound,
+      null,
+      `expected no bound for ${JSON.stringify(unreadable)}, got ${JSON.stringify(bound)}`
+    );
+  }
+});
+
+test("No input can make the Review window bound contain NaN", () => {
+  for (const value of [undefined, null, "", "garbage", "2026-09-20T05:00:00.000Z"]) {
+    const bound = latestReviewWindowEnding(value as string | null | undefined);
+    if (bound !== null) {
+      assert.ok(
+        /^\d{4}-\d{2}-\d{2}$/.test(bound),
+        `bound ${JSON.stringify(bound)} is not a calendar date key`
+      );
+      assert.ok(!bound.includes("NaN"), `bound ${JSON.stringify(bound)} contains NaN`);
+    }
+  }
 });

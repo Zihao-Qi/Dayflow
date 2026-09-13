@@ -14,10 +14,10 @@ import {
 } from "@/components/dashboard-formatters";
 import { formatInvestedMinutes } from "@/lib/project-domain";
 import type { PastReviewRecord } from "@/lib/review-records";
-import { addDays, localDateKey } from "@/lib/dates";
 import {
   REVIEW_INTENTION_MAX_LENGTH,
-  REVIEW_NARRATIVE_MAX_LENGTH
+  REVIEW_NARRATIVE_MAX_LENGTH,
+  latestReviewWindowEnding
 } from "@/lib/review-domain";
 
 type Review = {
@@ -123,9 +123,7 @@ export function ReviewPage({
     : past
       ? "Past review \u00b7 seven days ending"
       : "Seven days ending";
-  const latestWindowEnding = localDateKey(
-    addDays(new Date(review.periodEnd), -2)
-  );
+  const latestWindowEnding = latestReviewWindowEnding(review.periodEnd);
 
   return (
     <div className="review-page page-stack">
@@ -619,9 +617,11 @@ function ReviewHistoryPanel({
 }: {
   history: ReturnType<typeof useReviewHistory>;
   onRetry: () => void;
-  latestWindowEnding: string;
+  latestWindowEnding: string | null;
 }) {
-  const [windowEnding, setWindowEnding] = useState(latestWindowEnding);
+  // Seed with "" rather than null so the input stays controlled when the period
+  // end is unreadable; the submit button already refuses an empty value.
+  const [windowEnding, setWindowEnding] = useState(latestWindowEnding ?? "");
 
   return (
     <section
@@ -659,7 +659,7 @@ function ReviewHistoryPanel({
               id="review-window-ending"
               type="date"
               required
-              max={latestWindowEnding}
+              max={latestWindowEnding ?? undefined}
               value={windowEnding}
               onChange={(event) => setWindowEnding(event.target.value)}
             />

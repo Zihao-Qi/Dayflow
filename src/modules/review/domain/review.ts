@@ -1,10 +1,35 @@
-import { addDays, startOfLocalDay, calendarFor, type Calendar, type LocalDay } from "@/shared/kernel/calendar";
+import { addDays, localDateKey, startOfLocalDay, calendarFor, type Calendar, type LocalDay } from "@/shared/kernel/calendar";
 import { requestErrors } from "@/shared/kernel/request-errors";
 import { AppError, validation, type ErrorSpec } from "@/shared/kernel/errors";
 import { requireObject as kernelRequireObject, parseBoundedString, readJsonBody } from "@/shared/kernel/parsing";
 
 export const REVIEW_NARRATIVE_MAX_LENGTH = 5_000;
 export const REVIEW_INTENTION_MAX_LENGTH = 1_000;
+
+/**
+ * The newest seven-day window a reader may open: two days before the current
+ * period ends.
+ *
+ * Returns null when the period end is missing or unparseable, rather than the
+ * key "NaN-NaN-NaN" that `localDateKey` produces from an Invalid Date. That
+ * string reached the date input's `max` attribute, where an impossible
+ * constraint is worse than none: it rejects every value a reader can pick, and
+ * any caller doing arithmetic on it gets NaN back. A browser regression hit
+ * exactly this, failing with `RangeError: Invalid time value` while a local-day
+ * rollover refreshed the period underneath the panel.
+ *
+ * The guard lives here rather than in `localDateKey` on purpose. Fourteen call
+ * sites depend on that kernel primitive; widening its contract to tolerate bad
+ * input would change behaviour for all of them to fix one caller.
+ */
+export function latestReviewWindowEnding(
+  periodEnd: string | null | undefined
+): string | null {
+  if (typeof periodEnd !== "string" || periodEnd.trim() === "") return null;
+  const parsed = new Date(periodEnd);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return localDateKey(addDays(parsed, -2));
+}
 
 export type ReviewMutationErrorCode =
   | "INVALID_JSON"

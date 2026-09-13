@@ -149,20 +149,31 @@ jobs:
           retention-days: 14
 
   # The branch ruleset (19902882) requires exactly one status check named
-  # "Reliability gates" from the github-actions app, and the merge gate refuses
-  # anything that is not a completed success under that name. This job carries
-  # the name so the split above stays invisible to both.
+  # "Reliability gates" from the github-actions app. This job carries the name
+  # so the split above stays invisible to it.
   #
-  # It uses a plain `needs:` with no `if: always()` on purpose. When any
-  # dependency fails, this job is skipped; GitHub still reports a check run for
-  # it with conclusion `skipped`, and a skipped check is not a success - so a
-  # failing shard blocks the merge rather than passing quietly.
+  # It must run even when a dependency fails, and then fail on purpose. With a
+  # plain `needs:` a failed shard leaves this job *skipped*, and GitHub counts a
+  # skipped job as success for required status checks - so the ruleset would let
+  # the merge button through with a red shard. `queue.py` refuses a skipped
+  # conclusion, but it only guards its own path, not the GitHub UI or API. So:
+  # always() to run regardless, and an explicit non-zero exit unless every
+  # dependency actually succeeded.
   reliability:
     name: Reliability gates
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     needs: [gates, e2e]
+    if: always()
 
     steps:
       - name: Confirm every gate passed
-        run: echo "Static gates and all four browser shards succeeded."
+        run: |
+          gates='${{ needs.gates.result }}'
+          shards='${{ needs.e2e.result }}'
+          echo "gates=$gates shards=$shards"
+          if [ "$gates" != "success" ] || [ "$shards" != "success" ]; then
+            echo "::error::Required dependency did not succeed (gates=$gates, shards=$shards)."
+            exit 1
+          fi
+          echo "Static gates and all four browser shards succeeded."

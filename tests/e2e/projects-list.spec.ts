@@ -344,9 +344,9 @@ test("keeps a completed Project's drawer tasks editable while disallowing new un
   // `fill` already dispatches input and change, and that change is what saves
   // the date. Saving flips the task out of backlog, so React swaps the date
   // input for `.project-task-meta` - asserted just below. A second
-  // dispatchEvent then waits on an element that is already gone. `next dev`
-  // hid this by delaying the mutation behind on-demand compilation; the
-  // production server returns fast enough to lose the race every time.
+  // dispatchEvent then waits on an element that is already gone. That race
+  // began failing in CI when the suite moved to the production server; why the
+  // identical call site in the sibling test above never lost it is unmeasured.
   await scheduleInput.fill("2026-09-15");
 
   // Verify scheduled date rendered in UI and persisted via project detail
@@ -478,9 +478,9 @@ test("keeps an archived Project's drawer tasks editable while disallowing new un
   // `fill` already dispatches input and change, and that change is what saves
   // the date. Saving flips the task out of backlog, so React swaps the date
   // input for `.project-task-meta` - asserted just below. A second
-  // dispatchEvent then waits on an element that is already gone. `next dev`
-  // hid this by delaying the mutation behind on-demand compilation; the
-  // production server returns fast enough to lose the race every time.
+  // dispatchEvent then waits on an element that is already gone. That race
+  // began failing in CI when the suite moved to the production server; why the
+  // identical call site in the sibling test above never lost it is unmeasured.
   await scheduleInput.fill("2026-09-15");
 
   // Verify scheduled date rendered in UI and persisted via project detail

@@ -99,9 +99,11 @@ even when the current day itself has nothing scheduled.
 
 ## Local Setup
 
-Prerequisite: Node.js 22.13 or newer. The browser-test helpers open the
-test database through `node:sqlite`, which arrived in Node 22.5 and stayed
-behind a flag until 22.13. The seed step loads `.env` with
+Prerequisite: Node.js 22.13 or newer on the 22.x line, or 23.4 or newer.
+The browser-test helpers open the test database through `node:sqlite`,
+which arrived in Node 22.5 and left `--experimental-sqlite` in v22.13.0
+and v23.4.0 - so 23.0 through 23.3 still require the flag and are not
+supported. The seed step loads `.env` with
 Node's `--env-file-if-exists` flag, which older 20.x releases do not have.
 
 ```bash

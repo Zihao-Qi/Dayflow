@@ -8,6 +8,7 @@ import {
   Keyboard,
   Moon,
   Paintbrush,
+  Sparkles,
   Sun,
   SunMoon,
   X
@@ -197,6 +198,11 @@ export function SettingsDialog({
               <div className="settings-preview-panel">
                 <span className="eyebrow">Live Preview</span>
                 <div className="settings-preview-row">
+                  <div className="settings-preview-nav-item">
+                    <Sparkles size={13} />
+                    <span>Today</span>
+                    <small>3</small>
+                  </div>
                   <button type="button" className="primary-button" tabIndex={-1}>
                     Primary Action
                   </button>

@@ -45,6 +45,13 @@ const resetSql = [
 function runSql(sql: string) {
   const database = new DatabaseSync(testDatabasePath);
   try {
+    // `prisma db execute` waited for a contended write lock; node:sqlite gives
+    // up immediately. Measured against a lock held by another connection: the
+    // CLI waited 5120ms and succeeded, this path failed in 1ms with "database
+    // is locked". The server under test holds its own connection to this file,
+    // so a reset between tests can land on an in-flight query. Without this the
+    // change would trade process-spawn time for flakes.
+    database.exec("PRAGMA busy_timeout = 5000;");
     database.exec(sql);
   } finally {
     database.close();

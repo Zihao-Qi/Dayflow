@@ -23,11 +23,22 @@ env:
   TZ: America/Chicago
   NEXT_TELEMETRY_DISABLED: "1"
 
+# The browser suite is the whole cost of this workflow: 251 tests at about four
+# seconds each, 17 of a 21 minute run. It is split across shards here rather
+# than given more workers, because `playwright.config.ts` pins `workers: 1,
+# fullyParallel: false` and that pin is a test invariant - every spec shares one
+# server and one SQLite file, so a second worker interleaves two tests' rows in
+# one database. Shards run on separate runners, so each gets its own server and
+# its own database without touching the pin.
+#
+# This buys wall-clock time, not work: five jobs each pay setup, so total runner
+# minutes go up. `npm run check` still runs the whole chain in one command for
+# local use; CI calls the pieces so they can run at the same time.
 jobs:
-  reliability:
-    name: Reliability gates
+  gates:
+    name: Static and server gates
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 30
 
     steps:
       - name: Check out repository
@@ -53,22 +64,116 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Install Chromium
-        run: npx playwright install --with-deps chromium
+      - name: Generate Prisma client
+        run: npm run prisma:generate
 
-      - name: Run reliability gates
-        run: npm run check
+      - name: Architecture gate
+        run: npm run test:architecture
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm run test:unit
+
+      - name: Backup and integration tests
+        run: npm run test:backup
         env:
           DATABASE_URL: file:${{ runner.temp }}/dayflow-ci.db
           DAYFLOW_BACKUP_DIRECTORY: ${{ runner.temp }}/dayflow-ci-backups
+
+      - name: Migration tests
+        run: npm run test:migrations
+        env:
+          DATABASE_URL: file:${{ runner.temp }}/dayflow-ci.db
+          DAYFLOW_BACKUP_DIRECTORY: ${{ runner.temp }}/dayflow-ci-backups
+
+      - name: Build
+        run: npm run build
+
+  e2e:
+    name: Browser shard ${{ matrix.shard }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      # One shard's failure should not hide which of the others also fail.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install SQLite
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends sqlite3
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      # `test:e2e:server` serves this build rather than compiling routes on
+      # demand. Building as its own step keeps it separately timed when a shard
+      # fails, instead of disappearing inside the test command.
+      - name: Build
+        run: npm run build
+
+      - name: Prepare browser-test database
+        run: npm run test:e2e:prepare
+
+      - name: Browser tests
+        run: npx playwright test --shard=${{ matrix.shard }}/4
 
       - name: Upload browser failure artifacts
         if: ${{ failure() }}
         uses: actions/upload-artifact@v7
         with:
-          name: playwright-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          name: playwright-failure-${{ github.run_id }}-${{ github.run_attempt }}-shard${{ matrix.shard }}
           path: |
             playwright-report/
             test-results/
           if-no-files-found: ignore
           retention-days: 14
+
+  # The branch ruleset (19902882) requires exactly one status check named
+  # "Reliability gates" from the github-actions app. This job carries the name
+  # so the split above stays invisible to it.
+  #
+  # It must run even when a dependency fails, and then fail on purpose. With a
+  # plain `needs:` a failed shard leaves this job *skipped*, and GitHub counts a
+  # skipped job as success for required status checks - so the ruleset would let
+  # the merge button through with a red shard. `queue.py` refuses a skipped
+  # conclusion, but it only guards its own path, not the GitHub UI or API. So:
+  # always() to run regardless, and an explicit non-zero exit unless every
+  # dependency actually succeeded.
+  reliability:
+    name: Reliability gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    needs: [gates, e2e]
+    if: always()
+
+    steps:
+      - name: Confirm every gate passed
+        run: |
+          gates='${{ needs.gates.result }}'
+          shards='${{ needs.e2e.result }}'
+          echo "gates=$gates shards=$shards"
+          if [ "$gates" != "success" ] || [ "$shards" != "success" ]; then
+            echo "::error::Required dependency did not succeed (gates=$gates, shards=$shards)."
+            exit 1
+          fi
+          echo "Static gates and all four browser shards succeeded."

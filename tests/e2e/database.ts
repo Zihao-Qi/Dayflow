@@ -1,11 +1,10 @@
-import { execFileSync } from "node:child_process";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { mutationRequestHash } from "../../src/lib/idempotent-mutations";
 
 const repositoryRoot = process.cwd();
-const prismaCliPath = join(repositoryRoot, "node_modules", "prisma", "build", "index.js");
 
 export const testDatabasePath = join(tmpdir(), "dayflow-playwright.db");
 export const testDatabaseUrl = `file:${testDatabasePath.split(sep).join("/")}`;
@@ -31,27 +30,43 @@ const resetSql = [
   "PRAGMA foreign_keys = ON;"
 ].join(" ");
 
-function runPrismaDbExecute(args: string[], input?: string) {
-  execFileSync(
-    process.execPath,
-    [prismaCliPath, "db", "execute", ...args, "--url", testDatabaseUrl],
-    {
-      cwd: repositoryRoot,
-      input,
-      stdio: input ? ["pipe", "inherit", "inherit"] : "inherit"
-    }
-  );
+/**
+ * Run SQL against the browser-test database.
+ *
+ * This used to shell out to `prisma db execute`, which spawned a Node process
+ * and loaded the Prisma CLI for every reset and every seed. At ~440ms per
+ * spawn and one reset per test, that was minutes of process startup in a suite
+ * whose tests average about four seconds. Opening the file directly costs
+ * about a millisecond and runs the same statements.
+ *
+ * The statements themselves are unchanged, so a seed that was valid through
+ * the CLI stays valid here.
+ */
+function runSql(sql: string) {
+  const database = new DatabaseSync(testDatabasePath);
+  try {
+    // `prisma db execute` waited for a contended write lock; node:sqlite gives
+    // up immediately. Measured against a lock held by another connection: the
+    // CLI waited 5120ms and succeeded, this path failed in 1ms with "database
+    // is locked". The server under test holds its own connection to this file,
+    // so a reset between tests can land on an in-flight query. Without this the
+    // change would trade process-spawn time for flakes.
+    database.exec("PRAGMA busy_timeout = 5000;");
+    database.exec(sql);
+  } finally {
+    database.close();
+  }
 }
 
 export function prepareTestDatabase() {
   resetTestBackupDirectory();
   rmSync(testDatabasePath, { force: true });
-  runPrismaDbExecute(["--file", "prisma/init.sql"]);
+  runSql(readFileSync(join(repositoryRoot, "prisma/init.sql"), "utf8"));
 }
 
 export function resetTestDatabase() {
   resetTestBackupDirectory();
-  runPrismaDbExecute(["--stdin"], resetSql);
+  runSql(resetSql);
 }
 
 export function seedProjectWithManyTasks() {
@@ -76,7 +91,7 @@ export function seedProjectWithManyTasks() {
     );
   }
 
-  runPrismaDbExecute(["--stdin"], statements.join("\n"));
+  runSql(statements.join("\n"));
 }
 
 function resetTestBackupDirectory() {
@@ -108,7 +123,7 @@ export function seedJournalHistory(count = 105) {
         ${timestamp}, ${timestamp});`
     );
   }
-  runPrismaDbExecute(["--stdin"], statements.join("\n"));
+  runSql(statements.join("\n"));
 }
 
 export function seedJournalSearchHistory(count = 125) {
@@ -149,13 +164,12 @@ export function seedJournalSearchHistory(count = 125) {
         ${timestamp}, ${timestamp});`
     );
   }
-  runPrismaDbExecute(["--stdin"], statements.join("\n"));
+  runSql(statements.join("\n"));
 }
 
 export function seedJournalSearchTies() {
   const timestamp = Date.UTC(2026, 2, 1, 12);
-  runPrismaDbExecute(
-    ["--stdin"],
+  runSql(
     ["a", "b", "c"]
       .map(
         (suffix) => `
@@ -172,8 +186,7 @@ export function seedJournalSearchTies() {
 
 export function seedMalformedJournalTags() {
   const timestamp = Date.UTC(2026, 2, 2, 12);
-  runPrismaDbExecute(
-    ["--stdin"],
+  runSql(
     `INSERT INTO "Note"
      ("id", "content", "tags", "date", "createdAt", "updatedAt")
      VALUES
@@ -220,8 +233,7 @@ export function setFocusSessionElapsedMinutes(id: string, minutes: number) {
     pausedAt = startedAt + elapsedMs;
   }
 
-  runPrismaDbExecute(
-    ["--stdin"],
+  runSql(
     `UPDATE "FocusSession"
      SET "startedAt" = ${startedAt},
          "pausedAt" = ${pausedAt},
@@ -262,8 +274,7 @@ export function setCompletedFocusSessionInterval(
     throw new Error("Focus session interval must end after it starts.");
   }
 
-  runPrismaDbExecute(
-    ["--stdin"],
+  runSql(
     `UPDATE "FocusSession"
      SET "activeKey" = NULL,
          "startedAt" = ${startedAt.getTime()},
@@ -285,8 +296,7 @@ export function seedMalformedTimeBlock(date: string) {
   if (!Number.isFinite(timestamp)) {
     throw new Error("Malformed Time Block seed date is invalid.");
   }
-  runPrismaDbExecute(
-    ["--stdin"],
+  runSql(
     `INSERT INTO "TimeBlock"
      ("id", "date", "startTime", "endTime", "title", "taskId", "createdAt", "updatedAt")
      VALUES
@@ -321,8 +331,7 @@ export function seedTimeBlock({
     throw new Error("Time Block seed date is invalid.");
   }
   const safeTitle = title.replaceAll("'", "''");
-  runPrismaDbExecute(
-    ["--stdin"],
+  runSql(
     `INSERT INTO "TimeBlock"
      ("id", "date", "startTime", "endTime", "title", "taskId", "createdAt", "updatedAt")
      VALUES
@@ -356,8 +365,7 @@ export function seedPreviousDayTimeBlockReceipt(date: string) {
   };
   const requestHash = mutationRequestHash("time-block.create", payload);
   const responseJson = JSON.stringify(response).replaceAll("'", "''");
-  runPrismaDbExecute(
-    ["--stdin"],
+  runSql(
     `INSERT INTO "TimeBlock"
      ("id", "date", "startTime", "endTime", "title", "taskId", "createdAt", "updatedAt")
      VALUES
@@ -400,8 +408,7 @@ export function seedPastReviews(saveOffsets: number[]) {
     };
   });
 
-  runPrismaDbExecute(
-    ["--stdin"],
+  runSql(
     seeded
       .map(
         (review) => `

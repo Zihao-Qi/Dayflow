@@ -83,7 +83,13 @@ export function CommandPalette({
     const frame = window.requestAnimationFrame(() => {
       inputRef.current?.focus();
     });
-    return () => window.cancelAnimationFrame(frame);
+    const timer = window.setTimeout(() => {
+      inputRef.current?.focus();
+    }, 50);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+    };
   }, []);
 
   useEffect(() => {

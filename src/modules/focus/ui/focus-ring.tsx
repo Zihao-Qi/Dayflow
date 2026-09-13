@@ -72,7 +72,7 @@ export function BreakFocusRing({
     <div
       className="rail-focus-clock"
       style={{
-        background: `conic-gradient(var(--clay) ${progress}%, var(--line) ${progress}% 100%)`
+        background: `conic-gradient(var(--importance-blue) ${progress}%, var(--line) ${progress}% 100%)`
       }}
     >
       <div>
@@ -106,7 +106,7 @@ export function StripFocusRing({
       style={{
         background: completionPending
           ? "var(--sage)"
-          : `conic-gradient(${isBreak || isPaused ? "var(--clay)" : "var(--sage)"} ${progress}%, var(--line) ${progress}% 100%)`
+          : `conic-gradient(${isBreak ? "var(--importance-blue)" : isPaused ? "var(--clay)" : "var(--sage)"} ${progress}%, var(--line) ${progress}% 100%)`
       }}
     >
       <span>

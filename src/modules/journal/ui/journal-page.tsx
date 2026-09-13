@@ -142,32 +142,42 @@ export function JournalPage({
               {...diarySave.inputProps}
             />
             <div className="journal-footer">
-              <label>
-                Mood · {diarySave.draft.mood}/5
-                <input
-                  type="range"
-                  aria-label="Mood"
-                  min="1"
-                  max="5"
-                  value={diarySave.draft.mood}
-                  onChange={(event) => updateDiary("mood", Number(event.target.value))}
-                  {...diarySave.inputProps}
-                />
-              </label>
-              <label>
-                Energy · {diarySave.draft.energy}/5
-                <input
-                  type="range"
-                  aria-label="Energy"
-                  min="1"
-                  max="5"
-                  value={diarySave.draft.energy}
-                  onChange={(event) => updateDiary("energy", Number(event.target.value))}
-                  {...diarySave.inputProps}
-                />
-              </label>
+              <div className="journal-metric-card journal-metric-mood">
+                <label>
+                  <span className="journal-metric-title">
+                    Mood · {diarySave.draft.mood}/5
+                  </span>
+                  <input
+                    type="range"
+                    className="journal-range-slider journal-mood-slider"
+                    aria-label="Mood"
+                    min="1"
+                    max="5"
+                    value={diarySave.draft.mood}
+                    onChange={(event) => updateDiary("mood", Number(event.target.value))}
+                    {...diarySave.inputProps}
+                  />
+                </label>
+              </div>
+              <div className="journal-metric-card journal-metric-energy">
+                <label>
+                  <span className="journal-metric-title">
+                    Energy · {diarySave.draft.energy}/5
+                  </span>
+                  <input
+                    type="range"
+                    className="journal-range-slider journal-energy-slider"
+                    aria-label="Energy"
+                    min="1"
+                    max="5"
+                    value={diarySave.draft.energy}
+                    onChange={(event) => updateDiary("energy", Number(event.target.value))}
+                    {...diarySave.inputProps}
+                  />
+                </label>
+              </div>
               <button
-                className="primary-button"
+                className="primary-button journal-save-button"
                 onClick={() => void diarySave.flush(true)}
               >
                 <Save size={14} />

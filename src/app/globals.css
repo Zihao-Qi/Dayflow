@@ -849,7 +849,8 @@ button:disabled {
   gap: 10px;
   align-items: center;
   padding: 11px;
-  border-left: 3px solid var(--sage);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--importance-blue);
   background: var(--surface);
   border-radius: var(--radius);
 }
@@ -6166,16 +6167,165 @@ kbd {
 .journal-footer {
   display: grid;
   grid-template-columns: 1fr 1fr auto;
-  align-items: end;
-  gap: 12px;
-  margin-top: 14px;
+  align-items: center;
+  gap: 14px;
+  margin-top: 16px;
 }
 
-.journal-footer label {
+.journal-metric-card {
   display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.03);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.journal-metric-card:hover {
+  border-color: rgba(15, 23, 42, 0.14);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05);
+}
+
+.journal-metric-card label {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  cursor: pointer;
+}
+
+.journal-metric-title {
+  display: inline-flex;
+  align-items: center;
   gap: 6px;
-  color: var(--muted);
   font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.journal-metric-mood .journal-metric-title {
+  color: #6366f1;
+}
+
+.journal-metric-energy .journal-metric-title {
+  color: #d97706;
+}
+
+/* Custom Soft Bento Range Sliders */
+.journal-range-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  border: 0;
+  border-radius: 999px;
+  outline: none;
+  cursor: pointer;
+  background: var(--line);
+}
+
+.journal-range-slider:focus-visible {
+  outline: 2px solid var(--importance-blue);
+  outline-offset: 3px;
+}
+
+/* Mood Slider (Mindful Calm Violet) */
+.journal-mood-slider {
+  accent-color: #6366f1;
+  background: linear-gradient(90deg, #ede9fe, #ddd6fe);
+}
+
+.journal-mood-slider::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #ede9fe 0%, #c4b5fd 100%);
+}
+
+.journal-mood-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 2.5px solid #6366f1;
+  box-shadow: 0 2px 6px rgba(99, 102, 241, 0.35);
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+  margin-top: -6px;
+}
+
+.journal-mood-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+  box-shadow: 0 3px 8px rgba(99, 102, 241, 0.45);
+}
+
+.journal-mood-slider::-moz-range-track {
+  height: 6px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #ede9fe 0%, #c4b5fd 100%);
+}
+
+.journal-mood-slider::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 2.5px solid #6366f1;
+  box-shadow: 0 2px 6px rgba(99, 102, 241, 0.35);
+  cursor: pointer;
+}
+
+/* Energy Slider (Vitality Sunlight Gold) */
+.journal-energy-slider {
+  accent-color: #f59e0b;
+  background: linear-gradient(90deg, #fef3c7, #fde68a);
+}
+
+.journal-energy-slider::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #fef3c7 0%, #fcd34d 100%);
+}
+
+.journal-energy-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 2.5px solid #f59e0b;
+  box-shadow: 0 2px 6px rgba(245, 158, 11, 0.35);
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+  margin-top: -6px;
+}
+
+.journal-energy-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+  box-shadow: 0 3px 8px rgba(245, 158, 11, 0.45);
+}
+
+.journal-energy-slider::-moz-range-track {
+  height: 6px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #fef3c7 0%, #fcd34d 100%);
+}
+
+.journal-energy-slider::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 2.5px solid #f59e0b;
+  box-shadow: 0 2px 6px rgba(245, 158, 11, 0.35);
+  cursor: pointer;
+}
+
+.journal-save-button {
+  align-self: center;
 }
 
 .journal-captured {
@@ -6535,7 +6685,7 @@ button.note-tag:hover {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: var(--sage);
+  background: linear-gradient(90deg, var(--importance-blue), var(--priority-purple));
 }
 
 .review-empty-copy {
@@ -8889,8 +9039,8 @@ html[data-figure-arrangement="false"] {
 
 .project-metric-button:hover,
 .project-metric-button:focus-visible {
-  outline: 1px solid var(--sage);
-  background: var(--sage-soft);
+  outline: 1px solid var(--importance-blue);
+  background: var(--surface-2);
 }
 
 .project-edit-dialog {
@@ -9203,9 +9353,6 @@ html[data-layout-mode="phone"] {
   }
 }
 
-.journal-footer input[type="range"] {
-  accent-color: var(--clay);
-}
 
 .task-details .task-controls {
   grid-template-columns:

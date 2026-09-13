@@ -1,21 +1,21 @@
 :root {
-  --bg: #f8f6f0;
-  --surface: #fffdf8;
-  --surface-2: #f0ede4;
-  --ink: #25231f;
-  --muted: #5f584e;
-  --line: #e5dfd3;
-  --sage: #566a50;
-  --sage-soft: #e7edde;
-  --urgent-red: #c3574f;
-  --importance-blue: #4f76a8;
-  --neutral-gray: #beb9b0;
-  --priority-purple: color-mix(in srgb, var(--urgent-red) 50%, var(--importance-blue));
-  --clay: #a8785c;
-  --blue: #607d86;
-  --danger: #a64d44;
-  --shadow: 0 18px 50px rgba(54, 48, 39, 0.08);
-  --radius: 8px;
+  --bg: #fbfbfc;
+  --surface: #ffffff;
+  --surface-2: #f4f6fb;
+  --ink: #1a1d24;
+  --muted: #5a6072;
+  --line: #edf0f5;
+  --sage: #388464;
+  --sage-soft: #e7f6f0;
+  --urgent-red: #ea5455;
+  --importance-blue: #4f6ef7;
+  --neutral-gray: #94a3b8;
+  --priority-purple: #7c5cf6;
+  --clay: #e67e43;
+  --blue: #5b7cf6;
+  --danger: #dc3838;
+  --shadow: 0 8px 30px rgba(15, 23, 42, 0.05), 0 1px 3px rgba(15, 23, 42, 0.03);
+  --radius: 14px;
 
   /* Text scale. Display numerals and page heroes sit outside it on purpose. */
   --text-2xs: 11px;   /* keyboard hints, eyebrows, dense table headers */
@@ -41,8 +41,9 @@ body {
   margin: 0;
   min-height: 100vh;
   background:
-    linear-gradient(180deg, rgba(255, 253, 248, 0.76), rgba(248, 246, 240, 0.92)),
-    radial-gradient(circle at top left, rgba(231, 237, 222, 0.8), transparent 32%);
+    radial-gradient(ellipse 80% 50% at 50% -20%, rgba(224, 231, 255, 0.45), transparent),
+    radial-gradient(circle at 10% 20%, rgba(231, 246, 240, 0.4), transparent 40%),
+    var(--bg);
   color: var(--ink);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
@@ -349,12 +350,13 @@ textarea:focus {
   width: 38px;
   min-width: 38px;
   padding: 0;
-  background: #fffefb;
+  background: var(--surface);
   color: var(--muted);
   border-color: var(--line);
 }
 
 .check-button {
+  border-radius: 9999px;
   color: var(--sage);
 }
 

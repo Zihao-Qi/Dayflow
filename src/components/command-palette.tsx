@@ -79,6 +79,14 @@ export function CommandPalette({
   const scrollActiveOption = useRef(false);
 
   useEffect(() => {
+    inputRef.current?.focus();
+    const frame = window.requestAnimationFrame(() => {
+      inputRef.current?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
+
+  useEffect(() => {
     scrollActiveOption.current = false;
     setSelectedItemId(items[0]?.id ?? null);
   }, [query]);
@@ -94,7 +102,8 @@ export function CommandPalette({
     });
   }, [items]);
 
-  const selectedItem = items.find((item) => item.id === selectedItemId);
+  const selectedItem =
+    items.find((item) => item.id === selectedItemId) ?? items[0] ?? null;
   const activeOptionId = selectedItem
     ? `${idBase}-option-${safeDomIdPart(selectedItem.id)}`
     : undefined;
@@ -223,7 +232,7 @@ export function CommandPalette({
         >
           {items.map((item) => {
             const optionId = `${idBase}-option-${safeDomIdPart(item.id)}`;
-            const selected = item.id === selectedItemId;
+            const selected = item.id === (selectedItem?.id ?? null);
 
             return (
               <button

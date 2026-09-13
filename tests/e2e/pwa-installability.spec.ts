@@ -95,8 +95,8 @@ test("publishes the Dayflow installability manifest", async ({ request }) => {
     start_url: "/",
     scope: "/",
     display: "standalone",
-    background_color: "#f8f6f0",
-    theme_color: "#f8f6f0",
+    background_color: "#fbfbfc",
+    theme_color: "#fbfbfc",
     prefer_related_applications: false
   });
   expect(manifest.icons).toEqual(installIcons);
@@ -127,7 +127,7 @@ test("advertises install metadata from the rendered document head", async ({
   ).toHaveAttribute("content", "Dayflow");
   await expect(page.locator('head meta[name="theme-color"]')).toHaveAttribute(
     "content",
-    "#f8f6f0"
+    "#fbfbfc"
   );
   await expect(
     page.locator('head meta[name="mobile-web-app-capable"]')

@@ -16,7 +16,7 @@ export function RunningFocusRing({
     <div
       className="rail-focus-clock"
       style={{
-        background: `conic-gradient(var(--sage) ${progress}%, #e2e0d5 ${progress}% 100%)`
+        background: `conic-gradient(var(--sage) ${progress}%, var(--line) ${progress}% 100%)`
       }}
       aria-label={`${formatFocusClock(remaining)} remaining`}
     >
@@ -47,7 +47,7 @@ export function PausedFocusRing({
     <div
       className="rail-focus-clock"
       style={{
-        background: `conic-gradient(#c9a882 ${progress}%, #e6ddcb ${progress}% 100%)`
+        background: `conic-gradient(var(--clay) ${progress}%, var(--line) ${progress}% 100%)`
       }}
       aria-label={`${formatFocusClock(remaining)} remaining while paused`}
     >
@@ -72,7 +72,7 @@ export function BreakFocusRing({
     <div
       className="rail-focus-clock"
       style={{
-        background: `conic-gradient(var(--clay) ${progress}%, #e6ddcb ${progress}% 100%)`
+        background: `conic-gradient(var(--clay) ${progress}%, var(--line) ${progress}% 100%)`
       }}
     >
       <div>
@@ -106,7 +106,7 @@ export function StripFocusRing({
       style={{
         background: completionPending
           ? "var(--sage)"
-          : `conic-gradient(${isBreak || isPaused ? "#c9a882" : "var(--sage)"} ${progress}%, ${isBreak || isPaused ? "#e6ddcb" : "#e2e0d5"} ${progress}% 100%)`
+          : `conic-gradient(${isBreak || isPaused ? "var(--clay)" : "var(--sage)"} ${progress}%, var(--line) ${progress}% 100%)`
       }}
     >
       <span>

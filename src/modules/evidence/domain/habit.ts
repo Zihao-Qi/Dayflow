@@ -1,4 +1,9 @@
-import { addDays, parseLocalDate, startOfLocalDay } from "@/shared/kernel/calendar";
+import {
+  addDays,
+  localDateKey,
+  parseLocalDate,
+  startOfLocalDay
+} from "@/shared/kernel/calendar";
 import { validation } from "@/shared/kernel/errors";
 import { requestErrors } from "@/shared/kernel/request-errors";
 import {
@@ -38,8 +43,9 @@ export type HabitPatchMutation = {
 export type CheckInMutation = {
   date: Date;
   done: boolean;
+  /** Both optional fields use null for absent, never a zero or empty string. */
   amount: number | null;
-  note: string;
+  note: string | null;
 };
 
 /**
@@ -62,6 +68,118 @@ export function targetForCadence(
 export function checkInWindow(now: Date) {
   const latest = startOfLocalDay(now);
   return { earliest: addDays(latest, -CHECK_IN_BACKFILL_DAYS), latest };
+}
+
+export type HabitDefinition = {
+  id: string;
+  name: string;
+  cadence: HabitCadenceValue;
+  targetPerWeek: number;
+  sortOrder: number;
+  createdAt: Date;
+};
+
+export type CheckInRecord = {
+  habitId: string;
+  date: Date;
+  done: boolean;
+  amount: number | null;
+  note: string | null;
+};
+
+/**
+ * `unrecorded` and `notDone` are separate states on purpose. A read model may
+ * present both as a miss, but it must be able to tell them apart, because that
+ * distinction is the reason absence is not stored as failure.
+ * `outOfScope` covers days that have not happened yet and days before the
+ * Habit existed; neither can be a miss.
+ */
+export type CheckInDayState = "done" | "notDone" | "unrecorded" | "outOfScope";
+
+export type HabitDay = {
+  day: string;
+  state: CheckInDayState;
+  amount: number | null;
+};
+
+export type HabitSummary = {
+  id: string;
+  name: string;
+  cadence: HabitCadenceValue;
+  targetPerWeek: number;
+  sortOrder: number;
+  today: { done: boolean; amount: number | null; note: string | null } | null;
+  days: HabitDay[];
+  doneCount: number;
+  target: number;
+};
+
+/**
+ * A daily Habit's target grows with the period: three days in, it is three,
+ * because a day that has not happened cannot have been missed. A
+ * times-per-week Habit keeps its weekly goal, since those days may be used in
+ * any order and the week is not over.
+ */
+export function habitTarget(
+  habit: Pick<HabitDefinition, "cadence" | "targetPerWeek">,
+  countableDays: number
+) {
+  return habit.cadence === "DAILY"
+    ? countableDays
+    : Math.min(habit.targetPerWeek, 7);
+}
+
+export function summarizeHabits(
+  habits: readonly HabitDefinition[],
+  checkIns: readonly CheckInRecord[],
+  periodStart: Date,
+  today: Date,
+  days = 7
+): HabitSummary[] {
+  const todayKey = localDateKey(today);
+  return habits.map((habit) => {
+    const rows = new Map(
+      checkIns
+        .filter((row) => row.habitId === habit.id)
+        .map((row) => [localDateKey(row.date), row])
+    );
+    const createdKey = localDateKey(habit.createdAt);
+    const dayStates: HabitDay[] = Array.from({ length: days }, (_, index) => {
+      const day = localDateKey(addDays(periodStart, index));
+      const row = rows.get(day);
+      if (row) {
+        return {
+          day,
+          state: row.done ? "done" : "notDone",
+          amount: row.amount
+        };
+      }
+      const future = day > todayKey;
+      const beforeHabit = day < createdKey;
+      return {
+        day,
+        state: future || beforeHabit ? "outOfScope" : "unrecorded",
+        amount: null
+      };
+    });
+    const countableDays = dayStates.filter(
+      (entry) => entry.state !== "outOfScope"
+    ).length;
+    const todayRow = rows.get(todayKey);
+    return {
+      id: habit.id,
+      name: habit.name,
+      cadence: habit.cadence,
+      targetPerWeek: habit.targetPerWeek,
+      sortOrder: habit.sortOrder,
+      today: todayRow
+        ? { done: todayRow.done, amount: todayRow.amount, note: todayRow.note }
+        : null,
+      days: dayStates,
+      doneCount: dayStates.filter((entry) => entry.state === "done").length,
+      target: habitTarget(habit, countableDays)
+    };
+  });
 }
 
 export function parseHabitCreateMutation(value: unknown): HabitCreateMutation {
@@ -167,7 +285,7 @@ function parseAmount(value: unknown) {
 }
 
 function parseNote(value: unknown) {
-  if (value === undefined || value === null) return "";
+  if (value === undefined || value === null) return null;
   return parseBoundedString(
     value,
     "note",

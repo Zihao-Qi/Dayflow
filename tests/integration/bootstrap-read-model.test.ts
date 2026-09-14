@@ -43,8 +43,9 @@ test("bootstrap keeps payload key order and unsaved Diary and Review defaults", 
   assert.deepEqual(Object.keys(result), [
     "today", "todayKey", "earliestDayKey", "dayViewForwardWeeks", "tasks", "paletteTasks",
     "notes", "diary", "materials", "timeBlocks", "activities", "activityCategorySuggestions",
-    "projects", "unfinishedTasks", "stats", "review", "reviewSummary", "workspaceEmpty"
+    "projects", "unfinishedTasks", "stats", "review", "reviewSummary", "habits", "workspaceEmpty"
   ]);
+  assert.deepEqual(result.habits, [], "no Habits means an empty list, never a missing key");
   assert.equal(result.today, today.toISOString());
   assert.equal(result.todayKey, "2026-09-04");
   assert.equal(result.dayViewForwardWeeks, 8);
@@ -57,6 +58,50 @@ test("bootstrap keeps payload key order and unsaved Diary and Review defaults", 
   });
   const again = await prisma.$transaction(tx => readBootstrap(tx, now));
   assert.equal(again.workspaceEmpty, true, "defaults must not be persisted by a read");
+});
+
+test("bootstrap surfaces Habits with today's state and period consistency", async (context) => {
+  const prisma = database(context);
+  // createdAt defaults to the real clock, which is after this test's fixed
+  // "now", so every day would read as out of scope unless it is seeded.
+  const habit = await prisma.habit.create({
+    data: { name: "Morning stretch", createdAt: day(-30) }
+  });
+  await prisma.habitCheckIn.createMany({
+    data: [
+      { habitId: habit.id, date: day(-2), done: true, amount: 10 },
+      { habitId: habit.id, date: day(0), done: false }
+    ]
+  });
+
+  const result = await prisma.$transaction((tx) => readBootstrap(tx, now));
+  assert.equal(result.habits.length, 1);
+  const [summary] = result.habits;
+  assert.equal(summary.name, "Morning stretch");
+  assert.equal(summary.cadence, "DAILY");
+  // Today was recorded as not done, which is not the same as unrecorded.
+  assert.deepEqual(summary.today, { done: false, amount: null, note: null });
+  assert.equal(summary.doneCount, 1);
+  // The period runs day(-6) through day(0) and all of it has elapsed.
+  assert.equal(summary.target, 7);
+  assert.deepEqual(
+    summary.days.map((entry) => entry.state),
+    ["unrecorded", "unrecorded", "unrecorded", "unrecorded", "done", "unrecorded", "notDone"]
+  );
+  assert.equal(summary.days[4].amount, 10);
+});
+
+test("bootstrap hides archived Habits while keeping their Check-ins", async (context) => {
+  const prisma = database(context);
+  const habit = await prisma.habit.create({
+    data: { name: "Retired", status: "ARCHIVED", archivedAt: day(-1), createdAt: day(-30) }
+  });
+  await prisma.habitCheckIn.create({
+    data: { habitId: habit.id, date: day(-3), done: true }
+  });
+  const result = await prisma.$transaction((tx) => readBootstrap(tx, now));
+  assert.deepEqual(result.habits, []);
+  assert.equal(await prisma.habitCheckIn.count({ where: { habitId: habit.id } }), 1);
 });
 
 test("bootstrap window includes overdue, unscheduled and queued Tasks with stable ordering", async (context) => {

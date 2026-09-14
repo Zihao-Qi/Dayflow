@@ -120,6 +120,7 @@ test("bootstrap and agent export preserve their payload contracts", async (conte
         "dayViewForwardWeeks",
         "diary",
         "earliestDayKey",
+        "habits",
         "materials",
         "notes",
         "paletteTasks",

@@ -124,7 +124,7 @@ test("bootstrap, agent export, and CSV preserve their seeded read contracts", as
     assert.deepEqual(Object.keys(body), [
       "today", "todayKey", "earliestDayKey", "dayViewForwardWeeks", "tasks", "paletteTasks",
       "notes", "diary", "materials", "timeBlocks", "activities", "activityCategorySuggestions",
-      "projects", "unfinishedTasks", "stats", "review", "reviewSummary", "workspaceEmpty"
+      "projects", "unfinishedTasks", "stats", "review", "reviewSummary", "habits", "workspaceEmpty"
     ]);
     for (const key of [
       "tasks", "paletteTasks", "notes", "materials", "timeBlocks", "activities",

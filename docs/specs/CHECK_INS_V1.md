@@ -109,13 +109,28 @@ existing export and backup tooling.
 ## Consistency
 
 Consistency is computed per Habit over the current review period as
-`recorded done Check-ins ÷ target`, where target is `targetPerWeek` clipped to
-the days of the period that have actually elapsed. Days before the Habit's
-`createdAt` never count against it.
+`done Check-ins ÷ target`.
 
-A day with no Check-in contributes nothing to either side of that ratio. The UI
-may present an unrecorded day distinctly from an explicit "not done"; it must not
-present them identically.
+The target depends on the cadence, because the two cadences mean different
+things:
+
+- A **`DAILY`** Habit's target is the number of days of the period that are in
+  scope. Three days in, the target is three. A day that has not happened yet
+  cannot have been missed, and neither can a day before the Habit existed.
+- A **`TIMES_PER_WEEK`** Habit keeps its weekly goal for the whole period. Those
+  days may be used in any order and the week is not over, so clipping the target
+  to elapsed days would demand three runs by Wednesday from a Habit that only
+  promised three by Sunday.
+
+An unrecorded day therefore lowers a daily Habit's ratio, exactly as a recorded
+miss would. That is a presentation rule, not a storage one, and the two are
+still held apart where it matters: every day carries one of four states —
+`done`, `notDone`, `unrecorded`, `outOfScope` — and the UI must not render
+`unrecorded` and `notDone` identically.
+
+An earlier draft of this section said an unrecorded day "contributes nothing to
+either side of that ratio", which contradicted the clipped target in the same
+paragraph. The rule above replaces it.
 
 Streaks are deliberately absent from v1. A streak is a presentation rule layered
 on this data, and the data supports several. Choosing one before the record exists

@@ -6,7 +6,10 @@ import {
   parseCheckInMutation,
   parseHabitCreateMutation,
   parseHabitPatchMutation,
-  targetForCadence
+  summarizeHabits,
+  targetForCadence,
+  type CheckInRecord,
+  type HabitDefinition
 } from "../../src/modules/evidence/domain/habit";
 import { addDays, localDateKey, startOfLocalDay } from "../../src/shared/kernel/calendar";
 import { AppError } from "../../src/shared/kernel/errors";
@@ -122,4 +125,116 @@ test("a patch that changes cadence to daily also corrects the stale target", () 
 test("a patch carries only the fields it was given", () => {
   assert.deepEqual(parseHabitPatchMutation({ name: "Walk" }), { name: "Walk" });
   assert.deepEqual(parseHabitPatchMutation({}), {});
+});
+
+const periodStart = addDays(today, -3);
+
+function definition(overrides: Partial<HabitDefinition> = {}): HabitDefinition {
+  return {
+    id: "habit-1",
+    name: "Stretch",
+    cadence: "DAILY",
+    targetPerWeek: 7,
+    sortOrder: 0,
+    createdAt: addDays(periodStart, -30),
+    ...overrides
+  };
+}
+
+function record(dayOffset: number, overrides: Partial<CheckInRecord> = {}): CheckInRecord {
+  return {
+    habitId: "habit-1",
+    date: addDays(periodStart, dayOffset),
+    done: true,
+    amount: null,
+    note: null,
+    ...overrides
+  };
+}
+
+test("an unrecorded day and a recorded miss are different states", () => {
+  // Both may read as a miss to a user, but the summary has to keep them apart:
+  // this is the whole reason absence is not stored as failure.
+  const [summary] = summarizeHabits(
+    [definition()],
+    [record(0, { done: false })],
+    periodStart,
+    today
+  );
+  assert.equal(summary.days[0].state, "notDone");
+  assert.equal(summary.days[1].state, "unrecorded");
+});
+
+test("days that have not happened yet are out of scope, not misses", () => {
+  const [summary] = summarizeHabits([definition()], [], periodStart, today);
+  // periodStart is three days ago, so days 0..3 are in scope and 4..6 are not.
+  assert.deepEqual(
+    summary.days.map((day) => day.state),
+    ["unrecorded", "unrecorded", "unrecorded", "unrecorded", "outOfScope", "outOfScope", "outOfScope"]
+  );
+  assert.equal(summary.target, 4);
+});
+
+test("days before the Habit existed never count against it", () => {
+  const [summary] = summarizeHabits(
+    [definition({ createdAt: addDays(periodStart, 2) })],
+    [],
+    periodStart,
+    today
+  );
+  assert.deepEqual(summary.days.slice(0, 2).map((day) => day.state), ["outOfScope", "outOfScope"]);
+  // Only the two elapsed days since creation are countable.
+  assert.equal(summary.target, 2);
+});
+
+test("a daily Habit's target grows with the period", () => {
+  const [summary] = summarizeHabits(
+    [definition()],
+    [record(0), record(1)],
+    periodStart,
+    today
+  );
+  assert.equal(summary.doneCount, 2);
+  assert.equal(summary.target, 4);
+});
+
+test("a times-per-week Habit keeps its weekly goal mid-period", () => {
+  // Clipping to elapsed days would demand three by Wednesday from a Habit that
+  // only promised three by Sunday.
+  const [summary] = summarizeHabits(
+    [definition({ cadence: "TIMES_PER_WEEK", targetPerWeek: 3 })],
+    [record(0)],
+    periodStart,
+    today
+  );
+  assert.equal(summary.target, 3);
+  assert.equal(summary.doneCount, 1);
+});
+
+test("today's own record is surfaced separately", () => {
+  const todayOffset = 3;
+  const [summary] = summarizeHabits(
+    [definition()],
+    [record(todayOffset, { amount: 12, note: "done early" })],
+    periodStart,
+    today
+  );
+  assert.deepEqual(summary.today, { done: true, amount: 12, note: "done early" });
+});
+
+test("a Habit with no record today reports no state for today", () => {
+  const [summary] = summarizeHabits([definition()], [record(0)], periodStart, today);
+  assert.equal(summary.today, null);
+});
+
+test("each Habit only sees its own Check-ins", () => {
+  const summaries = summarizeHabits(
+    [definition(), definition({ id: "habit-2", name: "Walk" })],
+    [record(0), { ...record(1), habitId: "habit-2" }],
+    periodStart,
+    today
+  );
+  assert.equal(summaries[0].doneCount, 1);
+  assert.equal(summaries[1].doneCount, 1);
+  assert.equal(summaries[0].days[1].state, "unrecorded");
 });

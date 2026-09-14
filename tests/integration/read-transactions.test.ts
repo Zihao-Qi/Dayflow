@@ -146,7 +146,8 @@ test("read transaction budgets preserve bootstrap and export after five seconds"
         assert.deepEqual(Object.keys(body).sort(), [
           "today", "todayKey", "earliestDayKey", "dayViewForwardWeeks", "tasks", "paletteTasks",
           "notes", "diary", "materials", "timeBlocks", "activities", "activityCategorySuggestions",
-          "projects", "unfinishedTasks", "stats", "review", "reviewSummary", "workspaceEmpty"
+          "projects", "unfinishedTasks", "stats", "review", "reviewSummary", "habits",
+          "workspaceEmpty"
         ].sort());
         for (const key of [
           "tasks", "paletteTasks", "notes", "materials", "timeBlocks", "activities",

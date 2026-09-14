@@ -11,7 +11,7 @@ import { serializeAppError } from "../../src/lib/http-errors";
 import { isReviewWindowDetail, parseReviewMutation } from "../../src/modules/review/domain/review";
 import {
   saveReview, readSavedReview, readReviewPeriodEvidence, readPastReviewPeriod,
-  readReviewWindow, readReviewHistoryPage
+  readReviewWindow, readReviewHistoryPage, readReviewHabits
 } from "../../src/modules/review/services/reviews";
 import { readReviewWindow as readLegacyReviewWindow } from "../../src/lib/review-history";
 import { listProjectSummaries } from "../../src/server/read-models/project-summaries";
@@ -49,7 +49,7 @@ test("Review services run headlessly on SQLite", async context => {
         ending: "2026-09-04", periodStart: current.start, periodEnd: current.end,
         review: { id: null, periodStart: current.start, periodEnd: current.end,
           narrative: "", nextPeriodIntention: "", persisted: false },
-        reviewSummary: emptySummary, projects: []
+        reviewSummary: emptySummary, projects: [], habits: []
       }));
       assert.equal(isReviewWindowDetail(JSON.parse(JSON.stringify(detail))), true);
       assert.equal(await db.review.count(), 0);
@@ -174,6 +174,99 @@ test("Review services run headlessly on SQLite", async context => {
         assert.deepEqual(fresh.items.map(row => row.id), ["newer", "tie-c", "tie-b", "tie-a"]);
         assert.equal(fresh.totalCount, 4);
       } finally { await writer.$disconnect(); }
+    });
+  });
+});
+
+test("Review Habit consistency", async context => {
+  await withDatabase(context, async db => {
+    const reset = async () => {
+      await db.habitCheckIn.deleteMany();
+      await db.habit.deleteMany();
+    };
+    const createdBeforeEverything = new Date("2026-08-01T05:00:00.000Z");
+    const day = (iso: string) => new Date(`${iso}T05:00:00.000Z`);
+
+    await context.test("a finished period has every one of its days in scope", async () => {
+      await reset();
+      const habit = await db.habit.create({
+        data: { name: "Stretch", createdAt: createdBeforeEverything }
+      });
+      await db.habitCheckIn.createMany({
+        data: [
+          { habitId: habit.id, date: day("2026-08-19"), done: true },
+          { habitId: habit.id, date: day("2026-08-20"), done: false }
+        ]
+      });
+
+      const [summary] = await db.$transaction(tx => readReviewHabits(tx, past, now));
+      assert.equal(summary.target, 7, "a period that has ended is fully elapsed");
+      assert.equal(summary.doneCount, 1);
+      assert.equal(
+        summary.days.filter(entry => entry.state === "outOfScope").length,
+        0,
+        "no day of a finished period can be out of scope"
+      );
+      assert.equal(summary.days.filter(entry => entry.state === "notDone").length, 1);
+      assert.equal(summary.days.filter(entry => entry.state === "unrecorded").length, 5);
+    });
+
+    await context.test("the current period stops at today", async () => {
+      await reset();
+      await db.habit.create({ data: { name: "Stretch", createdAt: createdBeforeEverything } });
+      // Mid-period: 2026-08-29 through 2026-09-01 have happened, the rest have not.
+      const midPeriod = new Date("2026-09-01T12:00:00-05:00");
+      const [summary] = await db.$transaction(tx => readReviewHabits(tx, current, midPeriod));
+      assert.equal(summary.target, 4);
+      assert.equal(
+        summary.days.filter(entry => entry.state === "outOfScope").length,
+        3,
+        "days that have not happened cannot have been missed"
+      );
+    });
+
+    await context.test("a Habit archived after the period still appears in it", async () => {
+      await reset();
+      const habit = await db.habit.create({
+        data: {
+          name: "Retired later",
+          status: "ARCHIVED",
+          archivedAt: day("2026-09-01"),
+          createdAt: createdBeforeEverything
+        }
+      });
+      await db.habitCheckIn.create({
+        data: { habitId: habit.id, date: day("2026-08-19"), done: true }
+      });
+
+      const summaries = await db.$transaction(tx => readReviewHabits(tx, past, now));
+      assert.deepEqual(summaries.map(entry => entry.name), ["Retired later"]);
+      assert.equal(summaries[0].doneCount, 1);
+    });
+
+    await context.test("a Habit archived before the period does not appear in it", async () => {
+      // The control for the case above: reading the active list alone would
+      // fail both, and returning every Habit would pass both.
+      await reset();
+      await db.habit.create({
+        data: {
+          name: "Retired earlier",
+          status: "ARCHIVED",
+          archivedAt: day("2026-08-10"),
+          createdAt: createdBeforeEverything
+        }
+      });
+
+      const summaries = await db.$transaction(tx => readReviewHabits(tx, past, now));
+      assert.deepEqual(summaries, []);
+    });
+
+    await context.test("a Habit created after the period never appears in it", async () => {
+      await reset();
+      await db.habit.create({
+        data: { name: "Created later", createdAt: day("2026-09-02") }
+      });
+      assert.deepEqual(await db.$transaction(tx => readReviewHabits(tx, past, now)), []);
     });
   });
 });

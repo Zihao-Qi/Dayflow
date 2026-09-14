@@ -47,6 +47,24 @@ export function readActiveHabits(tx: Prisma.TransactionClient) {
   });
 }
 
+/**
+ * Habits as they stood during a past period: still active, or archived only
+ * after it began. Reading the active list instead would quietly erase a Habit
+ * from every historical review the moment it was retired.
+ */
+export function readHabitsActiveDuring(
+  tx: Prisma.TransactionClient,
+  period: { start: Date; end: Date }
+) {
+  return tx.habit.findMany({
+    where: {
+      createdAt: { lt: period.end },
+      OR: [{ status: "ACTIVE" }, { archivedAt: { gte: period.start } }]
+    },
+    orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }]
+  });
+}
+
 export function updateHabit(
   tx: Prisma.TransactionClient,
   id: string,

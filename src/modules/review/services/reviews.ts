@@ -5,6 +5,9 @@ import { readReviewNotes } from "@/modules/journal/services/notes";
 import { readReviewMaterials } from "@/modules/journal/services/materials";
 import { readReviewActivities, readProjectActivitySummaries } from "@/modules/evidence/services/activities";
 import { readReviewDiaries } from "@/modules/evidence/services/diary";
+import { readCheckIns, readHabitsActiveDuring } from "@/modules/evidence/services/habits";
+import { summarizeHabits } from "@/modules/evidence/domain/habit";
+import { addDays, startOfLocalDay } from "@/shared/kernel/calendar";
 import { readReviewCompletedTasks, readProjectTasks } from "@/modules/planning/services/tasks";
 import { readProjects } from "@/modules/projects/services/projects";
 import { summarizeProjects } from "@/modules/projects/domain/project";
@@ -72,14 +75,40 @@ export async function readReviewPeriodEvidence(
   return { activities, diaries, completedTasks, notes, materials, projects, summary };
 }
 
+/**
+ * Habit consistency for one Review Period. Kept separate from
+ * `readReviewPeriodEvidence` so that composer's shape, which several callers
+ * and test doubles depend on, does not change.
+ */
+export async function readReviewHabits(
+  database: Prisma.TransactionClient,
+  period: ReviewPeriodInterval,
+  now: Date
+) {
+  const [habits, checkIns] = await Promise.all([
+    readHabitsActiveDuring(database, period),
+    readCheckIns(database, period)
+  ]);
+  // A finished period has every day in scope. The current one stops at today,
+  // because a day that has not happened cannot have been missed.
+  const lastInScope =
+    now.getTime() < period.end.getTime() ? now : addDays(period.end, -1);
+  return summarizeHabits(
+    habits,
+    checkIns,
+    period.start,
+    startOfLocalDay(lastInScope)
+  );
+}
+
 export async function readReviewWindow(database: Prisma.TransactionClient, searchParams: URLSearchParams, now: Date, calendar: Calendar) {
   if (searchParams.has("current")) return readCurrentReviewWindow(database, searchParams, now, calendar);
-  return readResolvedReviewWindow(database, parseReviewWindowRequest(searchParams, now, calendar));
+  return readResolvedReviewWindow(database, parseReviewWindowRequest(searchParams, now, calendar), now);
 }
 
 export async function readCurrentReviewWindow(database: Prisma.TransactionClient, searchParams: URLSearchParams, now: Date, calendar: Calendar) {
   const window = parseCurrentReviewWindowRequest(searchParams, now, calendar);
-  const detail = await readResolvedReviewWindow(database, window);
+  const detail = await readResolvedReviewWindow(database, window, now);
   return {
     ...detail,
     review: detail.review ?? {
@@ -89,11 +118,16 @@ export async function readCurrentReviewWindow(database: Prisma.TransactionClient
   };
 }
 
-export async function readResolvedReviewWindow(database: Prisma.TransactionClient, window: ReviewWindowRequest) {
+export async function readResolvedReviewWindow(
+  database: Prisma.TransactionClient,
+  window: ReviewWindowRequest,
+  now: Date
+) {
   const period = { start: window.start, end: window.end };
-  const [{ summary, projects }, review] = await Promise.all([
+  const [{ summary, projects }, review, habits] = await Promise.all([
     readReviewPeriodEvidence(database, period),
-    readSavedReview(database, period)
+    readSavedReview(database, period),
+    readReviewHabits(database, period, now)
   ]);
 
   return {
@@ -102,7 +136,8 @@ export async function readResolvedReviewWindow(database: Prisma.TransactionClien
     periodEnd: period.end,
     review: review ? { ...review, persisted: true } : null,
     reviewSummary: summary,
-    projects
+    projects,
+    habits
   };
 }
 
@@ -166,13 +201,17 @@ export async function readPastReviewPeriod(
   }
 
   const period = { start: review.periodStart, end: review.periodEnd };
-  const { summary, projects } = await readReviewPeriodEvidence(database, period);
+  const [{ summary, projects }, habits] = await Promise.all([
+    readReviewPeriodEvidence(database, period),
+    readReviewHabits(database, period, now)
+  ]);
   const current = calendar.reviewPeriodEnding(calendar.dayOf(now));
 
   return {
     review: { ...review, persisted: true },
     reviewSummary: summary,
     projects,
+    habits,
     isCurrentPeriod:
       review.periodStart.getTime() === current.start.getTime() &&
       review.periodEnd.getTime() === current.end.getTime()

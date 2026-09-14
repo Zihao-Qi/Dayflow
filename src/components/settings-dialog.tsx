@@ -74,6 +74,20 @@ export function SettingsDialog({
     });
 
     function onKeyDown(event: globalThis.KeyboardEvent) {
+      // The shell binds Cmd/Ctrl+K and Cmd/Ctrl+Shift+F on window in the
+      // bubble phase, so while this dialog was open they still fired and
+      // mounted another surface underneath it, taking focus with them. This
+      // listener runs in the capture phase specifically so it can stop them
+      // before that handler sees the event.
+      if (event.metaKey || event.ctrlKey) {
+        const key = event.key.toLowerCase();
+        if (key === "k" || (event.shiftKey && key === "f")) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
+      }
+
       if (event.key === "Escape") {
         event.preventDefault();
         onClose();
@@ -96,21 +110,27 @@ export function SettingsDialog({
 
       const first = focusable[0];
       const last = focusable.at(-1) ?? first;
-      if (!dialog.contains(document.activeElement)) {
+      const active = document.activeElement;
+      // `active === dialog` matters: an element contains itself, so a plain
+      // contains() check treats the container as "inside" and then matches
+      // neither first nor last. Nothing prevented default and Shift+Tab walked
+      // backwards out of the dialog. The container holds focus whenever someone
+      // clicks the padding or an empty tab body.
+      if (active === dialog || !dialog.contains(active)) {
         event.preventDefault();
         (event.shiftKey ? last : first).focus();
-      } else if (event.shiftKey && document.activeElement === first) {
+      } else if (event.shiftKey && active === first) {
         event.preventDefault();
         last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
+      } else if (!event.shiftKey && active === last) {
         event.preventDefault();
         first.focus();
       }
     }
 
-    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keydown", onKeyDown, true);
     return () => {
-      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keydown", onKeyDown, true);
       window.cancelAnimationFrame(frame);
       // Send focus back where it came from, so closing Settings from the
       // keyboard does not drop the reader at the top of the document.

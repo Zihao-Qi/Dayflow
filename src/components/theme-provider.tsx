@@ -56,6 +56,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<ThemeMode>("light");
   const [accent, setAccentState] = useState<AccentColor>("neutral");
   const [mounted, setMounted] = useState(false);
+  // Tracked in state, not read at render time. The system listener below used
+  // to repaint the document without telling React, so effectiveTheme handed to
+  // consumers stayed on the old value until some unrelated render refreshed it.
+  const [systemDark, setSystemDark] = useState(false);
 
   useEffect(() => {
     try {
@@ -63,6 +67,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       const storedAccent = parseAccentColor(localStorage.getItem("dayflow_accent"), "neutral");
       setThemeState(storedTheme);
       setAccentState(storedAccent);
+      setSystemDark(getSystemDark());
       applyThemeToDocument(storedTheme, storedAccent);
     } catch {
       // localStorage may be restricted or unavailable
@@ -94,13 +99,14 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     if (!mounted || theme !== "system") return;
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     const listener = () => {
+      setSystemDark(media.matches);
       applyThemeToDocument("system", accent);
     };
     media.addEventListener("change", listener);
     return () => media.removeEventListener("change", listener);
   }, [mounted, theme, accent]);
 
-  const effectiveTheme = resolveEffectiveTheme(theme, getSystemDark());
+  const effectiveTheme = resolveEffectiveTheme(theme, systemDark);
 
   return (
     <ThemeContext.Provider

@@ -178,12 +178,14 @@ rules target directories that do not exist until the migration creates them.
    excluded. Added in PR #76 (`3b0e921`) with a 1-row allowlist
    (`src/shared/kernel/calendar.ts:19`).
 10. **Transaction helper callers.** A call to `withTransaction` or
-    `runInTransaction` is permitted only under `src/app/api` and
-    `src/server`. Rule 6 confines the transaction root to one module; this
-    rule keeps its entry points in the layers that may own a transaction, so
-    a service or UI file cannot reach the database through the helper it is
-    forbidden to open directly. Recognition is syntactic, by callee name,
-    without type resolution.
+    `runInTransaction`, and any import of `src/server/prisma/client`, are
+    permitted only under `src/app/api` and `src/server`. Rule 6 confines the
+    transaction root to one module; this rule keeps its entry points in the
+    layers that may own a transaction, so a service or UI file cannot reach
+    the database through the helper it is forbidden to open directly. Calls
+    are recognised syntactically by callee name, without type resolution, so
+    an alias would defeat that half alone; the import check is alias-proof and
+    covers `src/lib`, which may import `src/server` freely.
 
 ### Initial baseline
 

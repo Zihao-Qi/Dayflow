@@ -35,15 +35,24 @@ const globalForTransactions = globalThis as typeof globalThis & {
 // Request-local, so nesting is detected by where the call actually happens
 // rather than by whether the queue is busy. A global "locked means nested"
 // flag would misread an unrelated concurrent transaction as a nested one.
-const openTransaction = new AsyncLocalStorage<true>();
+//
+// The marker is cleared when the transaction settles. A promise spawned
+// inside the callback and left unawaited keeps this store, so without the
+// flag it would be refused as nested long after its transaction committed.
+const openTransaction = new AsyncLocalStorage<{ open: boolean }>();
 
 /**
- * How long a caller may wait for its turn. The queue is process-local and a
- * transaction's own budget is separate: this bounds admission only. An
- * expired waiter never runs the operation, so a caller that has given up
- * cannot execute against the database later.
+ * How long a caller may wait for its turn. This bounds admission only; a
+ * transaction's own budget is separate. An expired waiter never runs the
+ * operation, so a caller that has given up cannot execute later.
+ *
+ * It must exceed the longest transaction in the tree, or the queue would
+ * reject healthy callers while the transaction ahead of them is still running
+ * well inside its own budget. Four roots carry a 60s budget today: bootstrap,
+ * agent export, and the three Review reads. A caller whose own budget is
+ * longer raises its admission deadline to match.
  */
-const ADMISSION_TIMEOUT_MS = 30_000;
+const ADMISSION_TIMEOUT_MS = 120_000;
 
 type TransactionOptions = {
   timeout?: number;
@@ -53,7 +62,7 @@ type TransactionOptions = {
 };
 
 export function isInsideTransaction() {
-  return openTransaction.getStore() === true;
+  return openTransaction.getStore()?.open === true;
 }
 
 export async function withTransaction<T>(
@@ -69,19 +78,27 @@ export async function withTransaction<T>(
       "A transaction is already open on this call path; pass the existing transaction client instead of opening another root."
     );
   }
-  const { admissionTimeoutMs = ADMISSION_TIMEOUT_MS, ...passThrough } = options ?? {};
+  const { admissionTimeoutMs, ...passThrough } = options ?? {};
   // Preserve the previous call shape exactly when no options were given.
   const prismaOptions = Object.keys(passThrough).length > 0 ? passThrough : undefined;
+  const deadline =
+    admissionTimeoutMs ?? Math.max(ADMISSION_TIMEOUT_MS, passThrough.timeout ?? 0);
 
-  const release = await acquire(admissionTimeoutMs);
+  const release = await acquire(deadline);
   try {
     // Read `$transaction` at call time. Test harnesses replace the method on
     // the client after construction, so a wrapper bound at construction would
     // be discarded exactly where transactions are exercised.
-    return await database.$transaction(
-      (transaction) => openTransaction.run(true, () => operation(transaction)),
-      prismaOptions
-    );
+    return await database.$transaction((transaction) => {
+      const marker = { open: true };
+      return openTransaction.run(marker, async () => {
+        try {
+          return await operation(transaction);
+        } finally {
+          marker.open = false;
+        }
+      });
+    }, prismaOptions);
   } finally {
     release();
   }

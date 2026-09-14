@@ -89,6 +89,19 @@ test("the open-transaction marker is request-local, not a global busy flag", asy
   assert.equal(isInsideTransaction(), false);
 });
 
+test("a promise left running past its transaction is not mistaken for a nested root", async () => {
+  // The async context survives an unawaited promise, so the marker has to be
+  // cleared when the transaction settles; otherwise this later call would be
+  // refused as nested long after its transaction committed.
+  const { client } = countingClient();
+  let detached!: Promise<string>;
+  await withTransaction(client, async () => {
+    detached = delay(30).then(() => withTransaction(client, async () => "later"));
+    return "outer";
+  });
+  assert.equal(await detached, "later");
+});
+
 test("results and errors pass through unchanged", async () => {
   const { client } = countingClient();
   assert.deepEqual(await withTransaction(client, async () => ({ ok: 1 })), { ok: 1 });

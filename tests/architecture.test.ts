@@ -163,6 +163,17 @@ function scanArchitecture(
         add(record, 1, reference.node, `module ${sourceModule} cannot import server ${reference.specifier}`);
       }
 
+      // The call check below matches the callee's name, which an alias defeats.
+      // Importing the module at all is alias-proof, and `src/lib/**` can reach
+      // `src/server/**` freely, so the name check alone would not cover it.
+      if (
+        record.relativePath.startsWith("src/") &&
+        target === TRANSACTION_MODULE_PATH &&
+        !isAllowedTransactionCaller(record.relativePath)
+      ) {
+        add(record, 10, reference.node, `transaction module imported by ${record.relativePath}`);
+      }
+
       // Legacy app -> lib/components imports remain valid during migration. Imports
       // into the new modules namespace must use only its domain or ui surface.
       if (record.relativePath.startsWith("src/app/") && targetModule) {
@@ -815,6 +826,7 @@ function callUsesGlobalClient(
 // One file opens transactions, so the queue in it cannot be bypassed. Widening
 // this is how the P1008 starvation returns; add a caller to Rule 10 instead.
 const TRANSACTION_MODULE = "src/server/prisma/client.ts";
+const TRANSACTION_MODULE_PATH = "src/server/prisma/client";
 
 function isAllowedTransactionRoot(file: string) {
   return file === TRANSACTION_MODULE;
@@ -1454,12 +1466,19 @@ test("Rule 6: transaction roots are confined to the transaction module", () => {
 test("Rule 10: the transaction helpers are called only from routes and server modules", () => {
   withFixture(
     {
+      "src/server/prisma/client.ts": "export const withTransaction = (..._args: unknown[]) => null;\n",
       "src/app/api/pass/route.ts": "export const pass = () => runInTransaction(() => null);\n",
       "src/server/pass.ts": "export const pass = (database: any) => withTransaction(database, () => null);\n",
       "src/modules/planning/services/fail.ts": "export const fail = () => runInTransaction(() => null);\n",
-      "src/shell/fail.ts": "export const fail = (database: any) => withTransaction(database, () => null);\n"
+      "src/shell/fail.ts": "export const fail = (database: any) => withTransaction(database, () => null);\n",
+      // An alias defeats the name check, so the import is what catches this.
+      "src/lib/aliased.ts": [
+        'import { withTransaction as tx } from "@/server/prisma/client";',
+        "export const fail = (database: any) => tx(database, () => null);"
+      ].join("\n")
     },
     (root) => assert.deepEqual(locations(root, 10), [
+      "src/lib/aliased.ts:1",
       "src/modules/planning/services/fail.ts:1",
       "src/shell/fail.ts:1"
     ])

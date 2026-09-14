@@ -42,10 +42,12 @@ work that crosses modules.
   uses the global client as a call receiver. Services never import the global
   client module, a one-hop re-export of its binding, or `@prisma/client` as a
   value, and never call `$transaction`. `import type` from `@prisma/client` is
-  allowed so the transaction parameter can be named. Only route handlers,
-  workflows, read models and the idempotency helper open transactions. The
-  focus-start serializer stays in front of the idempotency helper; it handles
-  SQLite writer contention, not transaction composition.
+  allowed so the transaction parameter can be named. `src/server/prisma/client.ts`
+  is the only transaction root; route handlers, workflows, read models and the
+  idempotency helper reach it through `withTransaction`. That module holds a
+  process-wide queue, so it handles SQLite writer contention, not transaction
+  composition. It replaces the per-route focus-start serializer, which ordered
+  one route while every other transaction still contended for the same writer.
 - One exported function in `evidence` is the only creator of
   `origin: FOCUS` Activities. Focus completion and enrichment call it with
   the same transaction. `ActivityEntry.focusSessionId` stays unique. The

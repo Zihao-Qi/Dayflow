@@ -4,6 +4,7 @@ import { journalAppError, journalErrors, type JournalCursorKind, type JournalHis
 import { readNoteHistory, translateNotePersistenceError } from "@/modules/journal/services/notes";
 import { readMaterialHistory, translateMaterialPersistenceError } from "@/modules/journal/services/materials";
 import { parseJournalHistoryCriteria } from "@/modules/journal/services/history";
+import { withTransaction } from "@/server/prisma/client";
 import { AppError, type ErrorSpec } from "@/shared/kernel/errors";
 
 export { createNote, readDayNotes, readProjectNotes, readReviewNotes } from "@/modules/journal/services/notes";
@@ -18,7 +19,7 @@ export function readJournalHistory(database: PrismaClient, kind: "material", sea
 export async function readJournalHistory(database: PrismaClient, kind: JournalCursorKind, searchParams: URLSearchParams) {
   // Validate before opening storage, preserving errors even when storage is unavailable.
   const criteria = parseJournalHistoryCriteria(searchParams, kind);
-  return database.$transaction(async tx => kind === "note"
+  return withTransaction(database, async tx => kind === "note"
     ? readNoteHistory(tx, criteria)
     : readMaterialHistory(tx, criteria));
 }

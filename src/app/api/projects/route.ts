@@ -1,5 +1,5 @@
 import { clock, calendar } from "@/lib/time";
-import { getPrisma } from "@/lib/prisma";
+import { runInTransaction } from "@/server/prisma/client";
 import { parseMutationId, runOnce } from "@/server/prisma/run-once";
 import { parseProjectCreateMutation, readProjectMutationBody } from "@/modules/projects/domain/project";
 import { createProject, getProjectDetail, listProjectSummaries, projectMutationErrorResponse } from "@/server/projects";
@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 export async function GET() {
   const now = clock.now();
-  return NextResponse.json(await getPrisma().$transaction(tx => listProjectSummaries(tx, calendar.reviewPeriodEnding(calendar.dayOf(now)))));
+  return NextResponse.json(await runInTransaction(tx => listProjectSummaries(tx, calendar.reviewPeriodEnding(calendar.dayOf(now)))));
 }
 
 export async function POST(request: NextRequest) {

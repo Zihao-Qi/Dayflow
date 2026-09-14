@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import ts from "typescript";
 
-type Rule = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+type Rule = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
 type Violation = {
   rule: Rule;
   file: string;
@@ -273,6 +273,14 @@ function scanArchitecture(
         !isAllowedTransactionRoot(record.relativePath)
       ) {
         add(record, 6, node, "transaction root is not allowlisted");
+      }
+      if (
+        record.relativePath.startsWith("src/") &&
+        ts.isCallExpression(node) &&
+        isTransactionHelperCall(node) &&
+        !isAllowedTransactionCaller(record.relativePath)
+      ) {
+        add(record, 10, node, "transaction helper called outside a route or server module");
       }
       if (record.relativePath.startsWith("src/") && ts.isCallExpression(node)) {
         const activityMethod = activityWriteMethod(node);
@@ -804,12 +812,22 @@ function callUsesGlobalClient(
   return false;
 }
 
+// One file opens transactions, so the queue in it cannot be bypassed. Widening
+// this is how the P1008 starvation returns; add a caller to Rule 10 instead.
+const TRANSACTION_MODULE = "src/server/prisma/client.ts";
+
 function isAllowedTransactionRoot(file: string) {
-  return (
-    file.startsWith("src/app/api/") ||
-    file.startsWith("src/server/") ||
-    file === "src/lib/idempotent-mutations.ts"
-  );
+  return file === TRANSACTION_MODULE;
+}
+
+function isAllowedTransactionCaller(file: string) {
+  return file.startsWith("src/app/api/") || file.startsWith("src/server/");
+}
+
+function isTransactionHelperCall(call: ts.CallExpression) {
+  const callee = unwrapExpression(call.expression);
+  const name = ts.isIdentifier(callee) ? callee.text : callMethod(call);
+  return name === "withTransaction" || name === "runInTransaction";
 }
 
 function activityWriteMethod(call: ts.CallExpression): string | null {
@@ -1417,13 +1435,34 @@ test("Rule 5: a shadowing inner transaction parameter is checked once in its own
   );
 });
 
-test("Rule 6: transaction roots are confined to their allowlisted directories", () => {
+test("Rule 6: transaction roots are confined to the transaction module", () => {
   withFixture(
     {
-      "src/app/api/pass/route.ts": "export async function pass(database: any) { return database.$transaction(() => null); }\n",
+      "src/server/prisma/client.ts": "export async function pass(database: any) { return database.$transaction(() => null); }\n",
+      // A route was an allowed root until the queue moved into the module; it
+      // is a violation now, because a root outside the module skips the queue.
+      "src/app/api/fail/route.ts": "export async function fail(database: any) { return database.$transaction(() => null); }\n",
       "src/lib/fail.ts": "export async function fail(database: any) { return database.$transaction(() => null); }\n"
     },
-    (root) => assert.deepEqual(locations(root, 6), ["src/lib/fail.ts:1"])
+    (root) => assert.deepEqual(locations(root, 6), [
+      "src/app/api/fail/route.ts:1",
+      "src/lib/fail.ts:1"
+    ])
+  );
+});
+
+test("Rule 10: the transaction helpers are called only from routes and server modules", () => {
+  withFixture(
+    {
+      "src/app/api/pass/route.ts": "export const pass = () => runInTransaction(() => null);\n",
+      "src/server/pass.ts": "export const pass = (database: any) => withTransaction(database, () => null);\n",
+      "src/modules/planning/services/fail.ts": "export const fail = () => runInTransaction(() => null);\n",
+      "src/shell/fail.ts": "export const fail = (database: any) => withTransaction(database, () => null);\n"
+    },
+    (root) => assert.deepEqual(locations(root, 10), [
+      "src/modules/planning/services/fail.ts:1",
+      "src/shell/fail.ts:1"
+    ])
   );
 });
 

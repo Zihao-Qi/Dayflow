@@ -1,4 +1,4 @@
-import { getPrisma } from "@/lib/prisma";
+import { runInTransaction } from "@/server/prisma/client";
 import {
   parsePhasePatchMutation,
   parseProjectPathId,
@@ -15,7 +15,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     const id = parseProjectPathId(rawId, "id", "Phase");
     const body = await readProjectMutationBody(request);
     const data = parsePhasePatchMutation(body);
-    const phase = await getPrisma().$transaction(tx => updatePhase(tx, id, data));
+    const phase = await runInTransaction(tx => updatePhase(tx, id, data));
     return NextResponse.json(phase);
   } catch (error) {
     return projectMutationErrorResponse(error, "phase-save");

@@ -7,7 +7,7 @@ import {
 import { csvExportResponseHeaders } from "@/lib/csv-export-contract";
 import { csvExportErrors } from "@/lib/csv-export-errors";
 import { appErrorResponse } from "@/lib/http-errors";
-import { getPrisma } from "@/lib/prisma";
+import { runInTransaction } from "@/server/prisma/client";
 import { AppError } from "@/shared/kernel/errors";
 
 export const runtime = "nodejs";
@@ -19,7 +19,7 @@ export async function GET(_request: Request, { params }: Params) {
   const now = clock.now();
   try {
     const kind = parseCsvExportKind((await params).kind);
-    const rows = await getPrisma().$transaction(tx => readCsvExport(kind, tx));
+    const rows = await runInTransaction(tx => readCsvExport(kind, tx));
     const result = createCsvExport(rows, now);
     return new Response(result.body, {
       status: 200,

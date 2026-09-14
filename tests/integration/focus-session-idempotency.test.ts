@@ -283,42 +283,48 @@ test("Focus Session start idempotency", async (context) => {
   );
 
   await context.test(
-    "a queued Focus start excludes serializer waiting from persisted timer time",
+    "a queued Focus start excludes queue waiting from persisted timer time",
     async regression => {
       await prisma.mutationReceipt.deleteMany();
       await prisma.focusSession.deleteMany();
       const { clock } = await import("../../src/lib/time");
+      // The wait spans midnight, so a start time sampled before admission would
+      // persist the session on the wrong day.
       const requestTime = new Date("2026-09-04T23:59:00-05:00");
       const insertionTime = new Date("2026-09-05T00:04:00-05:00");
       let currentTime = requestTime;
       regression.mock.method(clock, "now", () => currentTime);
+      // Starts were once serialised by this route alone. The transaction module
+      // now queues every root, so the held queue is the shared one.
       const queueState = globalThis as typeof globalThis & {
-        dayflowFocusSessionStartQueue?: Promise<void>;
+        dayflowTransactionQueue?: Promise<void>;
       };
-      await queueState.dayflowFocusSessionStartQueue;
-      const previousQueue = Object.getOwnPropertyDescriptor(queueState, "dayflowFocusSessionStartQueue");
+      await queueState.dayflowTransactionQueue;
+      const previousQueue = Object.getOwnPropertyDescriptor(queueState, "dayflowTransactionQueue");
       let releaseQueue!: () => void;
-      let observeSerializerEntry!: () => void;
+      let observeQueueEntry!: () => void;
       const heldQueue = new Promise<void>(resolve => { releaseQueue = resolve; });
-      const serializerEntered = new Promise<void>(resolve => { observeSerializerEntry = resolve; });
+      const queueEntered = new Promise<void>(resolve => { observeQueueEntry = resolve; });
       let queuedTail = heldQueue;
-      // The serializer publishes its new tail only after attaching work to the held queue.
-      Object.defineProperty(queueState, "dayflowFocusSessionStartQueue", {
+      // The queue publishes its new tail only after attaching work to the held one.
+      Object.defineProperty(queueState, "dayflowTransactionQueue", {
         configurable: true,
         get: () => queuedTail,
         set: (tail: Promise<void>) => {
           queuedTail = tail;
-          observeSerializerEntry();
+          observeQueueEntry();
         }
       });
       let pending: ReturnType<typeof POST> | undefined;
       try {
         pending = POST(focusStartRequest("queued-focus-start", { kind: "FOCUS", plannedMinutes: 25 }));
         await Promise.race([
-          serializerEntered,
-          pending.then(() => assert.fail("POST finished before entering the held serializer"))
+          queueEntered,
+          pending.then(() => assert.fail("POST finished before entering the held queue"))
         ]);
         assert.notEqual(queuedTail, heldQueue);
+        // Reads outside a transaction do not queue, so this stays observable
+        // while the start is held.
         assert.equal(await prisma.focusSession.count(), 0);
         currentTime = insertionTime;
         releaseQueue();
@@ -334,8 +340,8 @@ test("Focus Session start idempotency", async (context) => {
           await pending;
           await queuedTail;
         } finally {
-          if (previousQueue) Object.defineProperty(queueState, "dayflowFocusSessionStartQueue", previousQueue);
-          else delete queueState.dayflowFocusSessionStartQueue;
+          if (previousQueue) Object.defineProperty(queueState, "dayflowTransactionQueue", previousQueue);
+          else delete queueState.dayflowTransactionQueue;
         }
       }
     }

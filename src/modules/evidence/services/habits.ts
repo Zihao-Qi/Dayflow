@@ -1,9 +1,33 @@
 import type { Prisma } from "@prisma/client";
+import { AppError } from "@/shared/kernel/errors";
+import { evidenceErrors } from "../domain/activity";
 import type {
   CheckInMutation,
   HabitCreateMutation,
   HabitPatchMutation
 } from "../domain/habit";
+
+export type HabitMutationAction = "load" | "save" | "check-in";
+
+/**
+ * Recognised by shape rather than by importing Prisma as a value, which
+ * services may not do. P2025 is "record to update not found", which for these
+ * routes means the Habit is gone.
+ */
+export function translateHabitPersistenceError(error: unknown): unknown {
+  if (
+    error instanceof Error &&
+    error.name === "PrismaClientKnownRequestError" &&
+    "clientVersion" in error &&
+    typeof error.clientVersion === "string" &&
+    "code" in error &&
+    error.code === "P2025"
+  ) {
+    return new AppError(evidenceErrors.habitNotFound, error);
+  }
+  // P2002 must reach runOnce, which replays the original response.
+  return error;
+}
 
 export function createHabit(
   tx: Prisma.TransactionClient,

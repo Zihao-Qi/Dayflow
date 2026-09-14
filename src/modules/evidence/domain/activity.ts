@@ -419,6 +419,27 @@ export const evidenceErrors = {
     message: "Habit not found.",
     code: "HABIT_NOT_FOUND"
   },
+  habitIdentifierIsInvalid: {
+    status: 400,
+    message: "Habit identifier is invalid.",
+    code: "VALIDATION_ERROR",
+    field: "id"
+  },
+  habitsCouldNotBeLoaded: {
+    status: 500,
+    message: "Habits could not be loaded.",
+    code: "INTERNAL_ERROR"
+  },
+  habitCouldNotBeSaved: {
+    status: 500,
+    message: "Habit could not be saved.",
+    code: "INTERNAL_ERROR"
+  },
+  checkInCouldNotBeSaved: {
+    status: 500,
+    message: "Check-in could not be saved.",
+    code: "INTERNAL_ERROR"
+  },
   habitNameIsRequired: {
     status: 400,
     message: "Give the habit a name.",

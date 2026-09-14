@@ -102,7 +102,7 @@ export function MiniFocusRing({
     <div
       className="mini-focus-ring"
       style={{
-        background: `conic-gradient(var(--sage) ${progress}%, #e2e0d5 ${progress}% 100%)`
+        background: `conic-gradient(var(--ink) ${progress}%, var(--line) ${progress}% 100%)`
       }}
     >
       <span>{formatFocusClock(focusRemainingSeconds(session, now))}</span>

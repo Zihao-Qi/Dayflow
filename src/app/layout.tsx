@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import { FocusSessionProvider } from "@/components/focus-session-provider";
 import { LayoutModeScript } from "@/components/layout-mode-script";
+import { ThemeScript } from "@/components/theme-script";
+import { ThemeProvider } from "@/components/theme-provider";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -36,7 +38,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#f8f6f0"
+  themeColor: "#fbfbfc"
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
@@ -49,9 +51,12 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     <html lang="en" suppressHydrationWarning>
       <head>
         <LayoutModeScript />
+        <ThemeScript />
       </head>
       <body>
-        <FocusSessionProvider>{children}</FocusSessionProvider>
+        <ThemeProvider>
+          <FocusSessionProvider>{children}</FocusSessionProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

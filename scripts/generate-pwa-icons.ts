@@ -6,9 +6,9 @@ const repositoryRoot = process.cwd();
 const outputDirectory = join(repositoryRoot, "public", "icons");
 
 const colors = {
-  canvas: "#f8f6f0",
-  ink: "#25231f",
-  paper: "#fffdf8"
+  canvas: "#fbfbfc",
+  ink: "#1a1d24",
+  paper: "#ffffff"
 } as const;
 
 function iconSvg(maskable: boolean) {

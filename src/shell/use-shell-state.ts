@@ -106,6 +106,7 @@ export function useShellState() {
   const [dismissedUnfinished, setDismissedUnfinished] = useState<string[]>([]);
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [dataManagementOpen, setDataManagementOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [firstRunSeen, setFirstRunSeen] = useState<boolean | null>(null);
   const [appAnnouncement, setAppAnnouncement] = useState("");
   const [appError, setAppError] = useState("");
@@ -168,6 +169,8 @@ export function useShellState() {
     setMobileMoreOpen,
     dataManagementOpen,
     setDataManagementOpen,
+    settingsOpen,
+    setSettingsOpen,
     firstRunSeen,
     setFirstRunSeen,
     appAnnouncement,

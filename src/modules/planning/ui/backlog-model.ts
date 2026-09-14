@@ -210,7 +210,7 @@ export function daysUntilTaskDeadline(task: Task, today: string) {
 }
 
 export function matrixProjectColor(projectId: string | null) {
-  const palette = ["#4f76a8", "#96667c", "#8a6a3c", "#777066"];
+  const palette = ["#4f6ef7", "#7c5cf6", "#e67e43", "#5a6072"];
   if (!projectId) return palette[3];
   let hash = 0;
   for (const character of projectId) {

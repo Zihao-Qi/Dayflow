@@ -21,6 +21,19 @@ import {
 } from "@/lib/theme";
 import { useTheme } from "./theme-provider";
 
+const focusableSelector = [
+  "button:not([disabled])",
+  "a[href]",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  "[tabindex]:not([tabindex='-1'])"
+].join(",");
+
+function canReceiveFocus(element: HTMLElement | null): element is HTMLElement {
+  return Boolean(element?.isConnected && element.getClientRects().length > 0);
+}
+
 type SettingsTab = "appearance" | "shortcuts" | "about";
 
 export function SettingsDialog({
@@ -35,14 +48,74 @@ export function SettingsDialog({
   const dialogRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
+    // Escape alone left this dialog aria-modal in name only: focus stayed on
+    // the sidebar trigger behind the overlay, so Tab walked through obscured
+    // application controls instead of the theme choices, and a global shortcut
+    // could mount another surface underneath and take focus.
+    const opener =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
+    // Same shape as the restore dialog after #127: the frame declines focus
+    // that has already moved inside, and is cancelled on close, so a deferred
+    // callback cannot pull focus back out of the reader's hands.
+    const frame = window.requestAnimationFrame(() => {
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+      if (
+        document.activeElement instanceof HTMLElement &&
+        dialog.contains(document.activeElement)
+      ) {
+        return;
+      }
+      const first = [...dialog.querySelectorAll<HTMLElement>(focusableSelector)].find(
+        canReceiveFocus
+      );
+      (first ?? dialog).focus();
+    });
+
     function onKeyDown(event: globalThis.KeyboardEvent) {
       if (event.key === "Escape") {
         event.preventDefault();
         onClose();
+        return;
+      }
+
+      if (event.key !== "Tab") return;
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+
+      const focusable = [
+        ...dialog.querySelectorAll<HTMLElement>(focusableSelector)
+      ].filter((element) => element.getClientRects().length > 0);
+
+      if (focusable.length === 0) {
+        event.preventDefault();
+        dialog.focus();
+        return;
+      }
+
+      const first = focusable[0];
+      const last = focusable.at(-1) ?? first;
+      if (!dialog.contains(document.activeElement)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      } else if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
       }
     }
+
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.cancelAnimationFrame(frame);
+      // Send focus back where it came from, so closing Settings from the
+      // keyboard does not drop the reader at the top of the document.
+      if (canReceiveFocus(opener)) opener.focus();
+    };
   }, [onClose]);
 
   function themeIcon(id: ThemeMode) {

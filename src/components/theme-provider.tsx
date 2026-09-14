@@ -39,6 +39,17 @@ export function applyThemeToDocument(theme: ThemeMode, accent: AccentColor) {
   root.dataset.theme = effective;
   root.dataset.themePreference = theme;
   root.dataset.accent = accent;
+
+  // Keep the browser chrome with the canvas. themeColor in layout.tsx is a
+  // single static value, so an installed PWA or a mobile browser kept a light
+  // title bar while the app itself was in dark or warm. Reading --bg back off
+  // the root after the attributes are set means this cannot drift from the
+  // palette the way a second copy of the hex values would.
+  const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+  if (meta) {
+    const canvas = getComputedStyle(root).getPropertyValue("--bg").trim();
+    if (canvas) meta.content = canvas;
+  }
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {

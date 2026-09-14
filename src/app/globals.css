@@ -29,6 +29,7 @@
   --accent: var(--ink);
   --accent-soft: var(--surface-2);
   --accent-foreground: #ffffff;
+  --accent-ink: var(--ink);
   --sidebar-bg: rgba(255, 255, 255, 0.88);
   --sidebar-border: var(--line);
   --sidebar-card: #ffffff;
@@ -94,6 +95,7 @@ html[data-theme="warm"] {
   --accent: var(--ink);
   --accent-soft: var(--surface-2);
   --accent-foreground: #ffffff;
+  --accent-ink: var(--ink);
   color-scheme: light;
 }
 
@@ -102,44 +104,52 @@ html[data-accent="sage"] {
   --accent: #388464;
   --accent-soft: #e7f6f0;
   --accent-foreground: #ffffff;
+  --accent-ink: #347b5d;
 }
 html[data-theme="dark"][data-accent="sage"] {
   --accent: #4ade80;
   --accent-soft: rgba(74, 222, 128, 0.15);
   --accent-foreground: #0b0d13;
+  --accent-ink: #4ade80;
 }
 
 html[data-accent="blue"] {
-  --accent: #4f6ef7;
+  --accent: #4c6aee;
   --accent-soft: #edf2fe;
   --accent-foreground: #ffffff;
+  --accent-ink: #4763de;
 }
 html[data-theme="dark"][data-accent="blue"] {
-  --accent: #6366f1;
+  --accent: #6365f0;
   --accent-soft: rgba(99, 102, 241, 0.18);
   --accent-foreground: #ffffff;
+  --accent-ink: #8a8cf4;
 }
 
 html[data-accent="clay"] {
   --accent: #e67e43;
   --accent-soft: #fef4ee;
-  --accent-foreground: #ffffff;
+  --accent-foreground: #1a1d24;
+  --accent-ink: #a85c31;
 }
 html[data-theme="dark"][data-accent="clay"] {
   --accent: #f97316;
   --accent-soft: rgba(249, 115, 22, 0.18);
-  --accent-foreground: #ffffff;
+  --accent-foreground: #0b0d13;
+  --accent-ink: #f9761b;
 }
 
 html[data-accent="iris"] {
-  --accent: #7c5cf6;
+  --accent: #7b5bf4;
   --accent-soft: #f3f0ff;
   --accent-foreground: #ffffff;
+  --accent-ink: #7255e2;
 }
 html[data-theme="dark"][data-accent="iris"] {
   --accent: #a855f7;
   --accent-soft: rgba(168, 85, 247, 0.18);
-  --accent-foreground: #ffffff;
+  --accent-foreground: #0b0d13;
+  --accent-ink: #bb7af9;
 }
 
 /* Theme-specific surface treatments */
@@ -361,7 +371,7 @@ html:not([data-accent="neutral"]) .focus-presets button.active,
 html:not([data-accent="neutral"]) .project-duration-chips button.active {
   border-color: var(--accent);
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-ink);
 }
 
 html:not([data-accent="neutral"]) .score-dots button.selected {
@@ -381,7 +391,7 @@ html:not([data-accent="neutral"]) .meter i {
 html:not([data-accent="neutral"]) .palette-results > button.highlighted,
 html:not([data-accent="neutral"]) .palette-results > button:hover {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-ink);
 }
 
 html:not([data-accent="neutral"]) .palette-results > button.highlighted svg,
@@ -392,7 +402,7 @@ html:not([data-accent="neutral"]) .palette-results > button:hover svg {
 html:not([data-accent="neutral"]) .focus-row-button.suggested {
   border-color: var(--accent);
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-ink);
 }
 
 html:not([data-accent="neutral"]) .focus-row-button:hover {
@@ -11656,7 +11666,7 @@ html[data-accent="neutral"] .settings-preview-nav-item small {
   border: 1px solid var(--accent);
   border-radius: 999px;
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-ink);
   font-size: var(--text-2xs);
   font-weight: 700;
 }

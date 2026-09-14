@@ -155,7 +155,10 @@ html[data-theme="dark"][data-accent="iris"] {
 /* Theme-specific surface treatments */
 html:not([data-accent="neutral"]) {
   --sidebar-nav-active-bg: var(--accent-soft);
-  --sidebar-nav-active-ink: var(--accent);
+  /* --accent is sized to sit behind --accent-foreground, not to be read as
+     text. On --accent-soft it fails AA for every accent, worst 2.61:1 on clay,
+     so the active nav item reads the tint that was built for text. */
+  --sidebar-nav-active-ink: var(--accent-ink);
   --sidebar-pip-filled: var(--accent);
   --sidebar-btn-bg: linear-gradient(135deg, var(--accent) 0%, color-mix(in srgb, var(--accent) 75%, black) 100%);
   --sidebar-btn-ink: var(--accent-foreground);

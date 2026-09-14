@@ -75,17 +75,33 @@ function contrast(a: number[], b: number[]) {
   return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
 }
 
-// The surface each translucent --accent-soft is painted over.
-const SURFACE_2 = { light: "#f4f6fb", dark: "#1c202d" };
+/**
+ * The surface each translucent --accent-soft is painted over, read from the
+ * stylesheet rather than copied into this file, so retuning a theme cannot
+ * leave the expected backdrop behind.
+ *
+ * This is the worst case, not the only case. Review established that the
+ * controls using these pairings actually sit on --surface or --sidebar-bg,
+ * both darker than --surface-2 in dark mode, and a darker backdrop only raises
+ * contrast against a light tint. Checking the lightest backdrop bounds them all.
+ */
+const SURFACE_2 = {
+  light: declaration(":root", "--surface-2"),
+  dark: declaration('html[data-theme="dark"]', "--surface-2"),
+  warm: declaration('html[data-theme="warm"]', "--surface-2")
+};
 
 const accents = ["sage", "blue", "clay", "iris"] as const;
 
 for (const accent of accents) {
-  for (const theme of ["light", "dark"] as const) {
+  // Warm defines no accent block of its own, so it inherits the light values
+  // over its own surfaces. It is listed explicitly so that adding a warm accent
+  // block later cannot slip past this check unnoticed.
+  for (const theme of ["light", "dark", "warm"] as const) {
     const selector =
-      theme === "light"
-        ? `html[data-accent="${accent}"]`
-        : `html[data-theme="dark"][data-accent="${accent}"]`;
+      theme === "dark"
+        ? `html[data-theme="dark"][data-accent="${accent}"]`
+        : `html[data-accent="${accent}"]`;
 
     test(`${accent} (${theme}): button text on the accent background meets AA`, () => {
       const background = declaration(selector, "--accent");
@@ -110,13 +126,41 @@ for (const accent of accents) {
   }
 }
 
-test("accent-tinted text never reads var(--accent) straight from the stylesheet", () => {
-  // --accent is sized for use as a background behind --accent-foreground. Using
-  // it as text on --accent-soft is what failed review, so the pairing is banned
-  // rather than left to be reintroduced by the next rule that wants a tint.
-  assert.equal(
-    css.includes("background: var(--accent-soft);\n  color: var(--accent);"),
-    false,
-    "a rule pairs colour var(--accent) with background var(--accent-soft); use var(--accent-ink)"
-  );
+test("no rule paints var(--accent) as text on var(--accent-soft)", () => {
+  // --accent is sized for use as a background behind --accent-foreground.
+  // Reading it as text on --accent-soft is what failed review, so the pairing
+  // is refused rather than left for the next rule that wants a tint.
+  // (?<![-a-z]) matters: without it "border-color: var(--accent);" matches as a
+  // suffix of "color:", and every rule that merely outlines a control in the
+  // accent reads as a failure.
+  const direct =
+    /background:\s*var\(--accent-soft\)\s*;\s*(?<![-a-z])color:\s*var\(--accent\)\s*(!important)?\s*;/.test(css) ||
+    /(?<![-a-z])color:\s*var\(--accent\)\s*(!important)?\s*;\s*background:\s*var\(--accent-soft\)\s*;/.test(css);
+  assert.equal(direct, false, "use var(--accent-ink) for text on var(--accent-soft)");
+});
+
+test("accent-derived token pairs do not reintroduce the failing combination", () => {
+  // The first version of this file only caught the literal declaration pair,
+  // and review found the same failure routed through the sidebar tokens:
+  // --sidebar-nav-active-bg took --accent-soft while --sidebar-nav-active-ink
+  // took --accent, so every accent failed AA on the active nav item and this
+  // test said nothing.
+  //
+  // The pairing has to be read inside one block. --sidebar-nav-active-ink is
+  // declared in four of them, and an earlier attempt here matched the first
+  // (var(--ink) in :root) and passed while the accent block was still wrong.
+  let checked = 0;
+  for (const [, body] of css.matchAll(/\{([^{}]*)\}/g)) {
+    for (const [, stem] of body.matchAll(/--([a-z0-9-]+)-bg:\s*var\(--accent-soft\)\s*;/g)) {
+      const ink = new RegExp(`--${stem}-ink:\\s*var\\(([^)]+)\\)\\s*;`).exec(body);
+      assert.ok(ink, `--${stem}-bg takes --accent-soft but that block sets no --${stem}-ink`);
+      assert.notEqual(
+        ink![1].trim(),
+        "--accent",
+        `--${stem}-ink reads var(--accent) over var(--accent-soft); use var(--accent-ink)`
+      );
+      checked += 1;
+    }
+  }
+  assert.ok(checked > 0, "expected at least one token pair backed by --accent-soft");
 });

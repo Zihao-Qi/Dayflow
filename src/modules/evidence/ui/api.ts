@@ -5,7 +5,33 @@ import {
 } from "@/components/activity-records";
 import { localDateKey } from "@/lib/dates";
 import { request } from "@/shared/client/api-client";
-import { isActivityResponse } from "@/shared/client/decoders";
+import {
+  isActivityResponse,
+  isCheckInResponse,
+  type CheckInRecord
+} from "@/shared/client/decoders";
+
+/**
+ * Recording is an upsert keyed by Habit and day, so a repeated request lands on
+ * the same row and the mutation id is optional. Callers that want a lost
+ * response replayed verbatim may still pass one.
+ */
+export function recordCheckIn(
+  habitId: string,
+  body: { date: string; done: boolean },
+  mutationId: string | null
+) {
+  return request(`/api/habits/${encodeURIComponent(habitId)}/check-in`, {
+    method: "PUT",
+    body,
+    mutationId,
+    decode: (result): result is CheckInRecord =>
+      isCheckInResponse(result) &&
+      result.habitId === habitId &&
+      result.done === body.done,
+    fallback: "Check-in could not be saved."
+  });
+}
 
 export function saveActivity(activeEditor: ActivityEditor | null, editable: {
   startTime: string;

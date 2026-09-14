@@ -13,7 +13,10 @@ import { DayPage } from "@/modules/planning/ui/log/day-workspace";
 import { ReviewPage } from "@/modules/review/ui/review-workspace";
 import { Plus, RefreshCw } from "lucide-react";
 
+import { useState } from "react";
 import { ActivityDialog } from "@/modules/evidence/ui/activity-dialog";
+import { HabitsCard } from "@/modules/evidence/ui/habits-card";
+import { recordCheckIn } from "@/modules/evidence/ui/api";
 import { MobileMoreMenu, Navigation } from "./navigation";
 import { useShellModel } from "./use-shell-model";
 import { type DayView } from "./use-shell-state";
@@ -21,6 +24,9 @@ import { mergeTimeBlockTaskOptions } from "./use-time-block-actions";
 
 export function WorkspaceShell() {
   const model = useShellModel();
+  // Declared before the bootstrap-failure return below, which is why it sits
+  // here rather than beside the handler that uses it.
+  const [busyHabitId, setBusyHabitId] = useState<string | null>(null);
   const {
     wideFocusRail,
     data,
@@ -118,6 +124,24 @@ export function WorkspaceShell() {
     saveTimeBlock,
     deleteTimeBlock
   } = model;
+  /**
+   * Recording carries no mutation id: the Check-in is an upsert keyed by Habit
+   * and day, so a retry lands on the same row rather than creating a second.
+   */
+  const recordHabitCheckIn = async (habitId: string, done: boolean) => {
+    if (!data) return;
+    setBusyHabitId(habitId);
+    try {
+      await recordCheckIn(habitId, { date: data.todayKey, done }, null);
+      await refresh();
+    } catch (error) {
+      setAppError(
+        error instanceof Error ? error.message : "Check-in could not be saved."
+      );
+    } finally {
+      setBusyHabitId(null);
+    }
+  };
   if (!data && bootstrapFailure) {
     const migrationRequired =
       bootstrapFailure.code === "DATABASE_MIGRATION_REQUIRED";
@@ -231,6 +255,13 @@ export function WorkspaceShell() {
         {screen === "today" && !firstRun && today.page && (
           <TodayPage
             {...today.page}
+            habitsSlot={
+              <HabitsCard
+                habits={data.habits}
+                onRecord={(habitId, done) => void recordHabitCheckIn(habitId, done)}
+                busyHabitId={busyHabitId}
+              />
+            }
             onFocusTransition={focus.transition}
             onAddTask={addTask}
             newTask={newTask}

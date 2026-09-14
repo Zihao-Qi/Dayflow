@@ -17,6 +17,8 @@ const resetSql = [
   "PRAGMA foreign_keys = OFF;",
   'DELETE FROM "MutationReceipt";',
   'DELETE FROM "Review";',
+  'DELETE FROM "HabitCheckIn";',
+  'DELETE FROM "Habit";',
   'DELETE FROM "TaskScheduleChange";',
   'DELETE FROM "FocusSession";',
   'DELETE FROM "ActivityEntry";',

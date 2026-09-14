@@ -11,6 +11,45 @@ test.beforeEach(() => {
   resetTestDatabase();
 });
 
+/**
+ * Resolve a design token to the colour it currently computes to.
+ *
+ * These assertions used to pin literals like "rgb(231, 237, 222)". That form
+ * stopped having one correct answer when the app gained four theme modes and
+ * five accents: the same control legitimately computes to a different colour
+ * per theme, so a literal asserts "whatever the palette was the day this was
+ * written" rather than anything about the control.
+ *
+ * Comparing against the token keeps the assertion load-bearing - a control
+ * wired to the wrong token still fails, which is what these tests are for -
+ * while surviving a re-theme. The .backlog-arrangement-note check further down
+ * this file already worked this way, and was the only colour assertion in
+ * either test that passed against the Soft Bento redesign unchanged.
+ *
+ * Values that are NOT themed stay literals. See the arrange-control shadow.
+ *
+ * Known limit: under the default neutral accent, --accent-soft and --accent are
+ * declared as aliases of --surface-2 and --ink (globals.css:29-30), so they
+ * resolve identically here and a control mis-wired between an alias and its
+ * target is not distinguishable by this probe. The literals these replaced had
+ * the same blind spot, so nothing is lost - but closing it needs an assertion
+ * under a non-neutral accent, where the aliases diverge, and that belongs in
+ * theme-specific coverage rather than in a focus-rail or backlog-layout test.
+ */
+async function tokenColor(page: Page, declaration: string, property: string) {
+  return page.evaluate(
+    ([css, prop]) => {
+      const probe = document.createElement("div");
+      probe.style.cssText = css;
+      document.body.append(probe);
+      const resolved = getComputedStyle(probe).getPropertyValue(prop);
+      probe.remove();
+      return resolved;
+    },
+    [declaration, property] as [string, string]
+  );
+}
+
 async function openDashboard(page: Page) {
   await page.addInitScript(() => {
     window.localStorage.setItem("dayflow-first-run-seen", "1");
@@ -1010,14 +1049,14 @@ test("persists a focus session in the rail and collapses it to a strip", async (
   await expect(pause).toHaveClass(/focus-button/);
   expect(
     await pause.evaluate((element) => getComputedStyle(element).backgroundColor)
-  ).toBe("rgb(231, 237, 222)");
+  ).toBe(await tokenColor(page, "background: var(--surface-2);", "background-color"));
   const logByHand = fullRail.getByRole("button", {
     name: "Log something by hand",
     exact: true
   });
   expect(
     await logByHand.evaluate((element) => getComputedStyle(element).color)
-  ).toBe("rgb(168, 120, 92)");
+  ).toBe(await tokenColor(page, "color: var(--ink);", "color"));
 
   await page.getByRole("button", { name: "Log", exact: true }).click();
   const strip = page.getByRole("complementary", { name: "Active focus session" });
@@ -1036,7 +1075,7 @@ test("persists a focus session in the rail and collapses it to a strip", async (
     await reloadedRail
       .locator(".paused-focus-card .secondary-button")
       .evaluate((element) => getComputedStyle(element).backgroundColor)
-  ).toBe("rgb(255, 254, 251)");
+  ).toBe(await tokenColor(page, "background: var(--surface);", "background-color"));
 
   setFocusSessionElapsedMinutes(session.id, 2);
   await reloadedRail.getByRole("button", { name: "Resume", exact: true }).click();
@@ -1054,7 +1093,7 @@ test("persists a focus session in the rail and collapses it to a strip", async (
     await reloadedRail
       .locator(".break-focus-card .secondary-button")
       .evaluate((element) => getComputedStyle(element).backgroundColor)
-  ).toBe("rgb(255, 254, 251)");
+  ).toBe(await tokenColor(page, "background: var(--surface);", "background-color"));
   await expect(
     reloadedRail.locator(".rail-focus-clock span").getByText("2m", { exact: true })
   ).toBeVisible();
@@ -1123,7 +1162,13 @@ test("persists the explicit focus queue across reload and keeps its own order", 
   const queueButtonColor = await prepareRow
     .getByRole("button", { name: "Queued", exact: true })
     .evaluate((element) => getComputedStyle(element).backgroundColor);
-  expect(queueButtonColor).not.toBe("rgb(231, 237, 222)");
+  // Pinning the old sage literal would have gone quietly vacuous: nothing
+  // renders that colour any more, so the assertion would pass while checking
+  // nothing. Compare against the focus control's own token instead, which is
+  // the distinction this is here to enforce.
+  expect(queueButtonColor).not.toBe(
+    await tokenColor(page, "background: var(--surface-2);", "background-color")
+  );
 
   await rail.getByRole("button", { name: "Reorder", exact: true }).click();
   await expect(
@@ -2324,15 +2369,21 @@ test("caps and aligns the wide Backlog slab without recoloring focus states", as
 
   expect(controlStyle.controlWidth).toBeLessThan(390);
   expect(controlStyle.troughPadding).toBe("3px");
-  expect(controlStyle.troughBorder).toBe("1px solid rgb(229, 223, 211)");
+  expect(controlStyle.troughBorder).toBe(
+    `1px solid ${await tokenColor(page, "color: var(--line);", "color")}`
+  );
   expect(controlStyle.troughRadius).toBe("8px");
-  expect(controlStyle.troughBackground).toBe("rgb(247, 244, 237)");
+  expect(controlStyle.troughBackground).toBe(
+    await tokenColor(page, "background: var(--surface-2);", "background-color")
+  );
   expect(controlStyle.activeHeight).toBeCloseTo(26, 0);
   expect(controlStyle.activeFontSize).toBe("12px");
   expect(controlStyle.activeRadius).toBe("6px");
-  expect(controlStyle.activeBackground).toBe("rgb(255, 253, 248)");
+  expect(controlStyle.activeBackground).toBe(
+    await tokenColor(page, "background: var(--surface);", "background-color")
+  );
   expect(controlStyle.activeWeight).toBe("700");
-  expect(controlStyle.activeShadow).toBe("rgba(54, 48, 39, 0.12) 0px 1px 2px 0px");
+  expect(controlStyle.activeShadow).toBe("rgba(15, 23, 42, 0.08) 0px 1px 2px 0px");
 });
 
 test("keeps Backlog sizing fluid, stateful, and still while resizing", async ({
@@ -3224,7 +3275,7 @@ test("keeps phone, tablet, and desktop navigation modes exclusive at their bound
   await expect(page.locator("html")).toHaveAttribute("data-layout-mode", "desktop");
   const desktopSidebarBox = await sidebar.boundingBox();
   const desktopWorkspaceBox = await workspace.boundingBox();
-  expect(Math.round(desktopSidebarBox?.width ?? 0)).toBe(196);
+  expect(Math.round(desktopSidebarBox?.width ?? 0)).toBe(210);
   expect(
     (desktopSidebarBox?.x ?? 0) + (desktopSidebarBox?.width ?? 0)
   ).toBeLessThanOrEqual((desktopWorkspaceBox?.x ?? 0) + 1);

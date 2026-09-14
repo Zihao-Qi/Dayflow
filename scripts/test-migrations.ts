@@ -90,8 +90,9 @@ const nullLegacyTaskTitleDatabase = join(
 try {
   runMigration(freshDatabase);
   assert.equal(query(freshDatabase, "PRAGMA integrity_check;"), "ok");
-  assert.equal(appliedMigrationCount(freshDatabase), "5");
+  assert.equal(appliedMigrationCount(freshDatabase), "6");
   assertReviewSchema(freshDatabase);
+  assertHabitSchema(freshDatabase);
   assert.deepEqual(migrationSafetyBackups(), []);
 
   runMigration(freshDatabase);
@@ -367,8 +368,9 @@ try {
 
   runMigration(legacyDatabase);
   assert.equal(query(legacyDatabase, "PRAGMA integrity_check;"), "ok");
-  assert.equal(appliedMigrationCount(legacyDatabase), "5");
+  assert.equal(appliedMigrationCount(legacyDatabase), "6");
   assertReviewSchema(legacyDatabase);
+  assertHabitSchema(legacyDatabase);
   assert.equal(
     query(
       legacyDatabase,
@@ -459,8 +461,9 @@ try {
   );
 
   runMigration(legacyDatabase);
-  assert.equal(appliedMigrationCount(legacyDatabase), "5");
+  assert.equal(appliedMigrationCount(legacyDatabase), "6");
   assertReviewSchema(legacyDatabase);
+  assertHabitSchema(legacyDatabase);
   assert.equal(
     query(
       legacyDatabase,
@@ -475,8 +478,9 @@ try {
   });
   runMigration(currentSetupDatabase);
   assert.equal(query(currentSetupDatabase, "PRAGMA integrity_check;"), "ok");
-  assert.equal(appliedMigrationCount(currentSetupDatabase), "5");
+  assert.equal(appliedMigrationCount(currentSetupDatabase), "6");
   assertReviewSchema(currentSetupDatabase);
+  assertHabitSchema(currentSetupDatabase);
 
   writeFileSync(corruptDatabase, "not a SQLite database");
   assertRejectedBeforeMutation(corruptDatabase);
@@ -969,8 +973,9 @@ try {
     preProjectInspection.manifest.recordCounts.ActivityEntry,
     1
   );
-  assert.equal(appliedMigrationCount(preProjectDatabase), "5");
+  assert.equal(appliedMigrationCount(preProjectDatabase), "6");
   assertReviewSchema(preProjectDatabase);
+  assertHabitSchema(preProjectDatabase);
   assert.equal(
     query(
       preProjectDatabase,
@@ -1053,8 +1058,9 @@ try {
     ),
     expectedEarliestSnapshot
   );
-  assert.equal(appliedMigrationCount(earliestDatabase), "5");
+  assert.equal(appliedMigrationCount(earliestDatabase), "6");
   assertReviewSchema(earliestDatabase);
+  assertHabitSchema(earliestDatabase);
   assert.equal(
     query(
       earliestDatabase,
@@ -1088,8 +1094,9 @@ try {
     migrationSafetyBackups(),
     artifactsBeforeHistoricalRestore
   );
-  assert.equal(appliedMigrationCount(restoredEarliestDatabase), "5");
+  assert.equal(appliedMigrationCount(restoredEarliestDatabase), "6");
   assertReviewSchema(restoredEarliestDatabase);
+  assertHabitSchema(restoredEarliestDatabase);
   assert.equal(
     query(
       restoredEarliestDatabase,
@@ -1112,8 +1119,9 @@ try {
      );`
   ]);
   runMigration(projectEraDatabase);
-  assert.equal(appliedMigrationCount(projectEraDatabase), "5");
+  assert.equal(appliedMigrationCount(projectEraDatabase), "6");
   assertReviewSchema(projectEraDatabase);
+  assertHabitSchema(projectEraDatabase);
   assert.equal(
     query(
       projectEraDatabase,
@@ -1144,8 +1152,9 @@ try {
     input: historicalSchema("501aa95")
   });
   runMigration(focusEraDatabase);
-  assert.equal(appliedMigrationCount(focusEraDatabase), "5");
+  assert.equal(appliedMigrationCount(focusEraDatabase), "6");
   assertReviewSchema(focusEraDatabase);
+  assertHabitSchema(focusEraDatabase);
   assert.equal(
     query(
       focusEraDatabase,
@@ -1438,6 +1447,64 @@ function appliedMigrationCount(databasePath: string) {
     databasePath,
     `SELECT COUNT(*) FROM "_prisma_migrations"
      WHERE "finished_at" IS NOT NULL;`
+  );
+}
+
+/**
+ * The Habit tables must exist with their columns and both indexes after
+ * migrating from every historical database shape, not only a fresh one.
+ */
+function assertHabitSchema(databasePath: string) {
+  assert.equal(
+    query(
+      databasePath,
+      `SELECT COUNT(*)
+       FROM pragma_table_info('Habit')
+       WHERE name IN (
+         'id', 'name', 'cadence', 'targetPerWeek', 'status',
+         'sortOrder', 'archivedAt', 'createdAt', 'updatedAt'
+       );`
+    ),
+    "9"
+  );
+  assert.equal(
+    query(
+      databasePath,
+      `SELECT COUNT(*)
+       FROM pragma_table_info('HabitCheckIn')
+       WHERE name IN (
+         'id', 'habitId', 'date', 'done', 'amount', 'note',
+         'createdAt', 'updatedAt'
+       );`
+    ),
+    "8"
+  );
+  // One Check-in per Habit per day is a database invariant, not a convention.
+  assert.equal(
+    query(
+      databasePath,
+      `SELECT "unique" || '|' || "partial"
+       FROM pragma_index_list('HabitCheckIn')
+       WHERE name = 'HabitCheckIn_habitId_date_key';`
+    ),
+    "1|0"
+  );
+  assert.equal(
+    query(
+      databasePath,
+      `SELECT group_concat(name, '|')
+       FROM pragma_index_info('HabitCheckIn_habitId_date_key');`
+    ),
+    "habitId|date"
+  );
+  assert.equal(
+    query(
+      databasePath,
+      `SELECT COUNT(*)
+       FROM pragma_foreign_key_list('HabitCheckIn')
+       WHERE "table" = 'Habit' AND "from" = 'habitId' AND "on_delete" = 'CASCADE';`
+    ),
+    "1"
   );
 }
 

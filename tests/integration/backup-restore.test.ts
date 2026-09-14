@@ -129,6 +129,10 @@ test(
       assert.match(backup.stdout, /Task: 1/);
       assert.match(backup.stdout, /FocusSession: 1/);
       assert.match(backup.stdout, /Review: 1/);
+      // The backup engine enumerates tables explicitly, so a new model that is
+      // not registered there disappears from backups without any error.
+      assert.match(backup.stdout, /Habit: 1/);
+      assert.match(backup.stdout, /HabitCheckIn: 1/);
 
       rmSync(activeDatabase);
 
@@ -379,6 +383,20 @@ function insertCompleteFixture(databasePath: string) {
      ) VALUES (
        'fixture-schedule-change', 'fixture-task', NULL, 1785000000000,
        'manual', 1785000000000
+     );
+     INSERT INTO "Habit" (
+       "id", "name", "cadence", "targetPerWeek", "status",
+       "sortOrder", "archivedAt", "createdAt", "updatedAt"
+     ) VALUES (
+       'fixture-habit', 'Morning stretch', 'DAILY', 7, 'ACTIVE',
+       0, NULL, 1785000000000, 1785000000000
+     );
+     INSERT INTO "HabitCheckIn" (
+       "id", "habitId", "date", "done", "amount", "note",
+       "createdAt", "updatedAt"
+     ) VALUES (
+       'fixture-check-in', 'fixture-habit', 1785000000000, 1, 15,
+       'Recorded on the day', 1785000000000, 1785000000000
      );
      COMMIT;`
   );

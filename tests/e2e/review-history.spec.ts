@@ -291,9 +291,23 @@ test("Review history and a past period stay usable at phone width", async ({
 async function controlBootstrapPeriodShift(page: Page) {
   let bootstrapLoads = 0;
   let shiftPeriod = false;
+  const failedReads: string[] = [];
   await page.route("**/api/bootstrap", async (route) => {
     const shouldShift = shiftPeriod;
     const response = await route.fetch();
+    // Rewriting an error envelope threw inside this handler, which skipped
+    // route.fulfill, hung the read, and surfaced as an unrelated date error
+    // several frames away. Pass a failed read through untouched instead.
+    //
+    // It is recorded rather than swallowed. Since #122 a non-ok read here
+    // should not be reachable, so one is a regression the test must name
+    // rather than absorb. It deliberately does not count as a load: the
+    // rollover poll waits on a read the app could actually consume.
+    if (!response.ok()) {
+      failedReads.push(`bootstrap ${response.status()}`);
+      await route.fulfill({ response });
+      return;
+    }
     const payload = (await response.json()) as Record<string, unknown> & {
       review: Record<string, unknown> & {
         periodStart: string;
@@ -320,6 +334,14 @@ async function controlBootstrapPeriodShift(page: Page) {
   await page.route("**/api/review/window?current=1", async (route) => {
     const shouldShift = shiftPeriod;
     const response = await route.fetch();
+    // A P2028/P1008 timeout here returns appErrorResponse, an envelope with no
+    // periodStart, and shiftLocalDay(undefined) then threw "RangeError: Invalid
+    // time value" so the assertion blamed the date input.
+    if (!response.ok()) {
+      failedReads.push(`review/window ${response.status()}`);
+      await route.fulfill({ response });
+      return;
+    }
     const payload = await response.json();
     if (shouldShift) {
       payload.periodStart = shiftLocalDay(payload.periodStart);
@@ -338,7 +360,12 @@ async function controlBootstrapPeriodShift(page: Page) {
     armShift: () => {
       shiftPeriod = true;
     },
-    loadCount: () => bootstrapLoads
+    loadCount: () => bootstrapLoads,
+    // Successful loads plus failed ones, so the rollover poll can stop at the
+    // first completed read either way and let the next line report the failure
+    // instead of timing out with nothing to say.
+    completedReads: () => bootstrapLoads + failedReads.length,
+    failedReads: () => [...failedReads]
   };
 }
 
@@ -372,13 +399,14 @@ test("a local-day rollover keeps an open Past Review Period on screen", async ({
   const windowEnding = historyPanel(page).getByLabel("Review window ending");
   const latestEndingBefore = await windowEnding.getAttribute("max");
   expect(latestEndingBefore).toBeTruthy();
-  const loadsBeforeRollover = bootstrapPeriod.loadCount();
+  const readsBeforeRollover = bootstrapPeriod.completedReads();
   bootstrapPeriod.armShift();
   await page.clock.pauseAt(lateToday);
   await page.clock.runFor(1_500);
   await expect
-    .poll(bootstrapPeriod.loadCount)
-    .toBeGreaterThan(loadsBeforeRollover);
+    .poll(bootstrapPeriod.completedReads)
+    .toBeGreaterThan(readsBeforeRollover);
+  expect(bootstrapPeriod.failedReads()).toEqual([]);
 
   // The selected past card can stay visible throughout the refresh. Its
   // presence alone does not prove that the new current period was consumed.
@@ -389,6 +417,15 @@ test("a local-day rollover keeps an open Past Review Period on screen", async ({
   // Calendar publication can start another current-period read. Finish all
   // intercepted reads before checking preservation and disposing the context.
   await page.unrouteAll({ behavior: "wait" });
+
+  // Re-assert after the trailing reads have drained, not only after the poll.
+  // Calendar publication can start a second current-period read that lands
+  // after the check above, and the pass-through would absorb its failure into
+  // failedReads with nothing left to read the list - so a late 500 would ride
+  // out as a green run. The old code failed loudly there, by throwing
+  // RangeError inside the handler, so dropping this check would trade a noisy
+  // failure for a silent pass.
+  expect(bootstrapPeriod.failedReads()).toEqual([]);
 
   // The past window is absolute, so the rollover must not move it or discard
   // the reader's place in history.

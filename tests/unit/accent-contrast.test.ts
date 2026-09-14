@@ -126,6 +126,34 @@ for (const accent of accents) {
   }
 }
 
+/**
+ * Ordinary text, not just the accents.
+ *
+ * The accent checks above were written first and covered only accent pairings,
+ * which is how a plain one survived review twice: warm --muted on --surface-2
+ * measured 3.99:1 and nothing failed. These are the tokens every screen uses,
+ * so they are checked the same way.
+ */
+for (const [theme, selector] of [
+  ["light", ":root"],
+  ["dark", 'html[data-theme="dark"]'],
+  ["warm", 'html[data-theme="warm"]']
+] as const) {
+  for (const ink of ["--ink", "--muted"] as const) {
+    for (const surface of ["--surface", "--surface-2"] as const) {
+      test(`${theme}: ${ink} on ${surface} meets AA`, () => {
+        const fg = declaration(selector, ink);
+        const bg = declaration(selector, surface);
+        const ratio = contrast(channels(fg), composite(bg, "#ffffff"));
+        assert.ok(
+          ratio >= AA_NORMAL,
+          `${ink} ${fg} on ${surface} ${bg} is ${ratio.toFixed(2)}:1, below ${AA_NORMAL}:1`
+        );
+      });
+    }
+  }
+}
+
 test("no rule paints var(--accent) as text on var(--accent-soft)", () => {
   // --accent is sized for use as a background behind --accent-foreground.
   // Reading it as text on --accent-soft is what failed review, so the pairing

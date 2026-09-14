@@ -88,7 +88,7 @@ html[data-theme="warm"] {
   --sidebar-brand-bg: linear-gradient(135deg, #2c2724 0%, #443c37 100%);
   --sidebar-brand-ink: #f8f5f0;
   --ink: #2c2724;
-  --muted: #797167;
+  --muted: #70685e;
   --line: #e6ddd1;
   --line-strong: #d2c5b4;
   --shadow: 0 8px 30px rgba(50, 35, 20, 0.06), 0 1px 3px rgba(50, 35, 20, 0.03);

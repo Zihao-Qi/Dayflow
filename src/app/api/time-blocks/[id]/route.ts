@@ -1,4 +1,4 @@
-import { getPrisma } from "@/lib/prisma";
+import { runInTransaction } from "@/server/prisma/client";
 import { clock } from "@/lib/time";
 import { NextRequest, NextResponse } from "next/server";
 import {
@@ -24,7 +24,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
     // The service samples the clock after that read, so a day that ends
     // mid-request is still caught.
     const input = parseTimeBlockDraftStructure(body);
-    const timeBlock = await getPrisma().$transaction((tx) => replaceTimeBlock(tx, id, input, clock));
+    const timeBlock = await runInTransaction((tx) => replaceTimeBlock(tx, id, input, clock));
     return NextResponse.json(timeBlock);
   } catch (error) {
     return timeBlockMutationErrorResponse(error, "save");
@@ -35,7 +35,7 @@ export async function DELETE(_request: NextRequest, { params }: Params) {
   const { id: rawId } = await params;
   try {
     const id = parseTimeBlockPathId(rawId);
-    const result = await getPrisma().$transaction((tx) => deleteTimeBlock(tx, id));
+    const result = await runInTransaction((tx) => deleteTimeBlock(tx, id));
     return NextResponse.json(result);
   } catch (error) {
     return timeBlockMutationErrorResponse(error, "delete");

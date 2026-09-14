@@ -1,10 +1,10 @@
-import { getPrisma } from "@/lib/prisma";
+import { runInTransaction } from "@/server/prisma/client";
 import { deletePhaseRecord, translateProjectPersistenceError } from "@/modules/projects/services/projects";
 import { detachPhaseTasks } from "@/modules/planning/services/tasks";
 
 export async function deletePhase(id: string) {
   try {
-    await getPrisma().$transaction(async tx => {
+    await runInTransaction(async tx => {
       await detachPhaseTasks(tx, id);
       await deletePhaseRecord(tx, id);
     });

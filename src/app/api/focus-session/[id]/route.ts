@@ -1,5 +1,6 @@
 import { clock } from "@/lib/time";
 import { getPrisma } from "@/lib/prisma";
+import { runInTransaction } from "@/server/prisma/client";
 import { readWorkflowMutationBody } from "@/lib/workflow-mutations";
 import { parseFocusSessionId, parseFocusSessionTransitionMutation } from "@/modules/focus/domain/session";
 import { readSnapshot, transitionSession, enrichSession, focusErrorResponse } from "@/server/focus";
@@ -14,7 +15,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     const id = parseFocusSessionId(routeParams.id, "id");
     const body = await readWorkflowMutationBody(request);
     const input = parseFocusSessionTransitionMutation(body);
-    const result = await getPrisma().$transaction(tx => input.action === "enrich" || input.action === "record"
+    const result = await runInTransaction(tx => input.action === "enrich" || input.action === "record"
       ? enrichSession(tx, id, input, now)
       : transitionSession(tx, id, input.action, now));
     return NextResponse.json({ ...result, snapshot: await readSnapshot(getPrisma(), now) });

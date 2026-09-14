@@ -1,4 +1,4 @@
-import { getPrisma } from "@/lib/prisma";
+import { runInTransaction } from "@/server/prisma/client";
 import { appErrorResponse } from "@/lib/http-errors";
 import { focusQueueErrors, type QueuePlacement } from "@/modules/planning/domain/focus-queue";
 import * as queue from "@/modules/planning/services/focus-queue";
@@ -9,11 +9,11 @@ export { listFocusQueue, addToFocusQueue, reorderFocusQueue, removeFromFocusQueu
 
 // Preserve the old transaction-owning signatures for legacy callers.
 export const addToFocusQueueWithTransaction = (taskId: string, placement: QueuePlacement) =>
-  getPrisma().$transaction((tx) => queue.addToFocusQueue(tx, taskId, placement));
+  runInTransaction((tx) => queue.addToFocusQueue(tx, taskId, placement));
 export const reorderFocusQueueWithTransaction = (ids: string[], expectedIds: string[]) =>
-  getPrisma().$transaction((tx) => queue.reorderFocusQueue(tx, ids, expectedIds));
+  runInTransaction((tx) => queue.reorderFocusQueue(tx, ids, expectedIds));
 export const removeFromFocusQueueWithTransaction = (taskId: string) =>
-  getPrisma().$transaction((tx) => queue.removeFromFocusQueue(tx, taskId));
+  runInTransaction((tx) => queue.removeFromFocusQueue(tx, taskId));
 
 export function focusQueueMutationErrorResponse(error: unknown, operation: "save" | "reorder" | "remove") {
   if (error instanceof AppError) return appErrorResponse(error);

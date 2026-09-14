@@ -1,8 +1,10 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
+import { withTransaction } from "@/server/prisma/client";
 
 export async function isWorkspaceEmpty(database: PrismaClient | Prisma.TransactionClient) {
-  const records = "$transaction" in database ? await database.$transaction(
-    workspaceRecordQueries(database)
+  const records = "$transaction" in database ? await withTransaction(
+    database,
+    (tx) => Promise.all(workspaceRecordQueries(tx))
   ) : await Promise.all(workspaceRecordQueries(database));
 
   return records.every((record) => record === null);

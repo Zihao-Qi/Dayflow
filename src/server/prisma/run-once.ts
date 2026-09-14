@@ -1,6 +1,7 @@
 import { appErrorConstructor } from "@/lib/error-compat";
 import { idempotencyErrors } from "@/lib/idempotency-errors";
 import { getPrisma } from "@/lib/prisma";
+import { runInTransaction } from "@/server/prisma/client";
 import { AppError } from "@/shared/kernel/errors";
 import { Prisma } from "@prisma/client";
 import { createHash } from "node:crypto";
@@ -49,12 +50,12 @@ export async function runOnce<T>({
   create: (transaction: Prisma.TransactionClient) => Promise<T>;
 }): Promise<T> {
   if (!mutationId) {
-    return getPrisma().$transaction((transaction) => create(transaction));
+    return runInTransaction((transaction) => create(transaction));
   }
 
   const requestHash = mutationRequestHash(kind, payload);
   try {
-    return await getPrisma().$transaction(async (transaction) => {
+    return await runInTransaction(async (transaction) => {
       const receipt = await transaction.mutationReceipt.findUnique({
         where: { id: mutationId }
       });

@@ -145,9 +145,14 @@ rules target directories that do not exist until the migration creates them.
    parameter initializer containing that binding, or a `??`, `||`, `??=`
    or `||=` fallback to it, is rejected.
 6. **Transaction roots.** A direct call to a property named `$transaction`
-   is permitted only under `src/app/api`, `src/server`, and the idempotency
-   helper: today `src/lib/idempotent-mutations.ts`, later
-   `src/server/prisma/run-once.ts`.
+   is permitted only in `src/server/prisma/client.ts`, the module that owns
+   the transaction queue. This was tightened from `src/app/api`, `src/server`
+   and the idempotency helper when the queue moved into that module: Prisma
+   opens interactive transactions on SQLite with `BEGIN IMMEDIATE`, and past
+   the engine's worker count the waiting transactions starve each other and
+   fail together as P1008. A root outside the module skips the queue and
+   restores that failure, so the allowlist is one file and new callers go
+   through Rule 10 instead.
 7. **Activity writes.** Every direct call whose receiver property or
    identifier is `activityEntry` and whose method is `create`, `createMany`,
    `upsert`, `update`, `updateMany`, `delete` or `deleteMany` under `src/`,
@@ -172,6 +177,15 @@ rules target directories that do not exist until the migration creates them.
    client layers (`ui`, `shell`, `components`, `shared/client`) and scripts are
    excluded. Added in PR #76 (`3b0e921`) with a 1-row allowlist
    (`src/shared/kernel/calendar.ts:19`).
+10. **Transaction helper callers.** A call to `withTransaction` or
+    `runInTransaction`, and any import of `src/server/prisma/client`, are
+    permitted only under `src/app/api` and `src/server`. Rule 6 confines the
+    transaction root to one module; this rule keeps its entry points in the
+    layers that may own a transaction, so a service or UI file cannot reach
+    the database through the helper it is forbidden to open directly. Calls
+    are recognised syntactically by callee name, without type resolution, so
+    an alias would defeat that half alone; the import check is alias-proof and
+    covers `src/lib`, which may import `src/server` freely.
 
 ### Initial baseline
 

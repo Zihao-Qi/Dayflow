@@ -125,13 +125,27 @@ would freeze the weakest part of the design first.
 
 All errors use the existing `AppError` catalog shape for this boundary.
 
-| Condition | Status | Code |
-| --- | --- | --- |
-| Habit name blank or too long | 400 | `INVALID_HABIT_NAME` |
-| `targetPerWeek` outside 1–7 | 400 | `INVALID_HABIT_CADENCE` |
-| Check-in date outside the backfill window | 400 | `CHECK_IN_DATE_OUT_OF_RANGE` |
-| Check-in amount negative | 400 | `INVALID_CHECK_IN_AMOUNT` |
-| Habit not found | 404 | `HABIT_NOT_FOUND` |
+Field validation follows the boundary's existing convention: status 400, code
+`VALIDATION_ERROR`, and the offending `field`. Only the absent-record case
+carries a code of its own.
+
+| Condition | Status | Code | Field |
+| --- | --- | --- | --- |
+| Habit name blank, not text, or over 120 characters | 400 | `VALIDATION_ERROR` | `name` |
+| Cadence is not `DAILY` or `TIMES_PER_WEEK` | 400 | `VALIDATION_ERROR` | `cadence` |
+| `targetPerWeek` outside 1–7 | 400 | `VALIDATION_ERROR` | `targetPerWeek` |
+| Check-in date is not a calendar date | 400 | `VALIDATION_ERROR` | `date` |
+| Check-in date is in the future | 400 | `VALIDATION_ERROR` | `date` |
+| Check-in date is outside the backfill window | 400 | `VALIDATION_ERROR` | `date` |
+| `done` is not a boolean | 400 | `VALIDATION_ERROR` | `done` |
+| Amount is negative or not a whole number | 400 | `VALIDATION_ERROR` | `amount` |
+| Note is not text or over 2,000 characters | 400 | `VALIDATION_ERROR` | `note` |
+| Habit not found | 404 | `HABIT_NOT_FOUND` | — |
+
+A daily Habit's target is normalised to 7 rather than rejected, so sending a
+cadence of `DAILY` with a target of 3 is accepted and stored as 7. A patch that
+switches a Habit to `DAILY` corrects the stored target in the same write, so no
+Habit can claim a cadence its target contradicts.
 
 Validation happens before storage is opened, so an invalid request returns its
 error even when the database is unavailable — the rule already followed by

@@ -1,4 +1,13 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
+// The reads carry an explicit budget. Prisma's default is five seconds, which
+// concurrent Review reads exhausted: the route returned its could-not-be-read
+// envelope and main went red twice on 2026-09-13 with P2028 and P1008. Bootstrap
+// and agent export already set the same value.
+//
+// saveReview deliberately keeps the default. It is a write, and a SQLite write
+// transaction holds an exclusive lock: a sixty-second ceiling there would let one
+// slow save block every concurrent write rather than fail fast. Every other write
+// in the tree uses the default for the same reason.
 import { calendar } from "@/lib/time";
 import { AppError } from "@/shared/kernel/errors";
 import {
@@ -17,7 +26,7 @@ export function saveReview(database: PrismaClient, input: ReviewMutation, now: D
 
 export function readReviewHistoryPage(database: PrismaClient, searchParams: URLSearchParams, now: Date) {
   parseReviewHistoryPage(searchParams);
-  return database.$transaction(tx => reviews.readReviewHistoryPage(tx, searchParams, now, calendar));
+  return database.$transaction(tx => reviews.readReviewHistoryPage(tx, searchParams, now, calendar), { timeout: 60000 });
 }
 
 /** Legacy reads retain their transaction-capable signature. */
@@ -32,7 +41,7 @@ export function readCurrentReviewWindow(database: Prisma.TransactionClient, sear
 export function loadReviewWindow(database: PrismaClient, searchParams: URLSearchParams, now: Date) {
   if (searchParams.has("current")) parseCurrentReviewWindowRequest(searchParams, now, calendar);
   else parseReviewWindowRequest(searchParams, now, calendar);
-  return database.$transaction(tx => reviews.readReviewWindow(tx, searchParams, now, calendar));
+  return database.$transaction(tx => reviews.readReviewWindow(tx, searchParams, now, calendar), { timeout: 60000 });
 }
 
 /** Legacy callers may already own a read transaction. */
@@ -43,5 +52,5 @@ export function readPastReviewPeriod(database: Prisma.TransactionClient, id: str
 /** Route read root; the stored bounds, evidence, and project metrics share one snapshot. */
 export function loadPastReviewPeriod(database: PrismaClient, id: string, now: Date) {
   if (!isReviewIdentifier(id)) throw new AppError(reviewErrors.thatReviewIdentifierIsNotValid);
-  return database.$transaction(tx => reviews.readPastReviewPeriod(tx, id, now, calendar));
+  return database.$transaction(tx => reviews.readPastReviewPeriod(tx, id, now, calendar), { timeout: 60000 });
 }

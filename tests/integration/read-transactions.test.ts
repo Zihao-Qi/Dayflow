@@ -6,6 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { Prisma, PrismaClient } from "@prisma/client";
+import { NextRequest } from "next/server";
 import { addDays, localDateKey, reviewPeriodRange, startOfLocalDay } from "../../src/lib/dates";
 
 test("read transaction budgets preserve bootstrap and export after five seconds", async (context) => {
@@ -65,6 +66,14 @@ test("read transaction budgets preserve bootstrap and export after five seconds"
   const review = await database.review.create({
     data: { periodStart: period.start, periodEnd: period.end, narrative: "Saved review" }
   });
+  // History excludes the current period, so a past Review gives it rows to map.
+  const pastPeriod = reviewPeriodRange(addDays(today, -7));
+  const pastReview = await database.review.create({
+    data: {
+      periodStart: pastPeriod.start, periodEnd: pastPeriod.end,
+      narrative: "Earlier review", nextPeriodIntention: "Protect the first hour"
+    }
+  });
   const material = await database.material.create({
     data: { title: "Reference", url: "https://example.com", taskId: task.id }
   });
@@ -85,9 +94,14 @@ test("read transaction budgets preserve bootstrap and export after five seconds"
     data: { startedAt: tomorrow, durationMinutes: 60, category: "Learning", note: "Future row" }
   });
 
-  const [{ GET: bootstrap }, { GET: agentExport }] = await Promise.all([
+  const [
+    { GET: bootstrap }, { GET: agentExport },
+    { GET: reviewWindow }, { GET: reviewHistory }
+  ] = await Promise.all([
     import("../../src/app/api/bootstrap/route"),
-    import("../../src/app/api/agent-export/route")
+    import("../../src/app/api/agent-export/route"),
+    import("../../src/app/api/review/window/route"),
+    import("../../src/app/api/review/history/route")
   ]);
 
   const restoreDelegates: Array<() => void> = [];
@@ -109,6 +123,12 @@ test("read transaction budgets preserve bootstrap and export after five seconds"
     }
 
     function assertSingleReadTransaction() {
+      // Prisma emits a `SELECT 1` liveness probe when it opens a connection, which
+      // lands before BEGIN for whichever case reconnects after an idle delay. It is
+      // not a delegate read -- those are poisoned above to throw -- so dropping it
+      // keeps the invariant this helper exists for: nothing reads outside the
+      // transaction. Filtering here rather than in one case keeps it order-independent.
+      if (queries[0] === "SELECT 1") queries.shift();
       assert.match(queries[0], /^BEGIN/);
       assert.equal(queries.at(-1), "COMMIT");
       assert.equal(queries.filter((query) => /^BEGIN/.test(query)).length, 1);
@@ -176,7 +196,7 @@ test("read transaction budgets preserve bootstrap and export after five seconds"
         const expectedIds = {
           projects: [project.id], phases: [phase.id], focusSessions: [session.id],
           tasks: [overdue.id, task.id, future.id], scheduleChanges: [change.id], notes: [note.id],
-          diaryEntries: [diary.id], reviews: [review.id], materials: [material.id],
+          diaryEntries: [diary.id], reviews: [review.id, pastReview.id], materials: [material.id],
           timeBlocks: [block.id], activities: [activity.id, futureActivity.id]
         };
         for (const [key, ids] of Object.entries(expectedIds)) {
@@ -191,6 +211,42 @@ test("read transaction budgets preserve bootstrap and export after five seconds"
         assert.equal(new Date(body.exportedAt).toISOString(), body.exportedAt);
         assert.deepEqual(body.notes[0].tags, ["contract", "read"]);
         assert.equal(body.timeBlocks[0].date, today.toISOString());
+        assertSingleReadTransaction();
+      });
+    });
+
+    // The Review reads reached production without a budget, so they ran on
+    // Prisma's five-second default. Concurrent history and current-window reads
+    // exhausted it and the route returned its could-not-be-read envelope;
+    // main went red twice on 2026-09-13 (P2028, then P1008 then P2028).
+    await context.test("the current Review Window survives the delay", async () => {
+      await withDelayedReadTransaction(database, async () => {
+        queries.length = 0;
+        const response = await reviewWindow(
+          new NextRequest("http://localhost/api/review/window?current=1")
+        );
+        assert.equal(response.status, 200);
+        const body = await response.json();
+        assert.equal(body.review.id, review.id);
+        assert.equal(body.periodStart, period.start.toISOString());
+        assert.equal(body.periodEnd, period.end.toISOString());
+        assertSingleReadTransaction();
+      });
+    });
+
+    await context.test("Review history survives the delay", async () => {
+      await withDelayedReadTransaction(database, async () => {
+        queries.length = 0;
+        const response = await reviewHistory(
+          new NextRequest("http://localhost/api/review/history")
+        );
+        assert.equal(response.status, 200);
+        const body = await response.json();
+        // The current-period Review is excluded by design; the past one must be
+        // mapped and returned, so this asserts rows rather than an empty array.
+        assert.equal(body.totalCount, 1);
+        assert.deepEqual(body.items.map((row: { id: string }) => row.id), [pastReview.id]);
+        assert.equal(body.items[0].narrative, "Earlier review");
         assertSingleReadTransaction();
       });
     });

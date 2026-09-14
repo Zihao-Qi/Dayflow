@@ -161,9 +161,27 @@ export function useDataManagement({
   }, []);
 
   useEffect(() => {
-    if (restoreConfirmOpen) {
-      window.requestAnimationFrame(() => restoreCancelRef.current?.focus());
-    }
+    if (!restoreConfirmOpen) return;
+    const frame = window.requestAnimationFrame(() => {
+      // Only take focus while it is still outside the confirmation.
+      //
+      // requestAnimationFrame is deferred when the renderer is busy, so this
+      // callback can land after the reader has already moved on. Instrumenting
+      // the Tab-trap test caught it doing exactly that: focus was on "Restore
+      // on next startup", this frame pulled it to Cancel, and the next Tab
+      // therefore landed one control further along than the reader expected.
+      const active = document.activeElement;
+      if (
+        active instanceof HTMLElement &&
+        restoreDialogRef.current?.contains(active)
+      ) {
+        return;
+      }
+      restoreCancelRef.current?.focus();
+    });
+    // A pending frame also outlived the dialog, focusing a control on its way
+    // out of the tree.
+    return () => window.cancelAnimationFrame(frame);
   }, [restoreConfirmOpen]);
 
   function dismissRestoreConfirmation() {

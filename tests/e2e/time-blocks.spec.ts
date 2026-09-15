@@ -1014,3 +1014,34 @@ async function expectUsableTouchTarget(locator: Locator) {
   expect(box?.width ?? 0).toBeGreaterThanOrEqual(44);
   expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
 }
+
+test("keeps Tab inside the dialog when the container itself holds focus", async ({
+  page
+}) => {
+  await openDashboard(page);
+  await openTimeline(page);
+  await page.getByRole("button", { name: "Add time block", exact: true }).click();
+  const dialog = addDialog(page);
+  await expect(dialog).toBeVisible();
+
+  // Clicking the dialog's own padding focuses the container, which carries
+  // tabIndex={-1}. That state used to fall through the trap: an element
+  // contains itself, so the outside-branch did not fire, and the container
+  // matched neither the first nor the last focusable control, so nothing
+  // prevented default and the browser moved focus out of the dialog.
+  await dialog.evaluate((element) => element.focus());
+  await expect(dialog).toBeFocused();
+
+  await page.keyboard.press("Shift+Tab");
+  const afterShiftTab = await dialog.evaluate((element) =>
+    element.contains(document.activeElement)
+  );
+  expect(afterShiftTab).toBe(true);
+
+  await dialog.evaluate((element) => element.focus());
+  await page.keyboard.press("Tab");
+  const afterTab = await dialog.evaluate((element) =>
+    element.contains(document.activeElement)
+  );
+  expect(afterTab).toBe(true);
+});

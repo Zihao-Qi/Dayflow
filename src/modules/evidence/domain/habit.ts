@@ -77,6 +77,7 @@ export type HabitDefinition = {
   targetPerWeek: number;
   sortOrder: number;
   createdAt: Date;
+  archivedAt: Date | null;
 };
 
 export type CheckInRecord = {
@@ -119,6 +120,10 @@ export type HabitSummary = {
  * because a day that has not happened cannot have been missed. A
  * times-per-week Habit keeps its weekly goal, since those days may be used in
  * any order and the week is not over.
+ *
+ * Neither target may exceed the days actually available to meet it. A Habit
+ * created with three days left in the period cannot be done five times, and a
+ * target it cannot reach is a score it is guaranteed to fail.
  */
 export function habitTarget(
   habit: Pick<HabitDefinition, "cadence" | "targetPerWeek">,
@@ -126,7 +131,7 @@ export function habitTarget(
 ) {
   return habit.cadence === "DAILY"
     ? countableDays
-    : Math.min(habit.targetPerWeek, 7);
+    : Math.min(habit.targetPerWeek, countableDays);
 }
 
 export function summarizeHabits(
@@ -144,10 +149,12 @@ export function summarizeHabits(
         .map((row) => [localDateKey(row.date), row])
     );
     const createdKey = localDateKey(habit.createdAt);
+    const archivedKey = habit.archivedAt ? localDateKey(habit.archivedAt) : null;
     const dayStates: HabitDay[] = Array.from({ length: days }, (_, index) => {
       const day = localDateKey(addDays(periodStart, index));
       const row = rows.get(day);
       if (row) {
+        // A recorded day is a fact, whatever the Habit's status became later.
         return {
           day,
           state: row.done ? "done" : "notDone",
@@ -156,9 +163,13 @@ export function summarizeHabits(
       }
       const future = day > todayKey;
       const beforeHabit = day < createdKey;
+      // The mirror of beforeHabit: once archived, a Habit stops being an
+      // obligation, so the rest of the period cannot be missed either. The day
+      // of archival still counts, because it was active for part of it.
+      const afterArchive = archivedKey !== null && day > archivedKey;
       return {
         day,
-        state: future || beforeHabit ? "outOfScope" : "unrecorded",
+        state: future || beforeHabit || afterArchive ? "outOfScope" : "unrecorded",
         amount: null
       };
     });

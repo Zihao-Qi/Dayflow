@@ -244,6 +244,37 @@ test("Review Habit consistency", async context => {
       assert.equal(summaries[0].doneCount, 1);
     });
 
+    await context.test("a Habit archived mid-period is not charged for the rest of it", async () => {
+      // Archive on the second day and review after the period ends. The days
+      // after archival must not read as misses: the Habit was not an
+      // obligation on them, and could not have been recorded either.
+      await reset();
+      const habit = await db.habit.create({
+        data: {
+          name: "Stopped midway",
+          status: "ARCHIVED",
+          archivedAt: day("2026-08-19"),
+          createdAt: createdBeforeEverything
+        }
+      });
+      await db.habitCheckIn.create({
+        data: { habitId: habit.id, date: day("2026-08-18"), done: true }
+      });
+
+      const [summary] = await db.$transaction(tx => readReviewHabits(tx, past, now));
+      assert.equal(summary.doneCount, 1);
+      assert.equal(summary.target, 2, "only the days it was active can be required");
+      assert.equal(
+        summary.days.filter(entry => entry.state === "unrecorded").length,
+        1,
+        "the day of archival counts; the days after it do not"
+      );
+      assert.equal(
+        summary.days.filter(entry => entry.state === "outOfScope").length,
+        5
+      );
+    });
+
     await context.test("a Habit archived before the period does not appear in it", async () => {
       // The control for the case above: reading the active list alone would
       // fail both, and returning every Habit would pass both.

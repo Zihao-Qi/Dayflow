@@ -11,7 +11,9 @@ const DAY_LABEL: Record<CheckInDayState, string> = {
   done: "done",
   notDone: "not done",
   unrecorded: "not recorded",
-  outOfScope: "outside this period"
+  // Covers days that have not happened, days before the Habit existed and days
+  // after it was archived; "outside this period" described only the first.
+  outOfScope: "not tracked"
 };
 
 // State is carried by text, never by colour alone.

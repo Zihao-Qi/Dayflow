@@ -137,6 +137,7 @@ function definition(overrides: Partial<HabitDefinition> = {}): HabitDefinition {
     targetPerWeek: 7,
     sortOrder: 0,
     createdAt: addDays(periodStart, -30),
+    archivedAt: null,
     ...overrides
   };
 }
@@ -185,6 +186,43 @@ test("days before the Habit existed never count against it", () => {
   assert.deepEqual(summary.days.slice(0, 2).map((day) => day.state), ["outOfScope", "outOfScope"]);
   // Only the two elapsed days since creation are countable.
   assert.equal(summary.target, 2);
+});
+
+test("days after a Habit was archived are not counted as misses", () => {
+  // A Habit archived mid-period stops being an obligation. Counting the rest
+  // of the week as unrecorded invents misses for days it could not be done:
+  // the mirror of the rule that days before it existed never count.
+  const [summary] = summarizeHabits(
+    [definition({ archivedAt: addDays(periodStart, 1) })],
+    [record(0)],
+    periodStart,
+    today
+  );
+  assert.deepEqual(
+    summary.days.slice(2, 4).map((day) => day.state),
+    ["outOfScope", "outOfScope"]
+  );
+  assert.equal(summary.target, 2, "only the days it was active can be required");
+});
+
+test("a times-per-week target can never exceed the days available to meet it", () => {
+  // A Habit created with three days left cannot be done five times.
+  const [summary] = summarizeHabits(
+    [
+      definition({
+        cadence: "TIMES_PER_WEEK",
+        targetPerWeek: 5,
+        createdAt: addDays(periodStart, 2)
+      })
+    ],
+    [],
+    periodStart,
+    today
+  );
+  assert.ok(
+    summary.target <= summary.days.filter((day) => day.state !== "outOfScope").length,
+    `target ${summary.target} exceeds the available days`
+  );
 });
 
 test("a daily Habit's target grows with the period", () => {

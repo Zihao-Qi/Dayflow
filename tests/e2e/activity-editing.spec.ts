@@ -595,3 +595,74 @@ test("keeps the edit draft across failed, malformed, and mismatched responses", 
     })
   );
 });
+
+test("blocks Escape and traps Tab to dialog container while save is in flight", async ({
+  page
+}) => {
+  const original = await createManualActivity(page.request, {
+    startTime: "14:00",
+    durationMinutes: 15,
+    category: "Admin",
+    note: "Activity in flight source"
+  });
+  await openDashboard(page);
+  await openLog(page);
+  const editOpener = page.getByRole("button", {
+    name: "Edit activity: Activity in flight source",
+    exact: true
+  });
+  await editOpener.click();
+  const dialog = page.getByRole("dialog", {
+    name: "Edit activity",
+    exact: true
+  });
+  await expect(dialog).toBeVisible();
+
+  // Hold the PUT request
+  let unblockSave: () => void = () => {};
+  const saveHeld = new Promise<void>((resolve) => {
+    unblockSave = resolve;
+  });
+  await page.route(`**/api/activities/${original.id}`, async (route) => {
+    if (route.request().method() !== "PUT") {
+      await route.continue();
+      return;
+    }
+    await saveHeld;
+    await route.continue();
+  });
+
+  // Make form dirty so Save is enabled
+  await dialog.getByLabel("Activity note").fill("Updated note in flight");
+
+  // Click save
+  const saveBtn = dialog.getByRole("button", { name: "Save changes", exact: true });
+  await saveBtn.click();
+
+  // Dialog is saving: controls disabled
+  await expect(dialog.getByRole("button", { name: "Saving…", exact: true })).toBeDisabled();
+
+  // Escape must NOT close dialog
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeVisible();
+
+  // Tab must stay inside dialog container even with all interactive controls disabled
+  await page.keyboard.press("Tab");
+  await expect(
+    dialog.evaluate((el) => el === document.activeElement || el.contains(document.activeElement))
+  ).resolves.toBe(true);
+
+  await page.keyboard.press("Shift+Tab");
+  await expect(
+    dialog.evaluate((el) => el === document.activeElement || el.contains(document.activeElement))
+  ).resolves.toBe(true);
+
+  // Release the save
+  unblockSave();
+  await expect(dialog).not.toBeVisible();
+  const updatedOpener = page.getByRole("button", {
+    name: "Edit activity: Updated note in flight",
+    exact: true
+  });
+  await expect(updatedOpener).toBeFocused();
+});

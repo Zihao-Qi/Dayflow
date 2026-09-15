@@ -69,6 +69,17 @@ test("captures retrospective evidence with a custom category and complete sugges
 
   await openDashboard(page);
   let dialog = await openActivityCapture(page);
+  const note = dialog.getByLabel("Activity note");
+  await expect(note).toBeFocused();
+
+  // Tab navigation stays inside the dialog and cycles back
+  await page.keyboard.press("Tab");
+  await expect(
+    dialog.evaluate((el) => el.contains(document.activeElement))
+  ).resolves.toBe(true);
+  await page.keyboard.press("Shift+Tab");
+  await expect(note).toBeFocused();
+
   const date = dialog.getByLabel("Activity date", { exact: true });
   await expect(date).toHaveValue(todayKey);
   await expect(date).toHaveAttribute("max", todayKey);
@@ -87,9 +98,9 @@ test("captures retrospective evidence with a custom category and complete sugges
   ]);
   expect(suggestions).toContain("Research synthesis");
 
-  await dialog
-    .getByLabel("Activity note")
-    .fill("Reconstructed the decision trail");
+  // Rerender focus retention: typing into note triggers parent onDraftChange updates
+  await note.fill("Reconstructed the decision trail");
+  await expect(note).toBeFocused();
   await dialog.getByLabel("Time", { exact: true }).fill("08:15");
   await dialog.getByLabel("Minutes", { exact: true }).fill("40");
   await dialog

@@ -50,9 +50,12 @@ export function ActivityDialog({
     : currentTaskProjectId;
   const title = mode === "edit" ? "Edit activity" : "Log activity";
   const dialogRef = useRef<HTMLElement | null>(null);
+  const noteRef = useRef<HTMLTextAreaElement | null>(null);
   // Declared aria-modal with no keyboard handling at all: no Escape, and Tab
   // left for the page behind on the first press.
-  useModalFocusTrap(dialogRef, saving ? null : onClose);
+  useModalFocusTrap(dialogRef, saving ? null : onClose, {
+    initialFocus: noteRef,
+  });
 
   return (
     <div
@@ -88,8 +91,8 @@ export function ActivityDialog({
           </button>
         </div>
         <textarea
+          ref={noteRef}
           aria-label="Activity note"
-          autoFocus
           value={note}
           disabled={saving}
           onChange={(event) =>

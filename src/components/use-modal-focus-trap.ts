@@ -1,4 +1,12 @@
-import { useEffect, type RefObject } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  type RefObject
+} from "react";
+
+const useIsomorphicLayoutEffect =
+  typeof window !== "undefined" ? useLayoutEffect : useEffect;
 
 /**
  * Keyboard behaviour every modal in this app is supposed to have.
@@ -26,6 +34,7 @@ const focusableSelector = [
 function canReceiveFocus(element: Element | null): element is HTMLElement {
   return Boolean(
     element instanceof HTMLElement &&
+      element !== document.body &&
       element.isConnected &&
       element.getClientRects().length > 0
   );
@@ -34,16 +43,45 @@ function canReceiveFocus(element: Element | null): element is HTMLElement {
 export function useModalFocusTrap(
   containerRef: RefObject<HTMLElement | null>,
   onClose: (() => void) | null,
-  options: { active?: boolean } = {}
+  options: {
+    active?: boolean;
+    /**
+     * Where focus should land, when it should not simply be the first control.
+     * A delete confirmation lists its destructive action first, so defaulting
+     * to "first focusable" would open it with Delete under the reader's hands.
+     */
+    initialFocus?: RefObject<HTMLElement | null>;
+  } = {}
 ) {
   const active = options.active ?? true;
 
-  useEffect(() => {
+  // Held in a ref so it is not a dependency. Callers pass inline arrows, which
+  // have a new identity every render, so depending on it tore the effect down
+  // and ran cleanup - including the opener restore - on any parent render while
+  // the modal was open, taking focus out of it.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const initialFocusRef = useRef(options.initialFocus);
+  initialFocusRef.current = options.initialFocus;
+  const openerRef = useRef<HTMLElement | null>(null);
+
+  useIsomorphicLayoutEffect(() => {
     if (!active) return;
 
-    const opener = canReceiveFocus(document.activeElement)
-      ? document.activeElement
-      : null;
+    const container = containerRef.current;
+    const currentActive = document.activeElement;
+    if (!openerRef.current || !openerRef.current.isConnected) {
+      if (
+        canReceiveFocus(currentActive) &&
+        (!container || !container.contains(currentActive))
+      ) {
+        openerRef.current = currentActive;
+      }
+    }
+  }, [active, containerRef]);
+
+  useEffect(() => {
+    if (!active) return;
 
     // Deferred so the dialog is laid out before anything is focused. The guard
     // and the cancellation are both load-bearing: a frame delayed by a busy
@@ -53,6 +91,11 @@ export function useModalFocusTrap(
       const container = containerRef.current;
       if (!container) return;
       if (container.contains(document.activeElement)) return;
+      const preferred = initialFocusRef.current?.current ?? null;
+      if (canReceiveFocus(preferred)) {
+        preferred.focus();
+        return;
+      }
       const first = [...container.querySelectorAll(focusableSelector)].find(
         canReceiveFocus
       );
@@ -60,9 +103,10 @@ export function useModalFocusTrap(
     });
 
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape" && onClose) {
+      const close = onCloseRef.current;
+      if (event.key === "Escape" && close) {
         event.preventDefault();
-        onClose();
+        close();
         return;
       }
 
@@ -100,7 +144,23 @@ export function useModalFocusTrap(
     return () => {
       window.removeEventListener("keydown", onKeyDown);
       window.cancelAnimationFrame(frame);
-      if (canReceiveFocus(opener)) opener.focus();
+
+      // Deferred, and skipped if anything else has claimed focus. When one
+      // modal layers over another the outer trap deactivates while the inner
+      // one mounts; restoring immediately sent focus to the page behind, and
+      // the inner trap then recorded that as ITS opener, so closing the inner
+      // modal landed on the background instead of the control that opened it.
+      const opener = openerRef.current;
+      window.requestAnimationFrame(() => {
+        const current = document.activeElement;
+        const focusMovedOn =
+          current instanceof HTMLElement &&
+          current !== document.body &&
+          current.isConnected;
+        if (focusMovedOn) return;
+        if (canReceiveFocus(opener)) opener.focus();
+        openerRef.current = null;
+      });
     };
-  }, [active, containerRef, onClose]);
+  }, [active, containerRef]);
 }

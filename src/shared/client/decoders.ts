@@ -629,3 +629,23 @@ export function isCheckInResponse(value: unknown): value is CheckInRecord {
     (row.note === null || typeof row.note === "string")
   );
 }
+
+export type HabitRecord = {
+  id: string;
+  name: string;
+  cadence: "DAILY" | "TIMES_PER_WEEK";
+  targetPerWeek: number;
+  status: "ACTIVE" | "ARCHIVED";
+};
+
+export function isHabitResponse(value: unknown): value is HabitRecord {
+  if (!value || typeof value !== "object") return false;
+  const habit = value as Partial<HabitRecord>;
+  return (
+    typeof habit.id === "string" &&
+    typeof habit.name === "string" &&
+    ["DAILY", "TIMES_PER_WEEK"].includes(String(habit.cadence)) &&
+    Number.isInteger(habit.targetPerWeek) &&
+    ["ACTIVE", "ARCHIVED"].includes(String(habit.status))
+  );
+}

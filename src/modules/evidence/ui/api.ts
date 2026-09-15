@@ -8,8 +8,21 @@ import { request } from "@/shared/client/api-client";
 import {
   isActivityResponse,
   isCheckInResponse,
-  type CheckInRecord
+  isHabitResponse,
+  type CheckInRecord,
+  type HabitRecord
 } from "@/shared/client/decoders";
+
+export function createHabit(name: string, mutationId: string | null) {
+  return request("/api/habits", {
+    method: "POST",
+    body: { name },
+    mutationId,
+    decode: (result): result is HabitRecord =>
+      isHabitResponse(result) && result.name === name && result.status === "ACTIVE",
+    fallback: "Habit could not be saved. Your draft is still here."
+  });
+}
 
 /**
  * Recording is an upsert keyed by Habit and day, so a repeated request lands on

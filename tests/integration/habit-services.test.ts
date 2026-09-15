@@ -11,6 +11,7 @@ import {
   readActiveHabits,
   readCheckIns,
   readHabitCheckIns,
+  updateHabit,
   upsertCheckIn
 } from "../../src/modules/evidence/services/habits";
 import { addDays, startOfLocalDay } from "../../src/shared/kernel/calendar";
@@ -138,6 +139,39 @@ test("habit services run headlessly on SQLite", async (context) => {
         );
       }
     );
+
+    await context.test("a target-only patch keeps a daily Habit at seven", async () => {
+      // The parser cannot normalise this: the patch carries no cadence, so
+      // only the stored row knows the Habit is daily.
+      const habit = await createHabit(tx, {
+        name: "Stays daily", cadence: "DAILY", targetPerWeek: 7
+      });
+      const updated = await updateHabit(tx, habit.id, { targetPerWeek: 1 });
+      assert.equal(updated.cadence, "DAILY");
+      assert.equal(updated.targetPerWeek, 7);
+    });
+
+    await context.test("a target-only patch is honoured for a times-per-week Habit", async () => {
+      // The control for the case above: normalising everything would break this.
+      const habit = await createHabit(tx, {
+        name: "Stays weekly", cadence: "TIMES_PER_WEEK", targetPerWeek: 5
+      });
+      const updated = await updateHabit(tx, habit.id, { targetPerWeek: 2 });
+      assert.equal(updated.targetPerWeek, 2);
+    });
+
+    await context.test("archiving twice keeps the first timestamp", async () => {
+      // readHabitsActiveDuring decides which past periods contain a Habit from
+      // archivedAt, so moving it would resurrect a Habit in reviews it left.
+      const habit = await createHabit(tx, {
+        name: "Archive twice", cadence: "DAILY", targetPerWeek: 7
+      });
+      const first = await archiveHabit(tx, habit.id, now);
+      const later = new Date(now.getTime() + 86_400_000);
+      const second = await archiveHabit(tx, habit.id, later);
+      assert.equal(second.archivedAt?.getTime(), first.archivedAt?.getTime());
+      assert.notEqual(second.archivedAt?.getTime(), later.getTime());
+    });
 
     await context.test("archiving keeps every Check-in and hides the Habit", async () => {
       const habit = await createHabit(tx, {

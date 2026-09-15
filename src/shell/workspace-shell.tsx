@@ -16,7 +16,7 @@ import { Plus, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { ActivityDialog } from "@/modules/evidence/ui/activity-dialog";
 import { HabitsCard } from "@/modules/evidence/ui/habits-card";
-import { recordCheckIn } from "@/modules/evidence/ui/api";
+import { createHabit, recordCheckIn } from "@/modules/evidence/ui/api";
 import { MobileMoreMenu, Navigation } from "./navigation";
 import { useShellModel } from "./use-shell-model";
 import { type DayView } from "./use-shell-state";
@@ -27,6 +27,7 @@ export function WorkspaceShell() {
   // Declared before the bootstrap-failure return below, which is why it sits
   // here rather than beside the handler that uses it.
   const [busyHabitId, setBusyHabitId] = useState<string | null>(null);
+  const [habitCreatePending, setHabitCreatePending] = useState(false);
   const {
     wideFocusRail,
     data,
@@ -140,6 +141,21 @@ export function WorkspaceShell() {
       );
     } finally {
       setBusyHabitId(null);
+    }
+  };
+  const createHabitFromDraft = async (name: string) => {
+    setHabitCreatePending(true);
+    try {
+      await createHabit(name, null);
+      await refresh();
+      return true;
+    } catch (error) {
+      setAppError(
+        error instanceof Error ? error.message : "Habit could not be saved."
+      );
+      return false;
+    } finally {
+      setHabitCreatePending(false);
     }
   };
   if (!data && bootstrapFailure) {
@@ -259,7 +275,9 @@ export function WorkspaceShell() {
               <HabitsCard
                 habits={data.habits}
                 onRecord={(habitId, done) => void recordHabitCheckIn(habitId, done)}
+                onCreate={createHabitFromDraft}
                 busyHabitId={busyHabitId}
+                createPending={habitCreatePending}
               />
             }
             onFocusTransition={focus.transition}

@@ -65,11 +65,23 @@ test("an unrecorded Habit reads differently from one recorded as not done", asyn
   );
 });
 
-test("the Habits card stays absent until a Habit exists", async ({ page }) => {
+test("the first Habit is created from the card itself", async ({ page }) => {
+  // The card renders with no Habits on purpose: it is the only place to make
+  // the first one. Hiding it when empty left the feature unreachable.
   await openToday(page);
-  await expect(habitsCard(page)).toHaveCount(0);
+  const card = habitsCard(page);
+  await expect(card).toBeVisible();
+  await expect(card).toContainText("No habits yet");
 
-  await createHabit(page, "Added later");
+  await card.getByLabel("New habit name").fill("Morning stretch");
+  await card.getByRole("button", { name: "Add habit" }).click();
+
+  await expect(card.getByRole("button", { name: /Morning stretch/ })).toBeVisible();
+  await expect(card).not.toContainText("No habits yet");
+
+  // It has to be stored, not just rendered.
   await page.reload();
-  await expect(habitsCard(page)).toBeVisible();
+  await expect(
+    habitsCard(page).getByRole("button", { name: /Morning stretch/ })
+  ).toBeVisible();
 });

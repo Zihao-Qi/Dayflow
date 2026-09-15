@@ -1,10 +1,11 @@
 import type { Prisma } from "@prisma/client";
 import { AppError } from "@/shared/kernel/errors";
 import { evidenceErrors } from "../domain/activity";
-import type {
-  CheckInMutation,
-  HabitCreateMutation,
-  HabitPatchMutation
+import {
+  targetForCadence,
+  type CheckInMutation,
+  type HabitCreateMutation,
+  type HabitPatchMutation
 } from "../domain/habit";
 
 export type HabitMutationAction = "load" | "save" | "check-in";
@@ -65,23 +66,48 @@ export function readHabitsActiveDuring(
   });
 }
 
-export function updateHabit(
+/**
+ * A daily Habit always stores a target of 7. The parser can only enforce that
+ * when the patch carries a cadence, so a target-only patch is normalised here
+ * against the stored cadence; otherwise `PATCH {targetPerWeek: 1}` would leave
+ * a DAILY row contradicting its own invariant.
+ */
+export async function updateHabit(
   tx: Prisma.TransactionClient,
   id: string,
   patch: HabitPatchMutation
 ) {
-  return tx.habit.update({ where: { id }, data: patch });
+  const stored = await tx.habit.findUnique({ where: { id } });
+  if (!stored) throw new AppError(evidenceErrors.habitNotFound);
+  const cadence = patch.cadence ?? stored.cadence;
+  const data =
+    patch.targetPerWeek === undefined && patch.cadence === undefined
+      ? patch
+      : {
+        ...patch,
+        targetPerWeek: targetForCadence(
+          cadence,
+          patch.targetPerWeek ?? stored.targetPerWeek
+        )
+      };
+  return tx.habit.update({ where: { id }, data });
 }
 
 /**
  * Archiving keeps every Check-in. A Habit is never deleted, so the record of
  * what happened cannot be destroyed by removing the thing it described.
  */
-export function archiveHabit(
+export async function archiveHabit(
   tx: Prisma.TransactionClient,
   id: string,
   now: Date
 ) {
+  const stored = await tx.habit.findUnique({ where: { id } });
+  if (!stored) throw new AppError(evidenceErrors.habitNotFound);
+  // Archiving twice must not move the boundary. `readHabitsActiveDuring` uses
+  // archivedAt to decide which past periods contain the Habit, so overwriting
+  // it would make a retired Habit reappear in reviews it had left.
+  if (stored.status === "ARCHIVED") return stored;
   return tx.habit.update({
     where: { id },
     data: { status: "ARCHIVED", archivedAt: now }

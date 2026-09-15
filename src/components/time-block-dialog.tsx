@@ -134,13 +134,19 @@ export function TimeBlockDialog({
 
       const first = focusable[0];
       const last = focusable.at(-1) ?? first;
-      if (!dialog.contains(document.activeElement)) {
+      // An element contains itself, so a bare contains() check treats the
+      // container as "inside" while it matches neither first nor last. Neither
+      // branch then prevented default and Shift+Tab escaped backwards out of
+      // the dialog. The container holds focus whenever someone clicks its
+      // padding, and it is focused programmatically in places too.
+      const active = document.activeElement;
+      if (active === dialog || !dialog.contains(active)) {
         event.preventDefault();
         (event.shiftKey ? last : first).focus();
-      } else if (event.shiftKey && document.activeElement === first) {
+      } else if (event.shiftKey && active === first) {
         event.preventDefault();
         last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
+      } else if (!event.shiftKey && active === last) {
         event.preventDefault();
         first.focus();
       }

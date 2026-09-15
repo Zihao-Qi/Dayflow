@@ -64,6 +64,7 @@ import {
   Trash2
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useModalFocusTrap } from "@/components/use-modal-focus-trap";
 
 type ProjectsWorkspaceProps = {
   projects: ProjectSummary[];
@@ -449,6 +450,9 @@ function ProjectCreateForm({
     await onCreated(result);
   }
 
+  const createDialogRef = useRef<HTMLElement | null>(null);
+  useModalFocusTrap(createDialogRef, saving ? null : onCancel);
+
   return (
     <div
       className="project-dialog-overlay"
@@ -456,9 +460,11 @@ function ProjectCreateForm({
       onMouseDown={saving ? undefined : onCancel}
     >
       <section
+        ref={createDialogRef}
         className="project-create-dialog"
         role="dialog"
         aria-modal="true"
+        tabIndex={-1}
         aria-label="Create project"
         onMouseDown={(event) => event.stopPropagation()}
       >
@@ -1707,6 +1713,15 @@ function ProjectEditForm({
     setSaving(false);
   }
 
+  const editDialogRef = useRef<HTMLElement | null>(null);
+  const projectDeleteRef = useRef<HTMLElement | null>(null);
+  // The confirmation layers over the edit dialog, so only one trap is live at
+  // a time - otherwise both would fight over Tab, as the restore flow showed.
+  useModalFocusTrap(editDialogRef, onCancel, { active: !deleteConfirmOpen });
+  useModalFocusTrap(projectDeleteRef, () => setDeleteConfirmOpen(false), {
+    active: deleteConfirmOpen
+  });
+
   return (
     <div
       className="project-dialog-overlay project-edit-overlay"
@@ -1714,9 +1729,11 @@ function ProjectEditForm({
       onMouseDown={onCancel}
     >
       <section
+        ref={editDialogRef}
         className="project-create-dialog project-edit-dialog"
         role="dialog"
         aria-modal="true"
+        tabIndex={-1}
         aria-label={`Edit ${project.name}`}
         onMouseDown={(event) => event.stopPropagation()}
       >
@@ -1892,9 +1909,11 @@ function ProjectEditForm({
           onMouseDown={() => setDeleteConfirmOpen(false)}
         >
           <section
+            ref={projectDeleteRef}
             className="project-delete-confirm"
             role="alertdialog"
             aria-modal="true"
+            tabIndex={-1}
             aria-label={`Delete ${project.name}`}
             onMouseDown={(event) => event.stopPropagation()}
           >
@@ -1994,6 +2013,11 @@ function ProjectPhaseSection({
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [deleteConfirmOpen, deleting]);
 
+  const phaseDeleteRef = useRef<HTMLElement | null>(null);
+  useModalFocusTrap(phaseDeleteRef, deleting ? null : closeDeleteConfirm, {
+    active: Boolean(phase && onDeletePhase && deleteConfirmOpen)
+  });
+
   return (
     <section className="project-phase-section">
       <div className="phase-header">
@@ -2054,9 +2078,11 @@ function ProjectPhaseSection({
           onMouseDown={deleting ? undefined : closeDeleteConfirm}
         >
           <section
+            ref={phaseDeleteRef}
             className="project-delete-confirm"
             role="alertdialog"
             aria-modal="true"
+            tabIndex={-1}
             aria-label={`Delete phase ${phase.name}`}
             onMouseDown={(event) => event.stopPropagation()}
           >
@@ -2198,6 +2224,11 @@ function ProjectTaskItem({
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [deleteConfirmOpen, deleting]);
 
+  const taskDeleteRef = useRef<HTMLElement | null>(null);
+  useModalFocusTrap(taskDeleteRef, deleting ? null : closeDeleteConfirm, {
+    active: deleteConfirmOpen
+  });
+
   return (
     <article
       className={[
@@ -2316,9 +2347,11 @@ function ProjectTaskItem({
           onMouseDown={deleting ? undefined : closeDeleteConfirm}
         >
           <section
+            ref={taskDeleteRef}
             className="project-delete-confirm"
             role="alertdialog"
             aria-modal="true"
+            tabIndex={-1}
             aria-label={`Delete task ${task.title}`}
             onMouseDown={(event) => event.stopPropagation()}
           >

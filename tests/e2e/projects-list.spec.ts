@@ -413,6 +413,25 @@ test("keeps a completed Project's drawer tasks editable while disallowing new un
   await drawer.getByRole("button", { name: "Delete task Finished evidence", exact: true }).click();
   const confirmDialog = page.getByRole("alertdialog", { name: "Delete task Finished evidence" });
   await expect(confirmDialog).toBeVisible();
+
+  // This confirmation declared aria-modal with no keyboard handling at all, so
+  // Tab left for the page behind on the first press. On a destructive dialog
+  // that means answering a question you can no longer see.
+  await expect
+    .poll(() =>
+      confirmDialog.evaluate((element) => element.contains(document.activeElement))
+    )
+    .toBe(true);
+  await confirmDialog.evaluate((element) => (element as HTMLElement).focus());
+  await page.keyboard.press("Shift+Tab");
+  expect(
+    await confirmDialog.evaluate((element) => element.contains(document.activeElement))
+  ).toBe(true);
+  await page.keyboard.press("Tab");
+  expect(
+    await confirmDialog.evaluate((element) => element.contains(document.activeElement))
+  ).toBe(true);
+
   await confirmDialog.getByRole("button", { name: "Delete task", exact: true }).click();
   await expect(confirmDialog).not.toBeVisible();
 

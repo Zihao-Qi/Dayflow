@@ -4,7 +4,9 @@ import { ActivityDraft, ActivityTaskOption } from "@/components/activity-records
 import { formatLongLocalDateKey } from "@/components/dashboard-formatters";
 import { ACTIVITY_CATEGORY_MAX_LENGTH } from "@/lib/activity-categories";
 import { ProjectSummary } from "@/lib/project-domain";
+import { useModalFocusTrap } from "@/components/use-modal-focus-trap";
 import { Plus, Save } from "lucide-react";
+import { useRef } from "react";
 
 export function ActivityDialog({
   mode,
@@ -47,6 +49,11 @@ export function ActivityDialog({
     ? originalInheritedProjectId
     : currentTaskProjectId;
   const title = mode === "edit" ? "Edit activity" : "Log activity";
+  const dialogRef = useRef<HTMLElement | null>(null);
+  // Declared aria-modal with no keyboard handling at all: no Escape, and Tab
+  // left for the page behind on the first press.
+  useModalFocusTrap(dialogRef, saving ? null : onClose);
+
   return (
     <div
       className="palette-overlay activity-dialog-overlay"
@@ -54,10 +61,12 @@ export function ActivityDialog({
       onMouseDown={saving ? undefined : onClose}
     >
       <section
+        ref={dialogRef}
         className="activity-dialog panel"
         role="dialog"
         aria-modal="true"
         aria-label={title}
+        tabIndex={-1}
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="dialog-heading">

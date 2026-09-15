@@ -210,4 +210,3 @@ test("recordCheckIn validates habitId, local date, done and explicit submitted m
   const omittedCheck = await recordCheckIn(habitId, { date: "2026-09-14", done: true }, null);
   assert.equal(omittedCheck.amount, 20);
 });
-

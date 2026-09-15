@@ -25,9 +25,9 @@ export function createHabit(name: string, mutationId: string | null) {
 }
 
 /**
- * Recording is an upsert keyed by Habit and day, so a repeated request lands on
- * the same row and the mutation id is optional. Callers that want a lost
- * response replayed verbatim may still pass one.
+ * Check-in writes follow CHECK_INS_V1's mutation-ID convention. Passing a stable
+ * mutation id allows uncertain network retries to be replayed idempotently
+ * and detected if reused across differing operations.
  */
 export function recordCheckIn(
   habitId: string,

@@ -144,7 +144,7 @@ export function useBootstrap({
       return true;
     } catch {
       setAppError(
-        "Your change was saved, but Dayflow could not refresh the latest view. Reload to try again."
+        "Your change was saved, but Dayflow could not refresh the latest view. Retry refresh or reload."
       );
       setAppAnnouncement("Saved, but the latest view could not be refreshed.");
       return false;

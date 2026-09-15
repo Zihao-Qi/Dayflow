@@ -508,6 +508,22 @@ export function WorkspaceShell() {
       {appError && (
         <div className="app-error-toast" role="alert">
           <span>{appError}</span>
+          {appError.includes("refresh") && (
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={async () => {
+                try {
+                  await refresh();
+                  setAppError("");
+                } catch {
+                  // read refresh remains in error
+                }
+              }}
+            >
+              Retry refresh
+            </button>
+          )}
           <button className="text-button" onClick={() => setAppError("")}>
             Dismiss
           </button>

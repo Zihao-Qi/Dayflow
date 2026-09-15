@@ -325,4 +325,3 @@ test("isHabitSummaryRecord validates complete declared DTO fields and rejects ma
   assert.equal(isHabitSummaryRecord({ ...valid, days: [{ day: "2026-09-14", state: "done", amount: 1.5 }] }), false);
   assert.equal(isHabitSummaryRecord({ ...valid, days: [{ day: "2026-09-14", state: "unknown" as unknown as "done", amount: null }] }), false);
 });
-

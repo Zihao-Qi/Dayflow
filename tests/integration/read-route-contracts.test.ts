@@ -90,6 +90,25 @@ test("bootstrap, agent export, and CSV preserve their seeded read contracts", as
   const checkIn = await database.habitCheckIn.create({
     data: { habitId: habit.id, date: today, done: true, amount: 20, note: "Chapter 1" }
   });
+  const archivedHabit = await database.habit.create({
+    data: {
+      name: "Old Habit",
+      cadence: "TIMES_PER_WEEK",
+      targetPerWeek: 3,
+      sortOrder: 1,
+      status: "ARCHIVED",
+      archivedAt: yesterday
+    }
+  });
+  const archivedCheckIn = await database.habitCheckIn.create({
+    data: {
+      habitId: archivedHabit.id,
+      date: yesterday,
+      done: true,
+      amount: 15,
+      note: "Archived note"
+    }
+  });
 
   const [{ GET: bootstrap }, { GET: agentExport }, { GET: csvExport }] = await Promise.all([
     import("../../src/app/api/bootstrap/route"),
@@ -181,12 +200,24 @@ test("bootstrap, agent export, and CSV preserve their seeded read contracts", as
       tasks: [overdue.id, task.id, future.id], scheduleChanges: [change.id], notes: [note.id],
       diaryEntries: [diary.id], reviews: [review.id], materials: [material.id],
       timeBlocks: [block.id], activities: [activity.id, futureActivity.id],
-      habits: [habit.id], checkIns: [checkIn.id]
+      habits: [habit.id, archivedHabit.id], checkIns: [archivedCheckIn.id, checkIn.id]
     };
     for (const [key, ids] of Object.entries(expectedIds)) {
       assert.ok(Array.isArray(body[key]), `${key} is a collection`);
       assert.deepEqual(body[key].map((row: { id: string }) => row.id), ids, key);
     }
+    const exportedArchivedHabit = body.habits.find((row: { id: string }) => row.id === archivedHabit.id);
+    assert.ok(exportedArchivedHabit);
+    assert.equal(exportedArchivedHabit.status, "ARCHIVED");
+    assert.equal(exportedArchivedHabit.name, "Old Habit");
+    assert.equal(exportedArchivedHabit.archivedAt, yesterday.toISOString());
+
+    const exportedArchivedCheckIn = body.checkIns.find((row: { id: string }) => row.id === archivedCheckIn.id);
+    assert.ok(exportedArchivedCheckIn);
+    assert.equal(exportedArchivedCheckIn.habitId, archivedHabit.id);
+    assert.equal(exportedArchivedCheckIn.amount, 15);
+    assert.equal(exportedArchivedCheckIn.note, "Archived note");
+    assert.equal(exportedArchivedCheckIn.done, true);
     assert.equal(body.app, "Dayflow");
     assert.equal(body.exportFormat, "dayflow-json");
     assert.equal(body.exportVersion, 1);

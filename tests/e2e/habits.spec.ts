@@ -126,7 +126,7 @@ test("retries an unconfirmed Habit create with the same mutation ID and retires 
 
   // Failed create keeps draft in input and displays error
   await expect(input).toHaveValue("Morning stretch");
-  await expect(page.locator(".sr-only[role='status']")).toHaveText("Habit was not saved.");
+  await expect(page.locator(".sr-only[role='status']")).toHaveText("Habit status unconfirmed. Your draft is still here.");
 
   // Retry with same draft
   await addButton.click();
@@ -138,22 +138,27 @@ test("retries an unconfirmed Habit create with the same mutation ID and retires 
   expect(mutationIds[0]).toBeTruthy();
   expect(mutationIds[1]).toBe(mutationIds[0]);
 
-  // Deliberate subsequent create gets a new mutation ID
-  await input.fill("Evening walk");
+  // Deliberate subsequent create with the SAME name gets a new mutation ID
+  await input.fill("Morning stretch");
   await addButton.click();
 
-  await expect(card.getByRole("button", { name: /Evening walk/ })).toBeVisible();
+  await expect(card.getByRole("button", { name: /Morning stretch/ })).toHaveCount(2);
   expect(mutationIds.length).toBe(3);
   expect(mutationIds[2]).toBeTruthy();
   expect(mutationIds[2]).not.toBe(mutationIds[0]);
 
-  // Verify DB has exactly 2 habits, not 3 (the retry was idempotent)
+  // Verify DB has exactly 2 distinct habits, not 1 or 3 (retry was idempotent, retirement enabled 2nd creation)
   await page.reload();
-  await expect(card.getByRole("button", { name: /Morning stretch/ })).toBeVisible();
-  await expect(card.getByRole("button", { name: /Evening walk/ })).toBeVisible();
+  await expect(card.getByRole("button", { name: /Morning stretch/ })).toHaveCount(2);
 });
 
 test("separates confirmed write success from read-refresh failure", async ({ page }) => {
+  let habitCreateRequests = 0;
+  await page.route("**/api/habits", async (route) => {
+    if (route.request().method() === "POST") habitCreateRequests += 1;
+    await route.continue();
+  });
+
   await openToday(page);
   const card = habitsCard(page);
 
@@ -179,16 +184,29 @@ test("separates confirmed write success from read-refresh failure", async ({ pag
   await addButton.click();
 
   // The habit remains visible in the list because write succeeded
-  await expect(card.getByRole("button", { name: /Morning stretch/ })).toBeVisible();
+  const habitButton = card.getByRole("button", { name: /Morning stretch/ });
+  await expect(habitButton).toBeVisible();
+  // Coherent display: not recorded today, canonical target 1 (not fabricated target 7 with 0 days)
+  await expect(habitButton).toContainText("not recorded today");
+  await expect(card.getByText("0 of 1 this period")).toBeVisible();
   // The draft was cleared on confirmed write
   await expect(input).toHaveValue("");
-  // It does NOT claim habit could not be saved
-  await expect(page.getByText("Habit could not be saved. Your draft is still here.")).toHaveCount(0);
+  // Truthful saved-but-refresh-failed feedback
+  const toast = page.locator(".app-error-toast");
+  await expect(toast).toContainText("Your change was saved, but Dayflow could not refresh the latest view.");
+  const retryButton = toast.getByRole("button", { name: "Retry refresh" });
+  await expect(retryButton).toBeVisible();
 
-  // When refresh recovers, the habit is still there
+  // Recover read refresh and click Retry refresh (no page.reload!)
   failRefresh = false;
-  await page.reload();
-  await expect(card.getByRole("button", { name: /Morning stretch/ })).toBeVisible();
+  await retryButton.click();
+
+  // Read error is resolved and toast is dismissed
+  await expect(toast).toHaveCount(0);
+  // Fresh content is visible and preserved
+  await expect(habitButton).toBeVisible();
+  // Only a single write request was sent
+  expect(habitCreateRequests).toBe(1);
 });
 
 test("tracks independent busy states across simultaneous habit check-ins", async ({ page }) => {
@@ -245,3 +263,82 @@ test("tracks independent busy states across simultaneous habit check-ins", async
   await expect(buttonA).toBeEnabled();
 });
 
+test("delayed check-in does not mark a new day done after calendar rollover", async ({ page }) => {
+  await createHabit(page, "Morning stretch");
+
+  const now = new Date();
+  const loadingTime = new Date(now);
+  loadingTime.setHours(23, 55, 0, 0);
+  const lateToday = new Date(now);
+  lateToday.setHours(23, 59, 59, 0);
+  await page.clock.install({ time: loadingTime });
+
+  let releaseCheckIn: () => void = () => {};
+  const checkInGate = new Promise<void>((resolve) => { releaseCheckIn = resolve; });
+
+  let failTrailingRefresh = false;
+  let shiftToNewDay = false;
+
+  await page.route("**/api/habits/*/check-in", async (route) => {
+    await checkInGate;
+    await route.continue();
+  });
+
+  await page.route("**/api/bootstrap", async (route) => {
+    if (failTrailingRefresh) {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Trailing refresh offline." })
+      });
+      return;
+    }
+    const response = await route.fetch();
+    const payload = await response.json();
+    if (shiftToNewDay) {
+      const currentToday = new Date(payload.today);
+      const nextDay = new Date(currentToday);
+      nextDay.setDate(nextDay.getDate() + 1);
+      payload.today = nextDay.toISOString();
+      payload.todayKey = nextDay.toISOString().slice(0, 10);
+      if (Array.isArray(payload.habits)) {
+        payload.habits = payload.habits.map((h: Record<string, unknown>) => ({
+          ...h,
+          today: null
+        }));
+      }
+    }
+    await route.fulfill({ response, json: payload });
+  });
+
+  await openToday(page);
+  const card = habitsCard(page);
+  const button = card.getByRole("button", { name: /Morning stretch/ });
+  await expect(button).toContainText("not recorded today");
+
+  // Trigger check-in for Day 1; it pauses at checkInGate
+  await button.click();
+  await expect(button).toBeDisabled();
+
+  // While check-in is pending in flight, advance clock across midnight to publish new-day read (Day 2)
+  const newDayResponse = page.waitForResponse(
+    (res) => res.url().includes("/api/bootstrap") && res.status() === 200
+  );
+  shiftToNewDay = true;
+  await page.clock.pauseAt(lateToday);
+  await page.clock.runFor(1_500);
+  await newDayResponse;
+
+  // Set trailing refresh to fail
+  failTrailingRefresh = true;
+
+  // Release the pending old-day check-in response
+  releaseCheckIn();
+
+  // The button re-enables after check-in completes
+  await expect(button).toBeEnabled();
+
+  // Under rollover protection, yesterday's check-in must NOT mark today done!
+  await expect(button).toHaveAttribute("aria-pressed", "false");
+  await expect(button).toContainText("not recorded today");
+});

@@ -10,8 +10,10 @@ import { AppError } from "@/shared/kernel/errors";
 type Params = { params: Promise<{ id: string }> };
 
 /**
- * Recording is an upsert keyed by (habitId, date), so repeating the request is
- * harmless whether or not it carries a mutation id.
+ * Storage is an upsert keyed by (habitId, date), but check-in writes follow
+ * CHECK_INS_V1's mutation-ID convention so clients can distinguish replays,
+ * detect mutation-ID reuse conflicts across differing requests, and receive
+ * idempotent receipts.
  */
 export async function PUT(request: NextRequest, { params }: Params) {
   const now = clock.now();
@@ -28,7 +30,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
     const checkIn = await runOnce({
       mutationId,
       kind: "habit.check-in",
-      payload: { habitId: id, ...body },
+      payload: { ...body, habitId: id },
       create: async (tx) => {
         // Without this an unknown Habit would surface as a foreign-key failure
         // rather than as "Habit not found".

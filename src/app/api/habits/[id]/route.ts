@@ -22,7 +22,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     const habit = await runOnce({
       mutationId,
       kind: "habit.patch",
-      payload: { habitId: id, ...body },
+      payload: { ...body, habitId: id },
       create: (tx) => updateHabit(tx, id, patch)
     });
     return NextResponse.json(habit);

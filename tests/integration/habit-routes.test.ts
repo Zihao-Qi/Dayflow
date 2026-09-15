@@ -242,6 +242,86 @@ test("Habit routes", async (context) => {
       assert.deepEqual(await arch2.json(), await arch1.json());
     });
 
+    await context.test("different Habit URLs conflict and leave the second Habit unchanged on PATCH", async () => {
+      const habit1 = await (
+        await routes.createHabit(jsonRequest("/api/habits", "POST", { name: "Patch target 1" }))
+      ).json();
+      const habit2 = await (
+        await routes.createHabit(jsonRequest("/api/habits", "POST", { name: "Patch target 2" }))
+      ).json();
+
+      const patch1 = await routes.patchHabit(
+        jsonRequest(`/api/habits/${habit1.id}`, "PATCH", { habitId: habit1.id, name: "Updated" }, "shared-patch-mut"),
+        params(habit1.id)
+      );
+      assert.equal(patch1.status, 200);
+      assert.equal((await patch1.json()).name, "Updated");
+
+      const patch2 = await routes.patchHabit(
+        jsonRequest(`/api/habits/${habit2.id}`, "PATCH", { habitId: habit1.id, name: "Updated" }, "shared-patch-mut"),
+        params(habit2.id)
+      );
+      assert.equal(patch2.status, 409);
+      const errorBody = await patch2.json();
+      assert.equal(errorBody.code, "MUTATION_ID_CONFLICT");
+
+      const storedHabit2 = await prisma.habit.findUniqueOrThrow({ where: { id: habit2.id } });
+      assert.equal(storedHabit2.name, "Patch target 2");
+    });
+
+    await context.test("different Habit URLs conflict and leave the second Habit unchanged on PUT check-in", async () => {
+      const habit1 = await (
+        await routes.createHabit(jsonRequest("/api/habits", "POST", { name: "CheckIn target 1" }))
+      ).json();
+      const habit2 = await (
+        await routes.createHabit(jsonRequest("/api/habits", "POST", { name: "CheckIn target 2" }))
+      ).json();
+
+      const checkIn1 = await routes.recordCheckIn(
+        jsonRequest(`/api/habits/${habit1.id}/check-in`, "PUT", { habitId: habit1.id, date: dayKey(0), done: true }, "shared-checkin-mut"),
+        params(habit1.id)
+      );
+      assert.equal(checkIn1.status, 200);
+
+      const checkIn2 = await routes.recordCheckIn(
+        jsonRequest(`/api/habits/${habit2.id}/check-in`, "PUT", { habitId: habit1.id, date: dayKey(0), done: true }, "shared-checkin-mut"),
+        params(habit2.id)
+      );
+      assert.equal(checkIn2.status, 409);
+      const errorBody = await checkIn2.json();
+      assert.equal(errorBody.code, "MUTATION_ID_CONFLICT");
+
+      assert.equal(await prisma.habitCheckIn.count({ where: { habitId: habit2.id } }), 0);
+    });
+
+    await context.test("reused mutation ID across different Habit archive URLs yields MUTATION_ID_CONFLICT", async () => {
+      const habit1 = await (
+        await routes.createHabit(jsonRequest("/api/habits", "POST", { name: "Archive target 1" }))
+      ).json();
+      const habit2 = await (
+        await routes.createHabit(jsonRequest("/api/habits", "POST", { name: "Archive target 2" }))
+      ).json();
+
+      const arch1 = await routes.archiveHabit(
+        jsonRequest(`/api/habits/${habit1.id}/archive`, "POST", undefined, "shared-arch-mut"),
+        params(habit1.id)
+      );
+      assert.equal(arch1.status, 200);
+      assert.equal((await arch1.json()).status, "ARCHIVED");
+
+      const arch2 = await routes.archiveHabit(
+        jsonRequest(`/api/habits/${habit2.id}/archive`, "POST", undefined, "shared-arch-mut"),
+        params(habit2.id)
+      );
+      assert.equal(arch2.status, 409);
+      const errorBody = await arch2.json();
+      assert.equal(errorBody.code, "MUTATION_ID_CONFLICT");
+
+      const storedHabit2 = await prisma.habit.findUniqueOrThrow({ where: { id: habit2.id } });
+      assert.equal(storedHabit2.status, "ACTIVE");
+      assert.equal(storedHabit2.archivedAt, null);
+    });
+
     await context.test("validation is refused while storage is unavailable", async () => {
       // Parsing must happen before a transaction is opened, so a bad request
       // still gets its own error rather than a storage failure.

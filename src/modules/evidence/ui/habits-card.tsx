@@ -30,14 +30,12 @@ export function HabitsCard({
   onRecord,
   onCreate,
   busyHabitIds,
-  busyHabitId = null,
   createPending
 }: {
   habits: HabitSummary[];
   onRecord: (habitId: string, done: boolean) => void;
   onCreate: (name: string) => Promise<boolean>;
-  busyHabitIds?: ReadonlySet<string> | string[];
-  busyHabitId?: string | null;
+  busyHabitIds: ReadonlySet<string>;
   createPending: boolean;
 }) {
   const [draft, setDraft] = useState("");
@@ -59,12 +57,7 @@ export function HabitsCard({
           {habits.map((habit) => {
             const recorded = habit.today !== null;
             const done = habit.today?.done === true;
-            const busy =
-              (busyHabitIds instanceof Set
-                ? busyHabitIds.has(habit.id)
-                : Array.isArray(busyHabitIds)
-                  ? busyHabitIds.includes(habit.id)
-                  : false) || busyHabitId === habit.id;
+            const busy = busyHabitIds.has(habit.id);
             return (
               <div key={habit.id} data-habit={habit.id}>
                 <button

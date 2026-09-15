@@ -24,10 +24,6 @@ import { mergeTimeBlockTaskOptions } from "./use-time-block-actions";
 
 export function WorkspaceShell() {
   const model = useShellModel();
-  // Declared before the bootstrap-failure return below, which is why it sits
-  // here rather than beside the handler that uses it.
-  const [busyHabitId, setBusyHabitId] = useState<string | null>(null);
-  const [habitCreatePending, setHabitCreatePending] = useState(false);
   const {
     wideFocusRail,
     data,
@@ -123,41 +119,12 @@ export function WorkspaceShell() {
     editTimeBlock,
     changeTimeBlockTask,
     saveTimeBlock,
-    deleteTimeBlock
+    deleteTimeBlock,
+    busyHabitIds,
+    habitCreatePending,
+    createHabitFromDraft,
+    recordHabitCheckIn
   } = model;
-  /**
-   * Recording carries no mutation id: the Check-in is an upsert keyed by Habit
-   * and day, so a retry lands on the same row rather than creating a second.
-   */
-  const recordHabitCheckIn = async (habitId: string, done: boolean) => {
-    if (!data) return;
-    setBusyHabitId(habitId);
-    try {
-      await recordCheckIn(habitId, { date: data.todayKey, done }, null);
-      await refresh();
-    } catch (error) {
-      setAppError(
-        error instanceof Error ? error.message : "Check-in could not be saved."
-      );
-    } finally {
-      setBusyHabitId(null);
-    }
-  };
-  const createHabitFromDraft = async (name: string) => {
-    setHabitCreatePending(true);
-    try {
-      await createHabit(name, null);
-      await refresh();
-      return true;
-    } catch (error) {
-      setAppError(
-        error instanceof Error ? error.message : "Habit could not be saved."
-      );
-      return false;
-    } finally {
-      setHabitCreatePending(false);
-    }
-  };
   if (!data && bootstrapFailure) {
     const migrationRequired =
       bootstrapFailure.code === "DATABASE_MIGRATION_REQUIRED";
@@ -276,7 +243,7 @@ export function WorkspaceShell() {
                 habits={data.habits}
                 onRecord={(habitId, done) => void recordHabitCheckIn(habitId, done)}
                 onCreate={createHabitFromDraft}
-                busyHabitId={busyHabitId}
+                busyHabitIds={busyHabitIds}
                 createPending={habitCreatePending}
               />
             }

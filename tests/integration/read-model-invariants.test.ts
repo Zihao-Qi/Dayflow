@@ -173,11 +173,13 @@ test("bootstrap and agent export preserve their payload contracts", async (conte
       assert.deepEqual(Object.keys(body).sort(), [
         "activities",
         "app",
+        "checkIns",
         "diaryEntries",
         "exportFormat",
         "exportVersion",
         "exportedAt",
         "focusSessions",
+        "habits",
         "materials",
         "notes",
         "phases",

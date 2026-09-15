@@ -113,14 +113,25 @@ export function isHabitSummaryRecord(value: unknown): value is HabitSummaryRecor
   return (
     typeof habit.id === "string" &&
     typeof habit.name === "string" &&
+    (habit.cadence === "DAILY" || habit.cadence === "TIMES_PER_WEEK") &&
+    Number.isInteger(habit.targetPerWeek) &&
+    Number.isInteger(habit.sortOrder) &&
     Number.isInteger(habit.doneCount) &&
     Number.isInteger(habit.target) &&
+    (habit.today === null ||
+      (typeof habit.today === "object" &&
+        habit.today !== null &&
+        typeof habit.today.done === "boolean" &&
+        (habit.today.amount === null || Number.isInteger(habit.today.amount)) &&
+        (habit.today.note === null || typeof habit.today.note === "string"))) &&
     Array.isArray(habit.days) &&
     habit.days.every(
       (day) =>
         Boolean(day) &&
+        typeof day === "object" &&
         typeof day.day === "string" &&
-        ["done", "notDone", "unrecorded", "outOfScope"].includes(day.state)
+        ["done", "notDone", "unrecorded", "outOfScope"].includes(day.state) &&
+        (day.amount === null || Number.isInteger(day.amount))
     )
   );
 }

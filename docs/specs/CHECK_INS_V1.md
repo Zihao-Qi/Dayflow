@@ -249,7 +249,7 @@ phone width the list stacks to one column and keeps a minimum 16px side gutter.
 - Recording twice with the same mutation id replays one response and leaves one
   row, matching the existing idempotency tests.
 - A Check-in dated one day outside the backfill window is refused with
-  `CHECK_IN_DATE_OUT_OF_RANGE`, and one day inside it succeeds. The pair is the
+  `VALIDATION_ERROR`, and one day inside it succeeds. The pair is the
   negative control; neither test is meaningful alone.
 - An unrecorded day and an explicit `done: false` produce different read-model
   output. A test that cannot tell them apart would pass under the rejected design

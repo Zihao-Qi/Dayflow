@@ -15,7 +15,9 @@ export async function GET() {
     reviews,
     materials,
     timeBlocks,
-    activities
+    activities,
+    habits,
+    checkIns
   ] = await runInTransaction(async (tx) => Promise.all([
     tx.project.findMany({ orderBy: { updatedAt: "desc" } }),
     tx.projectPhase.findMany({ orderBy: [{ projectId: "asc" }, { sortOrder: "asc" }] }),
@@ -27,7 +29,9 @@ export async function GET() {
     tx.review.findMany({ orderBy: { periodStart: "desc" } }),
     tx.material.findMany({ orderBy: { createdAt: "desc" } }),
     tx.timeBlock.findMany({ orderBy: { date: "asc" } }),
-    tx.activityEntry.findMany({ orderBy: { startedAt: "asc" } })
+    tx.activityEntry.findMany({ orderBy: { startedAt: "asc" } }),
+    tx.habit.findMany({ orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] }),
+    tx.habitCheckIn.findMany({ orderBy: [{ date: "asc" }, { habitId: "asc" }] })
   ]), { timeout: 60000 });
 
   return NextResponse.json({
@@ -36,7 +40,7 @@ export async function GET() {
     exportVersion: 1,
     exportedAt: now.toISOString(),
     purpose: "Complete local-first productivity data for analysis and external agents.",
-    schemaVersion: 6,
+    schemaVersion: 7,
     projects,
     phases,
     focusSessions,
@@ -47,7 +51,9 @@ export async function GET() {
     reviews,
     materials,
     timeBlocks,
-    activities
+    activities,
+    habits,
+    checkIns
   });
 }
 

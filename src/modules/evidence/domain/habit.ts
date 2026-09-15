@@ -43,9 +43,12 @@ export type HabitPatchMutation = {
 export type CheckInMutation = {
   date: Date;
   done: boolean;
-  /** Both optional fields use null for absent, never a zero or empty string. */
-  amount: number | null;
-  note: string | null;
+  /**
+   * Both optional fields use null for explicit clearing, and undefined when
+   * omitted from the mutation body so existing evidence is preserved on toggle.
+   */
+  amount?: number | null;
+  note?: string | null;
 };
 
 /**
@@ -283,9 +286,13 @@ function parseDone(value: unknown) {
 /**
  * The amount is optional, and absent is not zero: a Habit recorded without a
  * number must not read as "did nothing".
+ *
+ * An omitted field (undefined) preserves existing evidence on toggle, while an
+ * explicit null clears the value.
  */
-function parseAmount(value: unknown) {
-  if (value === undefined || value === null) return null;
+function parseAmount(value: unknown): number | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
   return parseBoundedInteger(
     value,
     "amount",
@@ -295,8 +302,9 @@ function parseAmount(value: unknown) {
   );
 }
 
-function parseNote(value: unknown) {
-  if (value === undefined || value === null) return null;
+function parseNote(value: unknown): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
   return parseBoundedString(
     value,
     "note",

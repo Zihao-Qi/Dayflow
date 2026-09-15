@@ -112,6 +112,50 @@ test("Habit routes", async (context) => {
       assert.equal(await prisma.habitCheckIn.count({ where: { habitId: habit.id } }), 1);
     });
 
+    await context.test("PUT check-in preserves existing amount and note on toggle", async () => {
+      const habit = await (
+        await routes.createHabit(jsonRequest("/api/habits", "POST", { name: "Route toggle" }))
+      ).json();
+      await routes.recordCheckIn(
+        jsonRequest(`/api/habits/${habit.id}/check-in`, "PUT", {
+          date: dayKey(0),
+          done: true,
+          amount: 25,
+          note: "morning routine"
+        }),
+        params(habit.id)
+      );
+
+      // Toggle done only (omitting amount and note)
+      const toggled = await routes.recordCheckIn(
+        jsonRequest(`/api/habits/${habit.id}/check-in`, "PUT", {
+          date: dayKey(0),
+          done: false
+        }),
+        params(habit.id)
+      );
+      assert.equal(toggled.status, 200);
+      const row = await toggled.json();
+      assert.equal(row.done, false);
+      assert.equal(row.amount, 25);
+      assert.equal(row.note, "morning routine");
+
+      // Explicit null clears
+      const cleared = await routes.recordCheckIn(
+        jsonRequest(`/api/habits/${habit.id}/check-in`, "PUT", {
+          date: dayKey(0),
+          done: false,
+          amount: null,
+          note: null
+        }),
+        params(habit.id)
+      );
+      assert.equal(cleared.status, 200);
+      const clearedRow = await cleared.json();
+      assert.equal(clearedRow.amount, null);
+      assert.equal(clearedRow.note, null);
+    });
+
     await context.test("a date outside the backfill window is refused", async () => {
       const habit = await (
         await routes.createHabit(jsonRequest("/api/habits", "POST", { name: "Window" }))
@@ -167,6 +211,35 @@ test("Habit routes", async (context) => {
       const listed = await (await routes.listHabits()).json();
       assert.equal(listed.some((entry: { id: string }) => entry.id === habit.id), false);
       assert.equal(await prisma.habitCheckIn.count({ where: { habitId: habit.id } }), 1);
+    });
+
+    await context.test("patching and archiving with mutation id are idempotent", async () => {
+      const habit = await (
+        await routes.createHabit(jsonRequest("/api/habits", "POST", { name: "Patch target" }))
+      ).json();
+      const patch1 = await routes.patchHabit(
+        jsonRequest(`/api/habits/${habit.id}`, "PATCH", { name: "Renamed" }, "patch-mut-1"),
+        params(habit.id)
+      );
+      assert.equal(patch1.status, 200);
+      const patch2 = await routes.patchHabit(
+        jsonRequest(`/api/habits/${habit.id}`, "PATCH", { name: "Renamed" }, "patch-mut-1"),
+        params(habit.id)
+      );
+      assert.equal(patch2.status, 200);
+      assert.deepEqual(await patch2.json(), await patch1.json());
+
+      const arch1 = await routes.archiveHabit(
+        jsonRequest(`/api/habits/${habit.id}/archive`, "POST", undefined, "arch-mut-1"),
+        params(habit.id)
+      );
+      assert.equal(arch1.status, 200);
+      const arch2 = await routes.archiveHabit(
+        jsonRequest(`/api/habits/${habit.id}/archive`, "POST", undefined, "arch-mut-1"),
+        params(habit.id)
+      );
+      assert.equal(arch2.status, 200);
+      assert.deepEqual(await arch2.json(), await arch1.json());
     });
 
     await context.test("validation is refused while storage is unavailable", async () => {

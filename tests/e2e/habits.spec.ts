@@ -85,3 +85,163 @@ test("the first Habit is created from the card itself", async ({ page }) => {
     habitsCard(page).getByRole("button", { name: /Morning stretch/ })
   ).toBeVisible();
 });
+
+test("retries an unconfirmed Habit create with the same mutation ID and retires it on success", async ({
+  page
+}) => {
+  await openToday(page);
+  const card = habitsCard(page);
+
+  const mutationIds: string[] = [];
+  let hideFirstSuccess = true;
+
+  await page.route("**/api/habits", async (route) => {
+    const request = route.request();
+    if (request.method() !== "POST") {
+      await route.continue();
+      return;
+    }
+    const mutationId = (await request.headerValue("X-Dayflow-Mutation-Id")) ?? "";
+    mutationIds.push(mutationId);
+
+    if (hideFirstSuccess) {
+      hideFirstSuccess = false;
+      const committed = await route.fetch();
+      expect(committed.ok()).toBe(true);
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Temporary network failure." })
+      });
+      return;
+    }
+    await route.continue();
+  });
+
+  const input = card.getByLabel("New habit name");
+  const addButton = card.getByRole("button", { name: "Add habit" });
+
+  await input.fill("Morning stretch");
+  await addButton.click();
+
+  // Failed create keeps draft in input and displays error
+  await expect(input).toHaveValue("Morning stretch");
+  await expect(page.locator(".sr-only[role='status']")).toHaveText("Habit was not saved.");
+
+  // Retry with same draft
+  await addButton.click();
+
+  // Wait for button to be visible and input cleared
+  await expect(card.getByRole("button", { name: /Morning stretch/ })).toBeVisible();
+  await expect(input).toHaveValue("");
+  expect(mutationIds.length).toBe(2);
+  expect(mutationIds[0]).toBeTruthy();
+  expect(mutationIds[1]).toBe(mutationIds[0]);
+
+  // Deliberate subsequent create gets a new mutation ID
+  await input.fill("Evening walk");
+  await addButton.click();
+
+  await expect(card.getByRole("button", { name: /Evening walk/ })).toBeVisible();
+  expect(mutationIds.length).toBe(3);
+  expect(mutationIds[2]).toBeTruthy();
+  expect(mutationIds[2]).not.toBe(mutationIds[0]);
+
+  // Verify DB has exactly 2 habits, not 3 (the retry was idempotent)
+  await page.reload();
+  await expect(card.getByRole("button", { name: /Morning stretch/ })).toBeVisible();
+  await expect(card.getByRole("button", { name: /Evening walk/ })).toBeVisible();
+});
+
+test("separates confirmed write success from read-refresh failure", async ({ page }) => {
+  await openToday(page);
+  const card = habitsCard(page);
+
+  let failRefresh = false;
+  await page.route("**/api/bootstrap", async (route) => {
+    if (failRefresh) {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Read refresh offline." })
+      });
+      return;
+    }
+    await route.continue();
+  });
+
+  const input = card.getByLabel("New habit name");
+  const addButton = card.getByRole("button", { name: "Add habit" });
+
+  await input.fill("Morning stretch");
+  failRefresh = true;
+
+  await addButton.click();
+
+  // The habit remains visible in the list because write succeeded
+  await expect(card.getByRole("button", { name: /Morning stretch/ })).toBeVisible();
+  // The draft was cleared on confirmed write
+  await expect(input).toHaveValue("");
+  // It does NOT claim habit could not be saved
+  await expect(page.getByText("Habit could not be saved. Your draft is still here.")).toHaveCount(0);
+
+  // When refresh recovers, the habit is still there
+  failRefresh = false;
+  await page.reload();
+  await expect(card.getByRole("button", { name: /Morning stretch/ })).toBeVisible();
+});
+
+test("tracks independent busy states across simultaneous habit check-ins", async ({ page }) => {
+  const habitA = await createHabit(page, "Morning stretch");
+  const habitB = await createHabit(page, "Evening walk");
+
+  let resolveA: () => void = () => {};
+  const gateA = new Promise<void>((r) => { resolveA = r; });
+  let resolveB: () => void = () => {};
+  const gateB = new Promise<void>((r) => { resolveB = r; });
+
+  await page.route("**/api/habits/*/check-in", async (route) => {
+    const url = route.request().url();
+    if (url.includes(habitA.id)) {
+      await gateA;
+      await route.continue();
+      return;
+    }
+    if (url.includes(habitB.id)) {
+      await gateB;
+      await route.continue();
+      return;
+    }
+    await route.continue();
+  });
+
+  await openToday(page);
+  const card = habitsCard(page);
+
+  const buttonA = card.getByRole("button", { name: /Morning stretch/ });
+  const buttonB = card.getByRole("button", { name: /Evening walk/ });
+
+  await expect(buttonA).toBeEnabled();
+  await expect(buttonB).toBeEnabled();
+
+  // Start action on A
+  await buttonA.click();
+  await expect(buttonA).toBeDisabled();
+  await expect(buttonB).toBeEnabled();
+
+  // Start action on B while A is still pending
+  await buttonB.click();
+  await expect(buttonA).toBeDisabled();
+  await expect(buttonB).toBeDisabled();
+
+  // Complete B first
+  resolveB();
+  await expect(buttonB).toBeEnabled();
+  // A must still be disabled, not prematurely re-enabled by B's completion
+  await expect(buttonA).toBeDisabled();
+
+  // Complete A
+  resolveA();
+  await expect(buttonA).toBeEnabled();
+});
+

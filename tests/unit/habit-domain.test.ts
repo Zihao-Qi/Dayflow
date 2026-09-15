@@ -13,6 +13,7 @@ import {
 } from "../../src/modules/evidence/domain/habit";
 import { addDays, localDateKey, startOfLocalDay } from "../../src/shared/kernel/calendar";
 import { AppError } from "../../src/shared/kernel/errors";
+import { isHabitSummaryRecord, type HabitSummaryRecord } from "../../src/shared/client/decoders";
 
 const now = new Date("2026-09-14T09:30:00-05:00");
 const today = startOfLocalDay(now);
@@ -63,12 +64,17 @@ test("the window is reported as the same range the parser enforces", () => {
   assert.deepEqual(window.earliest, addDays(today, -CHECK_IN_BACKFILL_DAYS));
 });
 
-test("an absent amount stays null rather than becoming zero", () => {
+test("an absent amount stays undefined or null rather than becoming zero", () => {
   // Absent and zero are different claims: one is "no number given", the other
-  // is "did none of it".
-  assert.equal(parseCheckInMutation({}, now).amount, null);
+  // is "did none of it". Omitted from payload stays undefined to preserve
+  // existing stored evidence; explicit null clears it.
+  assert.equal(parseCheckInMutation({}, now).amount, undefined);
+  assert.equal(parseCheckInMutation({ amount: null }, now).amount, null);
   assert.equal(parseCheckInMutation({ amount: 0 }, now).amount, 0);
   assert.equal(parseCheckInMutation({ amount: 15 }, now).amount, 15);
+  assert.equal(parseCheckInMutation({}, now).note, undefined);
+  assert.equal(parseCheckInMutation({ note: null }, now).note, null);
+  assert.equal(parseCheckInMutation({ note: "stretch" }, now).note, "stretch");
 });
 
 test("done must be a boolean when given", () => {
@@ -276,3 +282,47 @@ test("each Habit only sees its own Check-ins", () => {
   assert.equal(summaries[1].doneCount, 1);
   assert.equal(summaries[0].days[1].state, "unrecorded");
 });
+
+test("isHabitSummaryRecord validates complete declared DTO fields and rejects malformed records", () => {
+  const valid: HabitSummaryRecord = {
+    id: "habit-1",
+    name: "Read",
+    cadence: "DAILY",
+    targetPerWeek: 7,
+    sortOrder: 0,
+    doneCount: 1,
+    target: 7,
+    today: { done: true, amount: 20, note: "chapter 1" },
+    days: [
+      { day: "2026-09-14", state: "done", amount: 20 }
+    ]
+  };
+  assert.equal(isHabitSummaryRecord(valid), true);
+
+  // Missing cadence
+  const { cadence: _, ...missingCadence } = valid;
+  assert.equal(isHabitSummaryRecord(missingCadence), false);
+
+  // Invalid cadence
+  assert.equal(isHabitSummaryRecord({ ...valid, cadence: "MONTHLY" as unknown as "DAILY" }), false);
+
+  // Missing targetPerWeek
+  const { targetPerWeek: __, ...missingTargetPerWeek } = valid;
+  assert.equal(isHabitSummaryRecord(missingTargetPerWeek), false);
+
+  // Non-integer sortOrder
+  assert.equal(isHabitSummaryRecord({ ...valid, sortOrder: 1.5 }), false);
+
+  // Invalid today (missing done, or non-integer amount)
+  assert.equal(isHabitSummaryRecord({ ...valid, today: { done: "yes" as unknown as boolean, amount: null, note: null } }), false);
+  assert.equal(isHabitSummaryRecord({ ...valid, today: { done: true, amount: 12.3, note: null } }), false);
+
+  // Valid today with nulls or null today
+  assert.equal(isHabitSummaryRecord({ ...valid, today: { done: false, amount: null, note: null } }), true);
+  assert.equal(isHabitSummaryRecord({ ...valid, today: null }), true);
+
+  // Invalid day in days
+  assert.equal(isHabitSummaryRecord({ ...valid, days: [{ day: "2026-09-14", state: "done", amount: 1.5 }] }), false);
+  assert.equal(isHabitSummaryRecord({ ...valid, days: [{ day: "2026-09-14", state: "unknown" as unknown as "done", amount: null }] }), false);
+});
+

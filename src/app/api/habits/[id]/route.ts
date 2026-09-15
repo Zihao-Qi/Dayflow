@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { evidenceErrors, readEvidenceMutationBody } from "@/modules/evidence/domain/activity";
 import { parseHabitPatchMutation } from "@/modules/evidence/domain/habit";
 import { parseWorkflowId } from "@/lib/workflow-mutations";
-import { runInTransaction } from "@/server/prisma/client";
+import { parseMutationId, runOnce } from "@/server/prisma/run-once";
 import { updateHabit, habitErrorResponse } from "@/server/habits";
 
 type Params = { params: Promise<{ id: string }> };
@@ -16,9 +16,15 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       "id",
       evidenceErrors.habitIdentifierIsInvalid.message
     );
+    const mutationId = parseMutationId(request.headers.get("X-Dayflow-Mutation-Id"));
     const body = await readEvidenceMutationBody(request);
     const patch = parseHabitPatchMutation(body);
-    const habit = await runInTransaction((tx) => updateHabit(tx, id, patch));
+    const habit = await runOnce({
+      mutationId,
+      kind: "habit.patch",
+      payload: { habitId: id, ...body },
+      create: (tx) => updateHabit(tx, id, patch)
+    });
     return NextResponse.json(habit);
   } catch (error) {
     return habitErrorResponse(error, "save");

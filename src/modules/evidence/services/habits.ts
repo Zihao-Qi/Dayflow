@@ -123,10 +123,20 @@ export function upsertCheckIn(
   habitId: string,
   input: CheckInMutation
 ) {
+  const update: Prisma.HabitCheckInUpdateInput = { done: input.done };
+  if (input.amount !== undefined) update.amount = input.amount;
+  if (input.note !== undefined) update.note = input.note;
+
   return tx.habitCheckIn.upsert({
     where: { habitId_date: { habitId, date: input.date } },
-    create: { habitId, ...input },
-    update: { done: input.done, amount: input.amount, note: input.note }
+    create: {
+      habitId,
+      date: input.date,
+      done: input.done,
+      amount: input.amount ?? null,
+      note: input.note ?? null
+    },
+    update
   });
 }
 

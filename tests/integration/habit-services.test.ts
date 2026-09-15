@@ -69,6 +69,29 @@ test("habit services run headlessly on SQLite", async (context) => {
       assert.equal(rows[0].note, "longer");
     });
 
+    await context.test("toggling done preserves existing amount and note when omitted", async () => {
+      const habit = await createHabit(tx, {
+        name: "Preserve evidence", cadence: "DAILY", targetPerWeek: 7
+      });
+      await upsertCheckIn(tx, habit.id, { date: today, done: true, amount: 15, note: "before breakfast" });
+
+      // Omit amount and note on toggle
+      await upsertCheckIn(tx, habit.id, { date: today, done: false });
+
+      const rows = await readHabitCheckIns(tx, habit.id, week);
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0].done, false);
+      assert.equal(rows[0].amount, 15);
+      assert.equal(rows[0].note, "before breakfast");
+
+      // Explicit null clears existing evidence
+      await upsertCheckIn(tx, habit.id, { date: today, done: false, amount: null, note: null });
+      const clearedRows = await readHabitCheckIns(tx, habit.id, week);
+      assert.equal(clearedRows.length, 1);
+      assert.equal(clearedRows[0].amount, null);
+      assert.equal(clearedRows[0].note, null);
+    });
+
     await context.test("one Check-in per Habit per day survives a concurrent race", async () => {
       const habit = await createHabit(tx, {
         name: "Race", cadence: "DAILY", targetPerWeek: 7

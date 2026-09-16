@@ -564,15 +564,33 @@ test("renames a Habit inline and displays validation error keeping user draft", 
   await expect(renameInput).toBeFocused();
   await expect(renameInput).toHaveValue("Morning yoga");
 
-  // Attempt to submit empty name -> 400 validation error
-  await renameInput.fill("");
+  // Escape closes the form and restores focus to the row's Rename button (G1)
+  await page.keyboard.press("Escape");
+  await expect(renameInput).toHaveCount(0);
+  await expect(renameButton).toBeFocused();
+
+  // Re-open rename and test Cancel button restores focus (G1)
+  await renameButton.click();
+  await expect(renameInput).toBeVisible();
+  await row.getByRole("button", { name: "Cancel" }).click();
+  await expect(renameInput).toHaveCount(0);
+  await expect(renameButton).toBeFocused();
+
+  // Re-open rename
+  await renameButton.click();
+  await expect(renameInput).toBeVisible();
+  await expect(renameInput).toBeFocused();
+
+  // Attempt to submit overlong name (121 chars) -> 400 validation error, keeping user draft (G2)
+  const overlongName = "x".repeat(121);
+  await renameInput.fill(overlongName);
   await row.getByRole("button", { name: "Save" }).click();
 
   // Validation error displayed next to field, and draft kept
   const errorMsg = row.locator(".form-error");
   await expect(errorMsg).toBeVisible();
-  await expect(errorMsg).toContainText("Give the habit a name.");
-  await expect(renameInput).toHaveValue("");
+  await expect(errorMsg).toContainText("Habit name must be 120 characters or fewer.");
+  await expect(renameInput).toHaveValue(overlongName);
 
   // Correct name and save
   await renameInput.fill("Evening yoga");
@@ -581,6 +599,9 @@ test("renames a Habit inline and displays validation error keeping user draft", 
   // Input closes and row displays new name
   await expect(row.getByRole("button", { name: /Evening yoga/ })).toBeVisible();
   await expect(renameInput).toHaveCount(0);
+
+  // Focus restored to the row's Rename button after Save (G1)
+  await expect(row.getByRole("button", { name: "Rename" })).toBeFocused();
 
   // Persisted in storage
   await page.reload();

@@ -16,7 +16,6 @@ import { Plus, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { ActivityDialog } from "@/modules/evidence/ui/activity-dialog";
 import { HabitsCard } from "@/modules/evidence/ui/habits-card";
-import { createHabit, recordCheckIn } from "@/modules/evidence/ui/api";
 import { MobileMoreMenu, Navigation } from "./navigation";
 import { useShellModel } from "./use-shell-model";
 import { type DayView } from "./use-shell-state";

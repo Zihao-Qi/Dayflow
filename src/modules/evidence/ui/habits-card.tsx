@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
   CheckInDayState,
   HabitCadenceValue,
@@ -46,11 +46,11 @@ export function HabitsCard({
     cadence?: HabitCadenceValue,
     targetPerWeek?: number
   ) => Promise<boolean>;
-  onRename?: (
+  onRename: (
     habitId: string,
     name: string
   ) => Promise<{ ok: boolean; error?: string }>;
-  onArchive?: (habitId: string) => Promise<boolean>;
+  onArchive: (habitId: string) => Promise<boolean>;
   busyHabitIds: ReadonlySet<string>;
   createPending: boolean;
 }) {
@@ -69,6 +69,21 @@ export function HabitsCard({
   const archiveDialogRef = useRef<HTMLElement | null>(null);
   const keepHabitRef = useRef<HTMLButtonElement | null>(null);
 
+  const returnFocusHabitIdRef = useRef<string | null>(null);
+  const renameButtonRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const habitToggleRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+
+  useEffect(() => {
+    if (editingHabitId === null && returnFocusHabitIdRef.current) {
+      const habitId = returnFocusHabitIdRef.current;
+      returnFocusHabitIdRef.current = null;
+      const button =
+        renameButtonRefs.current.get(habitId) ??
+        habitToggleRefs.current.get(habitId);
+      button?.focus();
+    }
+  }, [editingHabitId]);
+
   useModalFocusTrap(
     archiveDialogRef,
     archiving ? null : () => setArchivingHabit(null),
@@ -79,6 +94,7 @@ export function HabitsCard({
   );
 
   function startRename(habitId: string, currentName: string) {
+    returnFocusHabitIdRef.current = habitId;
     setEditingHabitId(habitId);
     setRenameDraft(currentName);
     setRenameError("");
@@ -91,7 +107,6 @@ export function HabitsCard({
   }
 
   async function handleRenameSubmit(habitId: string) {
-    if (!onRename) return;
     setRenaming(true);
     try {
       const res = await onRename(habitId, renameDraft);
@@ -110,7 +125,7 @@ export function HabitsCard({
   }
 
   async function handleArchiveConfirm() {
-    if (!archivingHabit || !onArchive) return;
+    if (!archivingHabit) return;
     setArchiving(true);
     try {
       const ok = await onArchive(archivingHabit.id);
@@ -189,6 +204,13 @@ export function HabitsCard({
                 ) : (
                   <>
                     <button
+                      ref={(node) => {
+                        if (node) {
+                          habitToggleRefs.current.set(habit.id, node);
+                        } else {
+                          habitToggleRefs.current.delete(habit.id);
+                        }
+                      }}
                       type="button"
                       className="secondary-button"
                       aria-pressed={done}
@@ -201,6 +223,13 @@ export function HabitsCard({
                       {recorded ? (done ? "done today" : "not done today") : "not recorded today"}
                     </button>
                     <button
+                      ref={(node) => {
+                        if (node) {
+                          renameButtonRefs.current.set(habit.id, node);
+                        } else {
+                          renameButtonRefs.current.delete(habit.id);
+                        }
+                      }}
                       type="button"
                       className="text-button"
                       disabled={busy}
@@ -321,7 +350,7 @@ export function HabitsCard({
             <div>
               <button
                 type="button"
-                className="primary-button project-delete-confirm-button"
+                className="primary-button"
                 disabled={archiving}
                 onClick={() => void handleArchiveConfirm()}
               >

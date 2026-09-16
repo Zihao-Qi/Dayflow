@@ -16,14 +16,13 @@ import {
 import type { HabitCadenceValue } from "@/modules/evidence/domain/habit";
 
 export function createHabit(
-  input: { name: string; cadence?: HabitCadenceValue; targetPerWeek?: number } | string,
+  input: { name: string; cadence?: HabitCadenceValue; targetPerWeek?: number },
   mutationId: string | null
 ) {
-  const payload = typeof input === "string" ? { name: input } : input;
-  const name = payload.name.trim();
+  const name = input.name.trim();
   return request("/api/habits", {
     method: "POST",
-    body: payload,
+    body: input,
     mutationId,
     decode: (result): result is HabitRecord =>
       isHabitResponse(result) && result.name === name && result.status === "ACTIVE",

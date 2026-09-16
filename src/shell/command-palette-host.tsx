@@ -80,7 +80,7 @@ export function useCommandPaletteHost({
   function openCommandPalette() {
     if (
       document.querySelector<HTMLElement>(
-        '[role="dialog"][aria-modal="true"]'
+        '[role="dialog"][aria-modal="true"], [role="alertdialog"][aria-modal="true"]'
       )
     ) {
       return;

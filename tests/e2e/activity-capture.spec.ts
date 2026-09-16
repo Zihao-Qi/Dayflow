@@ -69,6 +69,24 @@ test("captures retrospective evidence with a custom category and complete sugges
 
   await openDashboard(page);
   let dialog = await openActivityCapture(page);
+  const note = dialog.getByLabel("Activity note");
+  await expect(note).toBeFocused();
+
+  // Boundary Tab cycles between first and last controls, and stays inside from container
+  const closeButton = dialog.getByRole("button", { name: "Close", exact: true });
+  const addButton = dialog.getByRole("button", { name: "Add activity", exact: true });
+  await closeButton.focus();
+  await page.keyboard.press("Shift+Tab");
+  await expect(addButton).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(closeButton).toBeFocused();
+  await dialog.evaluate((el) => (el as HTMLElement).focus());
+  await page.keyboard.press("Shift+Tab");
+  await expect(addButton).toBeFocused();
+  await dialog.evaluate((el) => (el as HTMLElement).focus());
+  await page.keyboard.press("Tab");
+  await expect(closeButton).toBeFocused();
+
   const date = dialog.getByLabel("Activity date", { exact: true });
   await expect(date).toHaveValue(todayKey);
   await expect(date).toHaveAttribute("max", todayKey);
@@ -87,14 +105,31 @@ test("captures retrospective evidence with a custom category and complete sugges
   ]);
   expect(suggestions).toContain("Research synthesis");
 
-  await dialog
-    .getByLabel("Activity note")
-    .fill("Reconstructed the decision trail");
+  // Rerender focus retention: editing controls triggers parent onDraftChange updates
+  // and focus must remain on the actively edited control rather than being stolen
+  // back to the initial note control.
+  await note.fill("Reconstructed the decision trail");
   await dialog.getByLabel("Time", { exact: true }).fill("08:15");
-  await dialog.getByLabel("Minutes", { exact: true }).fill("40");
-  await dialog
-    .getByLabel("Category", { exact: true })
-    .fill("  Strategic Writing  ");
+  const minutes = dialog.getByLabel("Minutes", { exact: true });
+  await minutes.fill("40");
+  await page.evaluate(
+    () =>
+      new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve))
+      )
+  );
+  await expect(minutes).toBeFocused();
+
+  const category = dialog.getByLabel("Category", { exact: true });
+  await category.fill("  Strategic Writing  ");
+  await page.evaluate(
+    () =>
+      new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve))
+      )
+  );
+  await expect(category).toBeFocused();
+
   await dialog
     .getByLabel("Linked task")
     .selectOption({ label: "Link retrospective evidence" });

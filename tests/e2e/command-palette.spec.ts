@@ -91,6 +91,50 @@ test("does not stack over an existing modal dialog", async ({ page }) => {
   ).toBeFocused();
 });
 
+test("does not stack over an alertdialog confirmation and opens normally after dismissal", async ({
+  page
+}) => {
+  const projectResponse = await page.request.post("/api/projects", {
+    data: { name: "Palette Guard Project" }
+  });
+  const project = (await projectResponse.json()) as { id: string };
+  await page.request.post("/api/tasks", {
+    data: {
+      title: "Task with delete confirm",
+      projectId: project.id,
+      date: null
+    }
+  });
+
+  await openDashboard(page);
+  await page.getByRole("button", { name: /Projects/ }).click();
+  await page.getByRole("button", { name: /Palette Guard Project/ }).click();
+
+  const deleteTrigger = page.getByRole("button", {
+    name: "Delete task Task with delete confirm"
+  });
+  await deleteTrigger.click();
+
+  const confirmation = page.getByRole("alertdialog", {
+    name: "Delete task Task with delete confirm"
+  });
+  await expect(confirmation).toBeVisible();
+
+  const modifier = process.platform === "darwin" ? "Meta" : "Control";
+  await page.keyboard.press(`${modifier}+K`);
+
+  await expect(commandPalette(page)).toHaveCount(0);
+  await expect(confirmation).toBeVisible();
+
+  // Dismiss confirmation via Escape
+  await page.keyboard.press("Escape");
+  await expect(confirmation).toHaveCount(0);
+
+  // Palette opens normally after confirmation closes
+  await page.keyboard.press(`${modifier}+K`);
+  await expect(commandPalette(page)).toBeVisible();
+});
+
 test("hands a plain phrase to the new Task form without saving it", async ({
   page
 }) => {

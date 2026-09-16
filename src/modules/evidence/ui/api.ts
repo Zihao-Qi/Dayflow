@@ -13,14 +13,54 @@ import {
   type HabitRecord
 } from "@/shared/client/decoders";
 
-export function createHabit(name: string, mutationId: string | null) {
+import type { HabitCadenceValue } from "@/modules/evidence/domain/habit";
+
+export function createHabit(
+  input: { name: string; cadence?: HabitCadenceValue; targetPerWeek?: number } | string,
+  mutationId: string | null
+) {
+  const payload = typeof input === "string" ? { name: input } : input;
+  const name = payload.name.trim();
   return request("/api/habits", {
     method: "POST",
-    body: { name },
+    body: payload,
     mutationId,
     decode: (result): result is HabitRecord =>
       isHabitResponse(result) && result.name === name && result.status === "ACTIVE",
     fallback: "Habit could not be saved. Your draft is still here."
+  });
+}
+
+export function renameHabit(
+  habitId: string,
+  name: string,
+  mutationId: string | null
+) {
+  return request(`/api/habits/${encodeURIComponent(habitId)}`, {
+    method: "PATCH",
+    body: { name },
+    mutationId,
+    decode: (result): result is HabitRecord =>
+      isHabitResponse(result) &&
+      result.id === habitId &&
+      result.name === name.trim() &&
+      result.status === "ACTIVE",
+    fallback: "Habit could not be renamed."
+  });
+}
+
+export function archiveHabit(
+  habitId: string,
+  mutationId: string | null
+) {
+  return request(`/api/habits/${encodeURIComponent(habitId)}/archive`, {
+    method: "POST",
+    mutationId,
+    decode: (result): result is HabitRecord =>
+      isHabitResponse(result) &&
+      result.id === habitId &&
+      result.status === "ARCHIVED",
+    fallback: "Habit could not be archived."
   });
 }
 

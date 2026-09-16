@@ -7,7 +7,7 @@ import { createTask, deleteTask, reorderTasks, saveTimeBlock } from "../../src/m
 import { createBackup, downloadCsv, stageRestore } from "../../src/modules/data-ops/ui/api";
 import { loadProjectDetail } from "../../src/modules/projects/ui/api";
 import { startFocus } from "../../src/modules/focus/ui/api";
-import { createHabit, recordCheckIn } from "../../src/modules/evidence/ui/api";
+import { createHabit, recordCheckIn, renameHabit, archiveHabit } from "../../src/modules/evidence/ui/api";
 import type { Task } from "../../src/modules/planning/ui/backlog-model";
 
 const task: Task = {
@@ -209,4 +209,107 @@ test("recordCheckIn validates habitId, local date, done and explicit submitted m
   // Omitted metadata does not reject existing amount
   const omittedCheck = await recordCheckIn(habitId, { date: "2026-09-14", done: true }, null);
   assert.equal(omittedCheck.amount, 20);
+});
+
+test("habit create with cadence, rename, and archive preserve contracts and decode correctly", async (t) => {
+  const calls: Array<{ path: unknown; init: RequestInit | undefined }> = [];
+  let response = Response.json({
+    id: "habit-1",
+    name: "Meditation",
+    cadence: "TIMES_PER_WEEK",
+    targetPerWeek: 4,
+    status: "ACTIVE"
+  }, { status: 201 });
+
+  t.mock.method(globalThis, "fetch", async (path: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ path, init });
+    return response;
+  });
+
+  // 1. Create with cadence and target
+  const created = await createHabit({ name: "Meditation", cadence: "TIMES_PER_WEEK", targetPerWeek: 4 }, "create-id");
+  assert.equal(created.id, "habit-1");
+  assert.equal(created.name, "Meditation");
+  assert.equal(created.cadence, "TIMES_PER_WEEK");
+  assert.equal(created.targetPerWeek, 4);
+  assert.deepEqual(calls[0], {
+    path: "/api/habits",
+    init: {
+      method: "POST",
+      body: JSON.stringify({ name: "Meditation", cadence: "TIMES_PER_WEEK", targetPerWeek: 4 }),
+      headers: {
+        "Content-Type": "application/json",
+        "X-Dayflow-Mutation-Id": "create-id"
+      }
+    }
+  });
+
+  // 2. Rename habit
+  response = Response.json({
+    id: "habit-1",
+    name: "Deep Meditation",
+    cadence: "TIMES_PER_WEEK",
+    targetPerWeek: 4,
+    status: "ACTIVE"
+  });
+  const renamed = await renameHabit("habit-1", "Deep Meditation", "rename-id");
+  assert.equal(renamed.name, "Deep Meditation");
+  assert.deepEqual(calls[1], {
+    path: "/api/habits/habit-1",
+    init: {
+      method: "PATCH",
+      body: JSON.stringify({ name: "Deep Meditation" }),
+      headers: {
+        "Content-Type": "application/json",
+        "X-Dayflow-Mutation-Id": "rename-id"
+      }
+    }
+  });
+
+  // 3. Rename validation error (400) propagates field and envelope message
+  response = Response.json(
+    { code: "VALIDATION_ERROR", error: "Give the habit a name.", field: "name" },
+    { status: 400 }
+  );
+  await assert.rejects(
+    renameHabit("habit-1", "", "rename-err-id"),
+    {
+      name: "ApiError",
+      status: 400,
+      code: "VALIDATION_ERROR",
+      message: "Give the habit a name.",
+      field: "name"
+    }
+  );
+
+  // 4. Archive habit
+  response = Response.json({
+    id: "habit-1",
+    name: "Deep Meditation",
+    cadence: "TIMES_PER_WEEK",
+    targetPerWeek: 4,
+    status: "ARCHIVED"
+  });
+  const archived = await archiveHabit("habit-1", "archive-id");
+  assert.equal(archived.id, "habit-1");
+  assert.equal(archived.status, "ARCHIVED");
+  assert.deepEqual(calls[3], {
+    path: "/api/habits/habit-1/archive",
+    init: {
+      method: "POST",
+      headers: {
+        "X-Dayflow-Mutation-Id": "archive-id"
+      }
+    }
+  });
+
+  // 5. Mutation ID fingerprinting covers cadence and target
+  const pendingMutationRef: { current: PendingMutation | null } = { current: null };
+  const id1 = mutationIdFor(pendingMutationRef, { name: "Exercise", cadence: "DAILY", targetPerWeek: 7 });
+  // Repeating identical draft reuses id
+  const id1Retry = mutationIdFor(pendingMutationRef, { name: "Exercise", cadence: "DAILY", targetPerWeek: 7 });
+  assert.equal(id1Retry, id1);
+  // Changing cadence produces a new mutation id
+  const id2 = mutationIdFor(pendingMutationRef, { name: "Exercise", cadence: "TIMES_PER_WEEK", targetPerWeek: 3 });
+  assert.notEqual(id2, id1);
 });

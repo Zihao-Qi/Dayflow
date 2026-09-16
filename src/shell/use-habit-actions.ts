@@ -1,10 +1,10 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { createHabit, recordCheckIn } from "@/modules/evidence/ui/api";
+import { createHabit, recordCheckIn, renameHabit, archiveHabit } from "@/modules/evidence/ui/api";
 import { type HabitSummaryRecord } from "@/shared/client/decoders";
 import { mutationIdFor, type PendingMutation } from "@/shared/client/mutation-ids";
-import { summarizeHabits, type HabitDefinition } from "@/modules/evidence/domain/habit";
+import { summarizeHabits, type HabitDefinition, type HabitCadenceValue } from "@/modules/evidence/domain/habit";
 import { parseLocalDate, reviewPeriodRange, startOfLocalDay, localDateKey } from "@/shared/kernel/calendar";
 import { type ShellState } from "./use-shell-state";
 
@@ -26,17 +26,24 @@ export function useHabitActions({
   const [busyHabitIds, setBusyHabitIds] = useState<ReadonlySet<string>>(() => new Set());
   const [habitCreatePending, setHabitCreatePending] = useState(false);
   const habitCreateMutation = useRef<PendingMutation | null>(null);
+  const renameMutations = useRef<Map<string, PendingMutation>>(new Map());
+  const archiveMutations = useRef<Map<string, PendingMutation>>(new Map());
   const checkInMutations = useRef<Map<string, PendingMutation>>(new Map());
 
-  async function createHabitFromDraft(name: string) {
+  async function createHabitFromDraft(
+    name: string,
+    cadence: HabitCadenceValue = "DAILY",
+    targetPerWeek: number = 7
+  ) {
     const trimmed = name.trim();
     if (!trimmed || habitCreatePending) return false;
-    const payload = { name: trimmed };
+    const effectiveTarget = cadence === "DAILY" ? 7 : Math.min(Math.max(targetPerWeek, 1), 7);
+    const payload = { name: trimmed, cadence, targetPerWeek: effectiveTarget };
     const mutationId = mutationIdFor(habitCreateMutation, payload);
     setHabitCreatePending(true);
 
     try {
-      const result = await createHabit(trimmed, mutationId);
+      const result = await createHabit(payload, mutationId);
 
       // Confirmed write success: retire mutation id and accept habit into local state
       habitCreateMutation.current = null;
@@ -151,10 +158,98 @@ export function useHabitActions({
     }
   }
 
+  async function renameHabitAction(
+    habitId: string,
+    name: string
+  ): Promise<{ ok: boolean; error?: string }> {
+    const existing = renameMutations.current.get(habitId);
+    const fingerprint = JSON.stringify({ habitId, name });
+    let mutationId: string;
+    if (existing && existing.fingerprint === fingerprint) {
+      mutationId = existing.id;
+    } else {
+      mutationId = crypto.randomUUID();
+      renameMutations.current.set(habitId, { id: mutationId, fingerprint });
+    }
+
+    try {
+      const result = await renameHabit(habitId, name, mutationId);
+
+      // Confirmed write success: retire mutation id and update local state
+      renameMutations.current.delete(habitId);
+      setData((current) => {
+        if (!current) return current;
+        return {
+          ...current,
+          habits: current.habits.map((h) =>
+            h.id === habitId ? { ...h, name: result.name } : h
+          )
+        };
+      });
+
+      setAppError("");
+      setAppAnnouncement("Saved.");
+      await refreshAfterConfirmedMutation();
+      return { ok: true };
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Habit could not be renamed.";
+      return { ok: false, error: message };
+    }
+  }
+
+  async function archiveHabitAction(habitId: string): Promise<boolean> {
+    const existing = archiveMutations.current.get(habitId);
+    const mutationId = existing ? existing.id : crypto.randomUUID();
+    if (!existing) {
+      archiveMutations.current.set(habitId, { id: mutationId, fingerprint: habitId });
+    }
+
+    setBusyHabitIds((prev) => {
+      const next = new Set(prev);
+      next.add(habitId);
+      return next;
+    });
+
+    try {
+      await archiveHabit(habitId, mutationId);
+
+      // Confirmed write success: retire mutation id
+      archiveMutations.current.delete(habitId);
+
+      // On confirmed success the row leaves the card without waiting for the refresh
+      setData((current) => {
+        if (!current) return current;
+        return {
+          ...current,
+          habits: current.habits.filter((h) => h.id !== habitId)
+        };
+      });
+
+      setAppError("");
+      setAppAnnouncement("Habit archived.");
+      await refreshAfterConfirmedMutation();
+      return true;
+    } catch (error) {
+      setAppError(
+        error instanceof Error ? error.message : "Habit could not be archived."
+      );
+      return false;
+    } finally {
+      setBusyHabitIds((prev) => {
+        const next = new Set(prev);
+        next.delete(habitId);
+        return next;
+      });
+    }
+  }
+
   return {
     busyHabitIds,
     habitCreatePending,
     createHabitFromDraft,
+    renameHabit: renameHabitAction,
+    archiveHabit: archiveHabitAction,
     recordHabitCheckIn
   };
 }

@@ -440,3 +440,246 @@ test("retires all pending check-in retry IDs for habit and day upon confirmed su
   const reloadedButton = reloadedCard.getByRole("button", { name: /Daily meditation/ });
   await expect(reloadedButton).toHaveAttribute("aria-pressed", "true");
 });
+
+test("creates a Habit with cadence and weekly target from the card", async ({ page }) => {
+  await openToday(page);
+  const card = habitsCard(page);
+
+  let createPayload: { name?: string; cadence?: string; targetPerWeek?: number } | null = null;
+  await page.route("**/api/habits", async (route) => {
+    if (route.request().method() === "POST") {
+      createPayload = JSON.parse(route.request().postData() ?? "{}");
+    }
+    await route.continue();
+  });
+
+  const input = card.getByLabel("New habit name");
+  const cadenceSelect = card.getByLabel("Cadence");
+
+  await input.fill("Read book");
+  await cadenceSelect.selectOption("TIMES_PER_WEEK");
+
+  const targetInput = card.getByLabel("Target days per week");
+  await expect(targetInput).toBeVisible();
+  await targetInput.fill("4");
+
+  await card.getByRole("button", { name: "Add habit" }).click();
+
+  const habitToggle = card.getByRole("button", { name: /Read book/ });
+  await expect(habitToggle).toBeVisible();
+  expect(createPayload).toEqual({
+    name: "Read book",
+    cadence: "TIMES_PER_WEEK",
+    targetPerWeek: 4
+  });
+
+  // Verify form resets to defaults on success
+  await expect(input).toHaveValue("");
+  await expect(cadenceSelect).toHaveValue("DAILY");
+  await expect(card.getByLabel("Target days per week")).toHaveCount(0);
+
+  // Survives page reload
+  await page.reload();
+  await expect(habitsCard(page).getByRole("button", { name: /Read book/ })).toBeVisible();
+});
+
+test("changing cadence between failed attempts sends a new mutation ID, not a replay", async ({ page }) => {
+  await openToday(page);
+  const card = habitsCard(page);
+
+  const mutationIds: string[] = [];
+  const payloads: Array<Record<string, unknown>> = [];
+  let failAttempts = 2;
+
+  await page.route("**/api/habits", async (route) => {
+    const request = route.request();
+    if (request.method() !== "POST") {
+      await route.continue();
+      return;
+    }
+    const mutationId = (await request.headerValue("X-Dayflow-Mutation-Id")) ?? "";
+    mutationIds.push(mutationId);
+    payloads.push(JSON.parse(request.postData() ?? "{}"));
+
+    if (failAttempts > 0) {
+      failAttempts -= 1;
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Network failure" })
+      });
+      return;
+    }
+    await route.continue();
+  });
+
+  const input = card.getByLabel("New habit name");
+  const cadenceSelect = card.getByLabel("Cadence");
+  const addButton = card.getByRole("button", { name: "Add habit" });
+
+  // Attempt 1: DAILY
+  await input.fill("Evening stretch");
+  await cadenceSelect.selectOption("DAILY");
+  await addButton.click();
+
+  // Failed create keeps draft in input
+  await expect(input).toHaveValue("Evening stretch");
+  expect(mutationIds.length).toBe(1);
+
+  // Attempt 2: Same parameters -> reuses mutation ID
+  await addButton.click();
+  await expect(input).toHaveValue("Evening stretch");
+  expect(mutationIds.length).toBe(2);
+  expect(mutationIds[1]).toBe(mutationIds[0]);
+
+  // Attempt 3: Change cadence to TIMES_PER_WEEK target 3 -> MUST send fresh mutation ID
+  await cadenceSelect.selectOption("TIMES_PER_WEEK");
+  const targetInput = card.getByLabel("Target days per week");
+  await targetInput.fill("3");
+  await addButton.click();
+
+  // Third attempt succeeds
+  await expect(card.getByRole("button", { name: /Evening stretch/ })).toBeVisible();
+  expect(mutationIds.length).toBe(3);
+  expect(mutationIds[2]).toBeTruthy();
+  expect(mutationIds[2]).not.toBe(mutationIds[0]);
+  expect(payloads[2]).toEqual({
+    name: "Evening stretch",
+    cadence: "TIMES_PER_WEEK",
+    targetPerWeek: 3
+  });
+});
+
+test("renames a Habit inline and displays validation error keeping user draft", async ({ page }) => {
+  const habit = await createHabit(page, "Morning yoga");
+  await openToday(page);
+  const card = habitsCard(page);
+
+  const row = card.locator(`[data-habit="${habit.id}"]`);
+  const renameButton = row.getByRole("button", { name: "Rename" });
+  await renameButton.click();
+
+  const renameInput = row.getByLabel("Rename Morning yoga");
+  await expect(renameInput).toBeVisible();
+  await expect(renameInput).toBeFocused();
+  await expect(renameInput).toHaveValue("Morning yoga");
+
+  // Attempt to submit empty name -> 400 validation error
+  await renameInput.fill("");
+  await row.getByRole("button", { name: "Save" }).click();
+
+  // Validation error displayed next to field, and draft kept
+  const errorMsg = row.locator(".form-error");
+  await expect(errorMsg).toBeVisible();
+  await expect(errorMsg).toContainText("Give the habit a name.");
+  await expect(renameInput).toHaveValue("");
+
+  // Correct name and save
+  await renameInput.fill("Evening yoga");
+  await row.getByRole("button", { name: "Save" }).click();
+
+  // Input closes and row displays new name
+  await expect(row.getByRole("button", { name: /Evening yoga/ })).toBeVisible();
+  await expect(renameInput).toHaveCount(0);
+
+  // Persisted in storage
+  await page.reload();
+  await expect(
+    habitsCard(page).getByRole("button", { name: /Evening yoga/ })
+  ).toBeVisible();
+});
+
+test("archives a Habit behind a focus-trapped confirmation modal", async ({ page }) => {
+  const habit = await createHabit(page, "Deep meditation");
+  await openToday(page);
+  const card = habitsCard(page);
+
+  const row = card.locator(`[data-habit="${habit.id}"]`);
+  const archiveTrigger = row.getByRole("button", { name: "Archive" });
+
+  // Open archive confirmation
+  await archiveTrigger.click();
+
+  const dialog = page.getByRole("alertdialog", { name: "Archive Deep meditation" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("Archiving keeps every Check-in and hides the Habit from Today.");
+
+  // Safe initial focus: lands on "Keep habit", not destructive "Archive habit"
+  const keepButton = dialog.getByRole("button", { name: "Keep habit" });
+  const archiveConfirmButton = dialog.getByRole("button", { name: "Archive habit" });
+  await expect(keepButton).toBeFocused();
+
+  // Tab moves to Archive habit, and Tab again wraps back to Keep habit (focus trapped)
+  await page.keyboard.press("Tab");
+  await expect(archiveConfirmButton).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(keepButton).toBeFocused();
+
+  // Dismiss via Escape returns focus to the archive trigger
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(archiveTrigger).toBeFocused();
+
+  // Re-open and dismiss via Keep habit returns focus to the trigger
+  await archiveTrigger.click();
+  await expect(dialog).toBeVisible();
+  await keepButton.click();
+  await expect(dialog).toHaveCount(0);
+  await expect(archiveTrigger).toBeFocused();
+
+  // Re-open and confirm archive
+  await archiveTrigger.click();
+  await expect(dialog).toBeVisible();
+  await archiveConfirmButton.click();
+
+  // Row leaves card immediately without waiting for refresh
+  await expect(row).toHaveCount(0);
+  await expect(card.getByRole("button", { name: /Deep meditation/ })).toHaveCount(0);
+
+  // Persisted: habit stays gone after reload
+  await page.reload();
+  await expect(habitsCard(page).getByRole("button", { name: /Deep meditation/ })).toHaveCount(0);
+});
+
+test("archive failure during trailing refresh preserves removed row and shows retry refresh toast", async ({ page }) => {
+  const habit = await createHabit(page, "Morning stretch");
+  await openToday(page);
+  const card = habitsCard(page);
+
+  let failRefresh = false;
+  await page.route("**/api/bootstrap", async (route) => {
+    if (failRefresh) {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Read refresh offline." })
+      });
+      return;
+    }
+    await route.continue();
+  });
+
+  const row = card.locator(`[data-habit="${habit.id}"]`);
+  await row.getByRole("button", { name: "Archive" }).click();
+
+  const dialog = page.getByRole("alertdialog", { name: "Archive Morning stretch" });
+  await expect(dialog).toBeVisible();
+
+  failRefresh = true;
+  await dialog.getByRole("button", { name: "Archive habit" }).click();
+
+  // Row leaves immediately
+  await expect(card.getByRole("button", { name: /Morning stretch/ })).toHaveCount(0);
+
+  // Toast appears with retry refresh button
+  const toast = page.locator(".app-error-toast");
+  await expect(toast).toContainText("Your change was saved, but Dayflow could not refresh the latest view.");
+  const retryButton = toast.getByRole("button", { name: "Retry refresh" });
+  await expect(retryButton).toBeVisible();
+
+  // Recover refresh and click retry
+  failRefresh = false;
+  await retryButton.click();
+  await expect(toast).toHaveCount(0);
+  await expect(card.getByRole("button", { name: /Morning stretch/ })).toHaveCount(0);
+});

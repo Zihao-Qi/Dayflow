@@ -123,6 +123,8 @@ export function WorkspaceShell() {
     busyHabitIds,
     habitCreatePending,
     createHabitFromDraft,
+    renameHabit,
+    archiveHabit,
     recordHabitCheckIn,
     readRefreshFailed,
     clearReadRefreshFailed
@@ -245,6 +247,8 @@ export function WorkspaceShell() {
                 habits={data.habits}
                 onRecord={(habitId, done) => void recordHabitCheckIn(habitId, done)}
                 onCreate={createHabitFromDraft}
+                onRename={renameHabit}
+                onArchive={archiveHabit}
                 busyHabitIds={busyHabitIds}
                 createPending={habitCreatePending}
               />

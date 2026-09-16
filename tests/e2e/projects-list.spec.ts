@@ -413,6 +413,25 @@ test("keeps a completed Project's drawer tasks editable while disallowing new un
   await drawer.getByRole("button", { name: "Delete task Finished evidence", exact: true }).click();
   const confirmDialog = page.getByRole("alertdialog", { name: "Delete task Finished evidence" });
   await expect(confirmDialog).toBeVisible();
+
+  // This confirmation declared aria-modal with no keyboard handling at all, so
+  // Tab left for the page behind on the first press. On a destructive dialog
+  // that means answering a question you can no longer see.
+  await expect
+    .poll(() =>
+      confirmDialog.evaluate((element) => element.contains(document.activeElement))
+    )
+    .toBe(true);
+  await confirmDialog.evaluate((element) => (element as HTMLElement).focus());
+  await page.keyboard.press("Shift+Tab");
+  expect(
+    await confirmDialog.evaluate((element) => element.contains(document.activeElement))
+  ).toBe(true);
+  await page.keyboard.press("Tab");
+  expect(
+    await confirmDialog.evaluate((element) => element.contains(document.activeElement))
+  ).toBe(true);
+
   await confirmDialog.getByRole("button", { name: "Delete task", exact: true }).click();
   await expect(confirmDialog).not.toBeVisible();
 
@@ -587,6 +606,43 @@ test("preserves ARCHIVED status across ordinary edits in ProjectEditForm and res
   const dialog = page.getByRole("dialog", { name: "Edit Archived Form Project" });
   await expect(dialog).toBeVisible();
 
+  // The delete confirmation layers over this dialog, so one trap hands off to
+  // another. Restoring the outer trap's opener immediately sent focus to the
+  // page behind, and the inner trap then recorded THAT as its own opener, so
+  // dismissing the confirmation landed on the background instead of the
+  // control that opened it.
+  await dialog
+    .getByRole("button", { name: "Remove this project", exact: true })
+    .click();
+  const deleteTrigger = dialog.getByRole("button", {
+    name: "Delete project",
+    exact: true
+  });
+  await expect(deleteTrigger).toBeVisible();
+  await deleteTrigger.click();
+  const deleteConfirm = page.getByRole("alertdialog", {
+    name: "Delete Archived Form Project"
+  });
+  await expect(deleteConfirm).toBeVisible();
+  await expect(
+    deleteConfirm.getByRole("button", { name: "Keep the project", exact: true })
+  ).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(deleteConfirm).toHaveCount(0);
+  await expect(deleteTrigger).toBeFocused();
+
+  // Re-open and verify dismissing via Keep button returns focus to the trigger
+  await deleteTrigger.click();
+  await expect(deleteConfirm).toBeVisible();
+  await expect(
+    deleteConfirm.getByRole("button", { name: "Keep the project", exact: true })
+  ).toBeFocused();
+  await deleteConfirm
+    .getByRole("button", { name: "Keep the project", exact: true })
+    .click();
+  await expect(deleteConfirm).toHaveCount(0);
+  await expect(deleteTrigger).toBeFocused();
+
   // Initial form is clean: "No changes" is visible, Save changes is disabled
   // (Control against mutant: status initialized to PAUSED makes dirty immediately true)
   await expect(dialog.getByText("No changes", { exact: true })).toBeVisible();
@@ -602,6 +658,7 @@ test("preserves ARCHIVED status across ordinary edits in ProjectEditForm and res
   await expect(saveBtn).toBeEnabled();
   await saveBtn.click();
   await expect(dialog).not.toBeVisible();
+  await expect(page.getByRole("button", { name: "Edit", exact: true })).toBeFocused();
 
   // Verify status remains ARCHIVED: Restore button remains visible in header
   await expect(page.getByRole("button", { name: "Restore", exact: true })).toBeVisible();
@@ -613,6 +670,14 @@ test("preserves ARCHIVED status across ordinary edits in ProjectEditForm and res
   const detail = (await check.json()) as { status: string; desiredOutcome: string };
   expect(detail.status).toBe("ARCHIVED");
   expect(detail.desiredOutcome).toBe("Updated outcome via browser edit");
+
+  // Re-open Edit dialog and dismiss with Escape; verify opener is focused
+  const editButton = page.getByRole("button", { name: "Edit", exact: true });
+  await editButton.click();
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog).not.toBeVisible();
+  await expect(editButton).toBeFocused();
 
   // Explicit Restore sets ACTIVE
   await page.getByRole("button", { name: "Restore", exact: true }).click();

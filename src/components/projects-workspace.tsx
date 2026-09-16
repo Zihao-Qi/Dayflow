@@ -64,6 +64,7 @@ import {
   Trash2
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useModalFocusTrap } from "@/components/use-modal-focus-trap";
 
 type ProjectsWorkspaceProps = {
   projects: ProjectSummary[];
@@ -397,14 +398,6 @@ function ProjectCreateForm({
   const [saving, setSaving] = useState(false);
   const createMutation = useRef<PendingMutation | null>(null);
 
-  useEffect(() => {
-    function closeOnEscape(event: KeyboardEvent) {
-      if (event.key === "Escape" && !saving) onCancel();
-    }
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [onCancel, saving]);
-
   async function createProject() {
     if (!name.trim()) {
       setError("Project name is required.");
@@ -449,6 +442,12 @@ function ProjectCreateForm({
     await onCreated(result);
   }
 
+  const createDialogRef = useRef<HTMLElement | null>(null);
+  const nameInputRef = useRef<HTMLInputElement | null>(null);
+  useModalFocusTrap(createDialogRef, saving ? null : onCancel, {
+    initialFocus: nameInputRef
+  });
+
   return (
     <div
       className="project-dialog-overlay"
@@ -456,9 +455,11 @@ function ProjectCreateForm({
       onMouseDown={saving ? undefined : onCancel}
     >
       <section
+        ref={createDialogRef}
         className="project-create-dialog"
         role="dialog"
         aria-modal="true"
+        tabIndex={-1}
         aria-label="Create project"
         onMouseDown={(event) => event.stopPropagation()}
       >
@@ -473,8 +474,8 @@ function ProjectCreateForm({
           <label>
             Name <strong>required</strong>
             <input
+              ref={nameInputRef}
               id="new-project-name"
-              autoFocus
               value={name}
               disabled={saving}
               onChange={(event) => setName(event.target.value)}
@@ -1651,6 +1652,7 @@ function ProjectEditForm({
   const [removeOpen, setRemoveOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const nameSave = useSaveState({
     value: project.name,
     save: onSaveName,
@@ -1660,17 +1662,6 @@ function ProjectEditForm({
     onRecovered: onNameSaveRecovered
   });
   const name = nameSave.draft;
-
-  useEffect(() => {
-    function closeOnEscape(event: KeyboardEvent) {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      if (deleteConfirmOpen) setDeleteConfirmOpen(false);
-      else onCancel();
-    }
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [deleteConfirmOpen, onCancel]);
 
   const dirty =
     name !== project.name ||
@@ -1707,6 +1698,37 @@ function ProjectEditForm({
     setSaving(false);
   }
 
+  async function handleDelete() {
+    setDeleting(true);
+    try {
+      await onDelete();
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  const editDialogRef = useRef<HTMLElement | null>(null);
+  const nameInputRef = useRef<HTMLInputElement | null>(null);
+  const projectDeleteRef = useRef<HTMLElement | null>(null);
+  const keepProjectRef = useRef<HTMLButtonElement | null>(null);
+  // The confirmation layers over the edit dialog, so only one trap is live at
+  // a time - otherwise both would fight over Tab, as the restore flow showed.
+  // Escape is refused mid-save, matching the create dialog. The listener this
+  // replaced did not check, so Escape could dismiss the dialog while its write
+  // was in flight.
+  useModalFocusTrap(editDialogRef, saving ? null : onCancel, {
+    active: !deleteConfirmOpen,
+    initialFocus: nameInputRef
+  });
+  useModalFocusTrap(
+    projectDeleteRef,
+    deleting ? null : () => setDeleteConfirmOpen(false),
+    {
+      active: deleteConfirmOpen,
+      initialFocus: keepProjectRef
+    }
+  );
+
   return (
     <div
       className="project-dialog-overlay project-edit-overlay"
@@ -1714,9 +1736,11 @@ function ProjectEditForm({
       onMouseDown={onCancel}
     >
       <section
+        ref={editDialogRef}
         className="project-create-dialog project-edit-dialog"
         role="dialog"
         aria-modal="true"
+        tabIndex={-1}
         aria-label={`Edit ${project.name}`}
         onMouseDown={(event) => event.stopPropagation()}
       >
@@ -1740,7 +1764,7 @@ function ProjectEditForm({
                 />
               </span>
               <input
-                autoFocus
+                ref={nameInputRef}
                 value={name}
                 onChange={(event) => nameSave.setDraft(event.target.value)}
                 {...nameSave.inputProps}
@@ -1892,9 +1916,11 @@ function ProjectEditForm({
           onMouseDown={() => setDeleteConfirmOpen(false)}
         >
           <section
+            ref={projectDeleteRef}
             className="project-delete-confirm"
             role="alertdialog"
             aria-modal="true"
+            tabIndex={-1}
             aria-label={`Delete ${project.name}`}
             onMouseDown={(event) => event.stopPropagation()}
           >
@@ -1912,12 +1938,15 @@ function ProjectEditForm({
             <div>
               <button
                 className="primary-button project-delete-confirm-button"
-                onClick={() => void onDelete()}
+                disabled={deleting}
+                onClick={() => void handleDelete()}
               >
-                Delete the container
+                {deleting ? "Deleting…" : "Delete the container"}
               </button>
               <button
+                ref={keepProjectRef}
                 className="secondary-button"
+                disabled={deleting}
                 onClick={() => setDeleteConfirmOpen(false)}
               >
                 Keep the project
@@ -1982,17 +2011,12 @@ function ProjectPhaseSection({
     window.setTimeout(() => deleteTriggerRef.current?.focus(), 0);
   }
 
-  useEffect(() => {
-    if (!deleteConfirmOpen) return;
-    keepPhaseRef.current?.focus();
-    function closeOnEscape(event: KeyboardEvent) {
-      if (event.key !== "Escape" || deleting) return;
-      event.preventDefault();
-      closeDeleteConfirm();
-    }
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [deleteConfirmOpen, deleting]);
+  const phaseDeleteRef = useRef<HTMLElement | null>(null);
+  useModalFocusTrap(phaseDeleteRef, deleting ? null : closeDeleteConfirm, {
+    active: Boolean(phase && onDeletePhase && deleteConfirmOpen),
+    // Keep, not Delete. The effect this replaced focused it deliberately.
+    initialFocus: keepPhaseRef
+  });
 
   return (
     <section className="project-phase-section">
@@ -2054,9 +2078,11 @@ function ProjectPhaseSection({
           onMouseDown={deleting ? undefined : closeDeleteConfirm}
         >
           <section
+            ref={phaseDeleteRef}
             className="project-delete-confirm"
             role="alertdialog"
             aria-modal="true"
+            tabIndex={-1}
             aria-label={`Delete phase ${phase.name}`}
             onMouseDown={(event) => event.stopPropagation()}
           >
@@ -2186,17 +2212,13 @@ function ProjectTaskItem({
   }
 
   useEffect(() => setTitle(task.title), [task.title]);
-  useEffect(() => {
-    if (!deleteConfirmOpen) return;
-    keepTaskRef.current?.focus();
-    function closeOnEscape(event: KeyboardEvent) {
-      if (event.key !== "Escape" || deleting) return;
-      event.preventDefault();
-      closeDeleteConfirm();
-    }
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [deleteConfirmOpen, deleting]);
+
+  const taskDeleteRef = useRef<HTMLElement | null>(null);
+  useModalFocusTrap(taskDeleteRef, deleting ? null : closeDeleteConfirm, {
+    active: deleteConfirmOpen,
+    // Keep, not Delete. The effect this replaced focused it deliberately.
+    initialFocus: keepTaskRef
+  });
 
   return (
     <article
@@ -2316,9 +2338,11 @@ function ProjectTaskItem({
           onMouseDown={deleting ? undefined : closeDeleteConfirm}
         >
           <section
+            ref={taskDeleteRef}
             className="project-delete-confirm"
             role="alertdialog"
             aria-modal="true"
+            tabIndex={-1}
             aria-label={`Delete task ${task.title}`}
             onMouseDown={(event) => event.stopPropagation()}
           >

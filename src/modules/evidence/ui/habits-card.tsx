@@ -375,14 +375,7 @@ function HabitRowItem({
 
     if (touchedAmount) {
       const trimmed = amountDraft.trim();
-      if (trimmed === "") {
-        details.amount = null;
-      } else {
-        const parsed = Number(trimmed);
-        details.amount = Number.isNaN(parsed)
-          ? (trimmed as unknown as number)
-          : parsed;
-      }
+      details.amount = trimmed === "" ? null : Number(trimmed);
     }
 
     if (touchedNote) {
@@ -522,8 +515,8 @@ function HabitRowItem({
                   {amountError}
                 </span>
               )}
-              <input
-                type="text"
+              <textarea
+                rows={2}
                 value={noteDraft}
                 onChange={(e) => {
                   setNoteDraft(e.target.value);

@@ -8,7 +8,8 @@ import { isCurrentReviewWindow } from "../../src/shared/client/decoders";
 // Install an explicit read-only database fixture before importing the route.
 // Prisma delegates are proxies, so node:test method mocks need plain delegates.
 const prisma = Object.fromEntries(
-  ["activityEntry", "diaryEntry", "task", "note", "material", "project", "review"].map((name) => [name, {
+  // habit and habitCheckIn joined the window read when consistency was added.
+  ["activityEntry", "diaryEntry", "task", "note", "material", "project", "review", "habit", "habitCheckIn"].map((name) => [name, {
     findMany: async () => [], findUnique: async () => null,
     upsert: async () => { throw new Error("Read must not persist"); }
   }])
@@ -47,7 +48,7 @@ for (const persisted of [false, true]) {
     const response = await GET(request("current=1"));
     assert.equal(response.status, 200);
     const payload = await response.json();
-    assert.deepEqual(Object.keys(payload).sort(), ["ending", "periodEnd", "periodStart", "projects", "review", "reviewSummary"]);
+    assert.deepEqual(Object.keys(payload).sort(), ["ending", "habits", "periodEnd", "periodStart", "projects", "review", "reviewSummary"]);
     assert.equal(payload.ending, "2026-09-04");
     assert.equal(payload.periodStart, period.start.toISOString());
     assert.equal(payload.periodEnd, period.end.toISOString());

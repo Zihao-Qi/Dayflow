@@ -15,7 +15,7 @@ test("agent export captures its clock once before reading the database", async (
   });
   (prisma as unknown as { $transaction: unknown }).$transaction = async () => {
     assert.equal(readClock.mock.callCount(), 1);
-    return Array.from({ length: 11 }, () => []);
+    return Array.from({ length: 13 }, () => []);
   };
   const response = await GET();
   const body = await response.json();

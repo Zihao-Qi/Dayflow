@@ -48,6 +48,16 @@ enum ActivityOrigin {
   FOCUS
 }
 
+enum HabitCadence {
+  DAILY
+  TIMES_PER_WEEK
+}
+
+enum HabitStatus {
+  ACTIVE
+  ARCHIVED
+}
+
 model Project {
   id                   String               @id @default(cuid())
   name                 String
@@ -259,4 +269,36 @@ model MutationReceipt {
   createdAt    DateTime @default(now())
 
   @@index([createdAt])
+}
+
+model Habit {
+  id            String         @id @default(cuid())
+  name          String
+  cadence       HabitCadence   @default(DAILY)
+  targetPerWeek Int            @default(7)
+  status        HabitStatus    @default(ACTIVE)
+  sortOrder     Int            @default(0)
+  archivedAt    DateTime?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  checkIns      HabitCheckIn[]
+
+  @@index([status, sortOrder])
+}
+
+/// One row per Habit per local day. A missing row means the day was not
+/// recorded, which is deliberately distinct from `done = false`.
+model HabitCheckIn {
+  id        String   @id @default(cuid())
+  habitId   String
+  date      DateTime
+  done      Boolean  @default(true)
+  amount    Int?
+  note      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  habit     Habit    @relation(fields: [habitId], references: [id], onDelete: Cascade)
+
+  @@unique([habitId, date])
+  @@index([date])
 }

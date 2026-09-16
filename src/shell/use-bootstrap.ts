@@ -5,7 +5,7 @@ import { useFocusSession } from "@/components/focus-session-provider";
 import { millisecondsUntilNextLocalDay } from "@/lib/dates";
 import { ApiError } from "@/shared/client/api-client";
 import type { Bootstrap } from "@/shared/client/decoders";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createReadGeneration } from "@/shared/client/read-generation";
 
 import { type BootstrapFailure, type ShellState } from "./use-shell-state";
@@ -51,6 +51,7 @@ export function useBootstrap({
   initializeActivityClock: () => void;
   refreshDestination: (todayKey?: string) => Promise<boolean>;
 }) {
+  const [readRefreshFailed, setReadRefreshFailed] = useState(false);
   const owner = useRef(createReadGeneration()).current;
   const operation = useRef(createReadGeneration()).current;
   const destination = useRef(refreshDestination);
@@ -70,6 +71,7 @@ export function useBootstrap({
         void refresh()
           .catch(() => {
             if (disposed) return;
+            setReadRefreshFailed(true);
             setAppError(
               "Dayflow could not refresh for the new day. Reload to try again."
             );
@@ -100,6 +102,7 @@ export function useBootstrap({
 
   async function refresh() {
     await operation.run(refreshReads, () => {});
+    setReadRefreshFailed(false);
   }
 
   async function refreshReads() {
@@ -141,15 +144,25 @@ export function useBootstrap({
   async function refreshAfterConfirmedMutation() {
     try {
       await refresh();
+      setReadRefreshFailed(false);
       return true;
     } catch {
+      setReadRefreshFailed(true);
       setAppError(
-        "Your change was saved, but Dayflow could not refresh the latest view. Reload to try again."
+        "Your change was saved, but Dayflow could not refresh the latest view. Retry refresh or reload."
       );
       setAppAnnouncement("Saved, but the latest view could not be refreshed.");
       return false;
     }
   }
 
-  return { refresh, retryBootstrap, refreshAfterConfirmedMutation };
+  const clearReadRefreshFailed = () => setReadRefreshFailed(false);
+
+  return {
+    refresh,
+    retryBootstrap,
+    refreshAfterConfirmedMutation,
+    readRefreshFailed,
+    clearReadRefreshFailed
+  };
 }

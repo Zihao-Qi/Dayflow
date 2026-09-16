@@ -59,7 +59,9 @@ test("current Review Window GET preserves exact draft JSON and satisfies its res
   const originalFindUnique = prisma.review.findUnique;
   context.after(() => { prisma.review.findUnique = originalFindUnique; });
   (prisma.review as unknown as { findUnique: unknown }).findUnique = async () => null;
-  for (const delegate of [prisma.activityEntry, prisma.diaryEntry, prisma.task, prisma.note, prisma.material, prisma.project]) {
+  // habit and habitCheckIn joined the window read when consistency was added;
+  // without them these reads reach a real client and there is no DATABASE_URL.
+  for (const delegate of [prisma.activityEntry, prisma.diaryEntry, prisma.task, prisma.note, prisma.material, prisma.project, prisma.habit, prisma.habitCheckIn]) {
     const originalFindMany = delegate.findMany;
     context.after(() => { delegate.findMany = originalFindMany; });
     (delegate as unknown as { findMany: unknown }).findMany = async () => [];
@@ -85,7 +87,8 @@ test("current Review Window GET preserves exact draft JSON and satisfies its res
       noteCount: 0, materialCount: 0, diaryDayCount: 0, averageMood: null, averageEnergy: null,
       pendingEnrichmentSessions: 0, pendingEnrichmentMinutes: 0, movedProjectCount: 0
     },
-    projects: []
+    projects: [],
+    habits: []
   }));
   assert.equal(isReviewWindowDetail(JSON.parse(serialized)), true);
 });

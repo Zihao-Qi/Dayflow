@@ -413,6 +413,110 @@ export const evidenceErrors = {
     message: "Add a short note about what happened.",
     code: "VALIDATION_ERROR",
     field: "note"
+  },
+  habitNotFound: {
+    status: 404,
+    message: "Habit not found.",
+    code: "HABIT_NOT_FOUND"
+  },
+  habitIdentifierIsInvalid: {
+    status: 400,
+    message: "Habit identifier is invalid.",
+    code: "VALIDATION_ERROR",
+    field: "id"
+  },
+  habitsCouldNotBeLoaded: {
+    status: 500,
+    message: "Habits could not be loaded.",
+    code: "INTERNAL_ERROR"
+  },
+  habitCouldNotBeSaved: {
+    status: 500,
+    message: "Habit could not be saved.",
+    code: "INTERNAL_ERROR"
+  },
+  checkInCouldNotBeSaved: {
+    status: 500,
+    message: "Check-in could not be saved.",
+    code: "INTERNAL_ERROR"
+  },
+  habitNameIsRequired: {
+    status: 400,
+    message: "Give the habit a name.",
+    code: "VALIDATION_ERROR",
+    field: "name"
+  },
+  habitNameIsInvalid: {
+    status: 400,
+    message: "Habit name must be text.",
+    code: "VALIDATION_ERROR",
+    field: "name"
+  },
+  habitNameIsTooLong: {
+    status: 400,
+    message: "Habit name must be 120 characters or fewer.",
+    code: "VALIDATION_ERROR",
+    field: "name"
+  },
+  habitCadenceIsInvalid: {
+    status: 400,
+    message: "Habit cadence must be daily or a number of times each week.",
+    code: "VALIDATION_ERROR",
+    field: "cadence"
+  },
+  habitTargetPerWeekIsInvalid: {
+    status: 400,
+    message: "Habit target must be a whole number from 1 to 7.",
+    code: "VALIDATION_ERROR",
+    field: "targetPerWeek"
+  },
+  habitSortOrderIsInvalid: {
+    status: 400,
+    message: "Habit order must be a whole number.",
+    code: "VALIDATION_ERROR",
+    field: "sortOrder"
+  },
+  checkInDateMustBeAValidCalendarDate: {
+    status: 400,
+    message: "Check-in date must be a valid calendar date.",
+    code: "VALIDATION_ERROR",
+    field: "date"
+  },
+  checkInDateCannotBeInTheFuture: {
+    status: 400,
+    message: "Check-in date cannot be in the future.",
+    code: "VALIDATION_ERROR",
+    field: "date"
+  },
+  checkInDateIsOutsideTheBackfillWindow: {
+    status: 400,
+    message: "Check-ins can only be recorded for the last 7 days.",
+    code: "VALIDATION_ERROR",
+    field: "date"
+  },
+  checkInDoneIsInvalid: {
+    status: 400,
+    message: "Whether the habit was done must be true or false.",
+    code: "VALIDATION_ERROR",
+    field: "done"
+  },
+  checkInAmountIsInvalid: {
+    status: 400,
+    message: "Check-in amount must be a whole number of 0 or more.",
+    code: "VALIDATION_ERROR",
+    field: "amount"
+  },
+  checkInNoteIsInvalid: {
+    status: 400,
+    message: "Check-in note must be text.",
+    code: "VALIDATION_ERROR",
+    field: "note"
+  },
+  checkInNoteIsTooLong: {
+    status: 400,
+    message: "Check-in note must be 2,000 characters or fewer.",
+    code: "VALIDATION_ERROR",
+    field: "note"
   }
 } as const satisfies Record<string, ErrorSpec>;
 

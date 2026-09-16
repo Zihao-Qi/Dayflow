@@ -16,6 +16,7 @@ import { useJournalActions } from "./use-journal-actions";
 import { useQueueActions } from "./use-queue-actions";
 import { useReviewActions } from "./use-review-actions";
 import { useShellState, type TimeBlock } from "./use-shell-state";
+import { useHabitActions } from "./use-habit-actions";
 import { useTaskActions } from "./use-task-actions";
 import { useTimeBlockActions } from "./use-time-block-actions";
 
@@ -48,7 +49,9 @@ export function useShellModel() {
   const {
     refresh,
     retryBootstrap,
-    refreshAfterConfirmedMutation
+    refreshAfterConfirmedMutation,
+    readRefreshFailed,
+    clearReadRefreshFailed
   } = useBootstrap({
     ...state,
     focus,
@@ -284,9 +287,22 @@ export function useShellModel() {
     viewedDay,
     refreshAfterConfirmedMutation
   });
+  const {
+    busyHabitIds,
+    habitCreatePending,
+    createHabitFromDraft,
+    recordHabitCheckIn
+  } = useHabitActions({
+    ...state,
+    refreshAfterConfirmedMutation
+  });
 
   return {
     ...state,
+    busyHabitIds,
+    habitCreatePending,
+    createHabitFromDraft,
+    recordHabitCheckIn,
     registerReviewRefresh,
     focus,
     compactLayout,
@@ -308,6 +324,8 @@ export function useShellModel() {
     timeBlockTaskCandidates,
     refresh,
     retryBootstrap,
+    readRefreshFailed,
+    clearReadRefreshFailed,
     paletteResolution,
     openCommandPalette,
     dismissCommandPalette,

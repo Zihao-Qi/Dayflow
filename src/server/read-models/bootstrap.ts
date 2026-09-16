@@ -12,6 +12,8 @@ import {
   earliestRecordedDay,
   resolveEarliestNavigableDayKey
 } from "@/lib/day-view";
+import { readActiveHabits, readCheckIns } from "@/server/habits";
+import { summarizeHabits } from "@/modules/evidence/domain/habit";
 import { readReviewPeriodEvidence, readSavedReview } from "@/server/review";
 import { readTimeBlocks } from "@/server/time-blocks";
 import { isWorkspaceEmpty } from "@/server/read-models/workspace-readiness";
@@ -40,7 +42,9 @@ export async function readBootstrap(tx: Prisma.TransactionClient, now: Date) {
     savedReview,
     activityCategoryRows,
     workspaceEmpty,
-    earliestDayKey
+    earliestDayKey,
+    habitDefinitions,
+    habitCheckIns
   ] = await Promise.all([
     readTaskWindow(tx, { start: weekStart, end: weekEnd }, today),
     readOpenTaskPalette(tx),
@@ -54,7 +58,9 @@ export async function readBootstrap(tx: Prisma.TransactionClient, now: Date) {
     readSavedReview(tx, reviewPeriod),
     readActivityCategories(tx),
     isWorkspaceEmpty(tx),
-    earliestRecordedDay(tx)
+    earliestRecordedDay(tx),
+    readActiveHabits(tx),
+    readCheckIns(tx, { start: weekStart, end: reviewEnd })
   ]);
 
   const diaryEntry = diary
@@ -108,6 +114,9 @@ export async function readBootstrap(tx: Prisma.TransactionClient, now: Date) {
     stats,
     review,
     reviewSummary,
+    // Today's state travels with the rest of the payload, so opening the app
+    // costs no extra request to know which Habits are still outstanding.
+    habits: summarizeHabits(habitDefinitions, habitCheckIns, weekStart, today),
     workspaceEmpty
   };
 }

@@ -3,9 +3,53 @@ import {
   type ActivityEditor,
   type ActivityEntry
 } from "@/components/activity-records";
-import { localDateKey } from "@/lib/dates";
+import { localDateKey, parseLocalDate } from "@/lib/dates";
 import { request } from "@/shared/client/api-client";
-import { isActivityResponse } from "@/shared/client/decoders";
+import {
+  isActivityResponse,
+  isCheckInResponse,
+  isHabitResponse,
+  type CheckInRecord,
+  type HabitRecord
+} from "@/shared/client/decoders";
+
+export function createHabit(name: string, mutationId: string | null) {
+  return request("/api/habits", {
+    method: "POST",
+    body: { name },
+    mutationId,
+    decode: (result): result is HabitRecord =>
+      isHabitResponse(result) && result.name === name && result.status === "ACTIVE",
+    fallback: "Habit could not be saved. Your draft is still here."
+  });
+}
+
+/**
+ * Check-in writes follow CHECK_INS_V1's mutation-ID convention. Passing a stable
+ * mutation id allows uncertain network retries to be replayed idempotently
+ * and detected if reused across differing operations.
+ */
+export function recordCheckIn(
+  habitId: string,
+  body: { date: string; done: boolean; amount?: number | null; note?: string | null },
+  mutationId: string | null
+) {
+  const parsed = parseLocalDate(body.date);
+  const expectedDate = parsed ? localDateKey(parsed) : body.date.slice(0, 10);
+  return request(`/api/habits/${encodeURIComponent(habitId)}/check-in`, {
+    method: "PUT",
+    body,
+    mutationId,
+    decode: (result): result is CheckInRecord =>
+      isCheckInResponse(result) &&
+      result.habitId === habitId &&
+      result.done === body.done &&
+      localDateKey(new Date(result.date)) === expectedDate &&
+      (body.amount === undefined || result.amount === body.amount) &&
+      (body.note === undefined || result.note === body.note),
+    fallback: "Check-in could not be saved."
+  });
+}
 
 export function saveActivity(activeEditor: ActivityEditor | null, editable: {
   startTime: string;

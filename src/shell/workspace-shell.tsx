@@ -13,7 +13,10 @@ import { DayPage } from "@/modules/planning/ui/log/day-workspace";
 import { ReviewPage } from "@/modules/review/ui/review-workspace";
 import { Plus, RefreshCw } from "lucide-react";
 
+import { useState } from "react";
 import { ActivityDialog } from "@/modules/evidence/ui/activity-dialog";
+import { HabitsCard } from "@/modules/evidence/ui/habits-card";
+import { createHabit, recordCheckIn } from "@/modules/evidence/ui/api";
 import { MobileMoreMenu, Navigation } from "./navigation";
 import { useShellModel } from "./use-shell-model";
 import { type DayView } from "./use-shell-state";
@@ -116,7 +119,13 @@ export function WorkspaceShell() {
     editTimeBlock,
     changeTimeBlockTask,
     saveTimeBlock,
-    deleteTimeBlock
+    deleteTimeBlock,
+    busyHabitIds,
+    habitCreatePending,
+    createHabitFromDraft,
+    recordHabitCheckIn,
+    readRefreshFailed,
+    clearReadRefreshFailed
   } = model;
   if (!data && bootstrapFailure) {
     const migrationRequired =
@@ -231,6 +240,15 @@ export function WorkspaceShell() {
         {screen === "today" && !firstRun && today.page && (
           <TodayPage
             {...today.page}
+            habitsSlot={
+              <HabitsCard
+                habits={data.habits}
+                onRecord={(habitId, done) => void recordHabitCheckIn(habitId, done)}
+                onCreate={createHabitFromDraft}
+                busyHabitIds={busyHabitIds}
+                createPending={habitCreatePending}
+              />
+            }
             onFocusTransition={focus.transition}
             onAddTask={addTask}
             newTask={newTask}
@@ -492,7 +510,30 @@ export function WorkspaceShell() {
       {appError && (
         <div className="app-error-toast" role="alert">
           <span>{appError}</span>
-          <button className="text-button" onClick={() => setAppError("")}>
+          {readRefreshFailed && (
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={async () => {
+                try {
+                  await refresh();
+                  setAppError("");
+                  clearReadRefreshFailed();
+                } catch {
+                  // read refresh remains in error
+                }
+              }}
+            >
+              Retry refresh
+            </button>
+          )}
+          <button
+            className="text-button"
+            onClick={() => {
+              setAppError("");
+              clearReadRefreshFailed();
+            }}
+          >
             Dismiss
           </button>
         </div>

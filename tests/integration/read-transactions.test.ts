@@ -93,6 +93,31 @@ test("read transaction budgets preserve bootstrap and export after five seconds"
   const futureActivity = await database.activityEntry.create({
     data: { startedAt: tomorrow, durationMinutes: 60, category: "Learning", note: "Future row" }
   });
+  const habit = await database.habit.create({
+    data: { name: "Read", cadence: "DAILY", targetPerWeek: 7, sortOrder: 0 }
+  });
+  const checkIn = await database.habitCheckIn.create({
+    data: { habitId: habit.id, date: today, done: true, amount: 20, note: "Chapter 1" }
+  });
+  const archivedHabit = await database.habit.create({
+    data: {
+      name: "Old Habit",
+      cadence: "TIMES_PER_WEEK",
+      targetPerWeek: 3,
+      sortOrder: 1,
+      status: "ARCHIVED",
+      archivedAt: yesterday
+    }
+  });
+  const archivedCheckIn = await database.habitCheckIn.create({
+    data: {
+      habitId: archivedHabit.id,
+      date: yesterday,
+      done: true,
+      amount: 15,
+      note: "Archived note"
+    }
+  });
 
   const [
     { GET: bootstrap }, { GET: agentExport },
@@ -111,7 +136,8 @@ test("read transaction budgets preserve bootstrap and export after five seconds"
     for (const delegate of [
       database.project, database.projectPhase, database.focusSession, database.task,
       database.taskScheduleChange, database.note, database.diaryEntry, database.review,
-      database.material, database.timeBlock, database.activityEntry
+      database.material, database.timeBlock, database.activityEntry,
+      database.habit, database.habitCheckIn
     ]) {
       for (const method of ["findMany", "findFirst", "findUnique"] as const) {
         const original = delegate[method];
@@ -146,7 +172,8 @@ test("read transaction budgets preserve bootstrap and export after five seconds"
         assert.deepEqual(Object.keys(body).sort(), [
           "today", "todayKey", "earliestDayKey", "dayViewForwardWeeks", "tasks", "paletteTasks",
           "notes", "diary", "materials", "timeBlocks", "activities", "activityCategorySuggestions",
-          "projects", "unfinishedTasks", "stats", "review", "reviewSummary", "workspaceEmpty"
+          "projects", "unfinishedTasks", "stats", "review", "reviewSummary", "habits",
+          "workspaceEmpty"
         ].sort());
         for (const key of [
           "tasks", "paletteTasks", "notes", "materials", "timeBlocks", "activities",
@@ -191,22 +218,33 @@ test("read transaction budgets preserve bootstrap and export after five seconds"
         assert.deepEqual(Object.keys(body).sort(), [
           "app", "exportFormat", "exportVersion", "exportedAt", "purpose", "schemaVersion",
           "projects", "phases", "focusSessions", "tasks", "scheduleChanges", "notes",
-          "diaryEntries", "reviews", "materials", "timeBlocks", "activities"
+          "diaryEntries", "reviews", "materials", "timeBlocks", "activities", "habits", "checkIns"
         ].sort());
         const expectedIds = {
           projects: [project.id], phases: [phase.id], focusSessions: [session.id],
           tasks: [overdue.id, task.id, future.id], scheduleChanges: [change.id], notes: [note.id],
           diaryEntries: [diary.id], reviews: [review.id, pastReview.id], materials: [material.id],
-          timeBlocks: [block.id], activities: [activity.id, futureActivity.id]
+          timeBlocks: [block.id], activities: [activity.id, futureActivity.id],
+          habits: [habit.id, archivedHabit.id], checkIns: [archivedCheckIn.id, checkIn.id]
         };
         for (const [key, ids] of Object.entries(expectedIds)) {
           assert.ok(Array.isArray(body[key]), `${key} is a collection`);
           assert.deepEqual(body[key].map((row: { id: string }) => row.id), ids, key);
         }
+        const exportedArchivedHabit = body.habits.find((row: { id: string }) => row.id === archivedHabit.id);
+        assert.ok(exportedArchivedHabit);
+        assert.equal(exportedArchivedHabit.status, "ARCHIVED");
+        assert.equal(exportedArchivedHabit.name, "Old Habit");
+
+        const exportedArchivedCheckIn = body.checkIns.find((row: { id: string }) => row.id === archivedCheckIn.id);
+        assert.ok(exportedArchivedCheckIn);
+        assert.equal(exportedArchivedCheckIn.habitId, archivedHabit.id);
+        assert.equal(exportedArchivedCheckIn.amount, 15);
+        assert.equal(exportedArchivedCheckIn.note, "Archived note");
         assert.equal(body.app, "Dayflow");
         assert.equal(body.exportFormat, "dayflow-json");
         assert.equal(body.exportVersion, 1);
-        assert.equal(body.schemaVersion, 6);
+        assert.equal(body.schemaVersion, 7);
         assert.equal(body.purpose, "Complete local-first productivity data for analysis and external agents.");
         assert.equal(new Date(body.exportedAt).toISOString(), body.exportedAt);
         assert.deepEqual(body.notes[0].tags, ["contract", "read"]);

@@ -6,6 +6,7 @@ import { type HabitSummaryRecord } from "@/shared/client/decoders";
 import { mutationIdFor, type PendingMutation } from "@/shared/client/mutation-ids";
 import { summarizeHabits, type HabitDefinition, type HabitCadenceValue } from "@/modules/evidence/domain/habit";
 import { parseLocalDate, reviewPeriodRange, startOfLocalDay, localDateKey } from "@/shared/kernel/calendar";
+import { ApiError } from "@/shared/client/api-client";
 import { type ShellState } from "./use-shell-state";
 
 export function useHabitActions({
@@ -83,14 +84,32 @@ export function useHabitActions({
     }
   }
 
-  async function recordHabitCheckIn(habitId: string, done: boolean) {
-    if (!data) return;
+  async function recordHabitCheckIn(
+    habitId: string,
+    done: boolean,
+    details?: { amount?: number | null; note?: string | null }
+  ): Promise<{ ok: boolean; error?: string; field?: string }> {
+    if (!data) return { ok: false, error: "Workspace data is not loaded." };
     const targetDateKey = data.todayKey;
-    const mutationKey = `${habitId}:${targetDateKey}:${done}`;
+
+    const payload: {
+      date: string;
+      done: boolean;
+      amount?: number | null;
+      note?: string | null;
+    } = {
+      date: targetDateKey,
+      done,
+      ...(details && details.amount !== undefined ? { amount: details.amount } : {}),
+      ...(details && details.note !== undefined ? { note: details.note } : {})
+    };
+
+    const fingerprint = JSON.stringify(payload);
+    const mutationKey = `${habitId}:${targetDateKey}:${fingerprint}`;
     const existing = checkInMutations.current.get(mutationKey);
     const mutationId = existing ? existing.id : crypto.randomUUID();
     if (!existing) {
-      checkInMutations.current.set(mutationKey, { id: mutationId, fingerprint: mutationKey });
+      checkInMutations.current.set(mutationKey, { id: mutationId, fingerprint });
     }
 
     setBusyHabitIds((prev) => {
@@ -100,7 +119,7 @@ export function useHabitActions({
     });
 
     try {
-      const result = await recordCheckIn(habitId, { date: targetDateKey, done }, mutationId);
+      const result = await recordCheckIn(habitId, payload, mutationId);
       const confirmedDayKey = result.date ? localDateKey(new Date(result.date)) : targetDateKey;
 
       // Confirmed write success: retire all pending mutation entries for this habit and day
@@ -121,7 +140,11 @@ export function useHabitActions({
             if (h.id !== habitId) return h;
             const updatedDays = h.days.map((d) =>
               d.day === confirmedDayKey
-                ? { ...d, state: done ? ("done" as const) : ("notDone" as const), amount: result.amount }
+                ? {
+                    ...d,
+                    state: done ? ("done" as const) : ("notDone" as const),
+                    amount: result.amount !== undefined ? result.amount : d.amount
+                  }
                 : d
             );
             const recomputedDoneCount = updatedDays.filter((d) => d.state === "done").length;
@@ -130,8 +153,8 @@ export function useHabitActions({
             const updatedToday = isToday
               ? {
                   done,
-                  amount: result.amount ?? previousToday?.amount ?? null,
-                  note: result.note ?? previousToday?.note ?? null
+                  amount: result.amount !== undefined ? result.amount : (previousToday?.amount ?? null),
+                  note: result.note !== undefined ? result.note : (previousToday?.note ?? null)
                 }
               : h.today;
             return {
@@ -145,10 +168,15 @@ export function useHabitActions({
       });
       setAppError("");
       await refreshAfterConfirmedMutation();
+      return { ok: true };
     } catch (error) {
-      setAppError(
-        error instanceof Error ? error.message : "Check-in could not be saved."
-      );
+      const message =
+        error instanceof Error ? error.message : "Check-in could not be saved.";
+      const field = error instanceof ApiError ? error.field : undefined;
+      if (!details) {
+        setAppError(message);
+      }
+      return { ok: false, error: message, field };
     } finally {
       setBusyHabitIds((prev) => {
         const next = new Set(prev);

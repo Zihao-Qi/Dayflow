@@ -704,3 +704,195 @@ test("archive failure during trailing refresh preserves removed row and shows re
   await expect(toast).toHaveCount(0);
   await expect(card.getByRole("button", { name: /Morning stretch/ })).toHaveCount(0);
 });
+
+test("amount and note inputs are disabled until habit is recorded for today", async ({ page }) => {
+  const habit = await createHabit(page, "Morning stretch");
+  await openToday(page);
+  const card = habitsCard(page);
+
+  const row = card.locator(`[data-habit="${habit.id}"]`);
+  const amountInput = row.getByLabel("Amount for Morning stretch");
+  const noteInput = row.getByLabel("Note for Morning stretch");
+  const saveButton = row.getByRole("button", { name: "Save details" });
+
+  // Disabled until recorded
+  await expect(row.getByText("Record today first")).toBeVisible();
+  await expect(amountInput).toBeDisabled();
+  await expect(noteInput).toBeDisabled();
+  await expect(saveButton).toBeDisabled();
+
+  // Record today
+  await row.getByRole("button", { name: /Morning stretch: not recorded/ }).click();
+  await expect(row.getByRole("button", { name: /Morning stretch: done/ })).toBeVisible();
+
+  // Inputs become enabled
+  await expect(row.getByText("Record today first")).toHaveCount(0);
+  await expect(amountInput).toBeEnabled();
+  await expect(noteInput).toBeEnabled();
+  await expect(saveButton).toBeEnabled();
+});
+
+test("note survives an amount edit when only amount is modified, and clearing note sends null", async ({ page }) => {
+  const habit = await createHabit(page, "Daily reading");
+  await openToday(page);
+  const card = habitsCard(page);
+
+  const row = card.locator(`[data-habit="${habit.id}"]`);
+  const amountInput = row.getByLabel("Amount for Daily reading");
+  const noteInput = row.getByLabel("Note for Daily reading");
+  const saveButton = row.getByRole("button", { name: "Save details" });
+
+  // Record today
+  await row.getByRole("button", { name: /Daily reading: not recorded/ }).click();
+  await expect(amountInput).toBeEnabled();
+
+  // Set amount to 20 and note to Chapter 4
+  await amountInput.fill("20");
+  await noteInput.fill("Chapter 4: The Great Migration");
+  await saveButton.click();
+
+  await expect(amountInput).toHaveValue("20");
+  await expect(noteInput).toHaveValue("Chapter 4: The Great Migration");
+
+  // Edit ONLY amount to 25; do not touch note
+  await amountInput.fill("25");
+  await saveButton.click();
+
+  // Note survives an amount edit
+  await expect(amountInput).toHaveValue("25");
+  await expect(noteInput).toHaveValue("Chapter 4: The Great Migration");
+
+  // Reload and confirm both persisted
+  await page.reload();
+  const reloadedRow = habitsCard(page).locator(`[data-habit="${habit.id}"]`);
+  await expect(reloadedRow.getByLabel("Amount for Daily reading")).toHaveValue("25");
+  await expect(reloadedRow.getByLabel("Note for Daily reading")).toHaveValue("Chapter 4: The Great Migration");
+
+  // Clear note
+  const reloadedNoteInput = reloadedRow.getByLabel("Note for Daily reading");
+  await reloadedNoteInput.fill("");
+  await reloadedRow.getByRole("button", { name: "Save details" }).click();
+  await expect(reloadedNoteInput).toHaveValue("");
+
+  // Reload and confirm note cleared in DB
+  await page.reload();
+  await expect(habitsCard(page).locator(`[data-habit="${habit.id}"]`).getByLabel("Note for Daily reading")).toHaveValue("");
+});
+
+test("a pending toggle retry does not collide with a subsequent amount write on the same habit and day", async ({ page }) => {
+  const habit = await createHabit(page, "Evening run");
+
+  let toggleMutationId: string | undefined;
+  let amountMutationId: string | undefined;
+  let checkInCount = 0;
+
+  await page.route("**/api/habits/*/check-in", async (route) => {
+    checkInCount += 1;
+    const req = route.request();
+    const headers = req.headers();
+    const mid = headers["x-dayflow-mutation-id"];
+
+    if (checkInCount === 1) {
+      // Step 1: Server commits toggle done=true, but client receives 500 so client retains pending mutation ID
+      toggleMutationId = mid;
+      await route.fetch();
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Network drop on toggle" })
+      });
+      return;
+    }
+
+    if (checkInCount === 2) {
+      // Step 2: Amount write with same done=true
+      amountMutationId = mid;
+      await route.continue();
+      return;
+    }
+
+    await route.continue();
+  });
+
+  await openToday(page);
+  const card = habitsCard(page);
+  const row = card.locator(`[data-habit="${habit.id}"]`);
+  const button = row.getByRole("button", { name: /Evening run: not recorded/ });
+
+  // Step 1: Attempt toggle -> server commits in DB, client receives 500 and retains toggleMutationId
+  await button.click();
+  const toast = page.locator(".app-error-toast");
+  await expect(toast).toBeVisible();
+  await toast.getByRole("button", { name: "Dismiss" }).click();
+
+  // Sync client view with committed server state without reloading the page session
+  const taskInput = page.getByPlaceholder("Add a task for today");
+  await taskInput.fill("Sync check");
+  await taskInput.press("Enter");
+  await expect(row.getByRole("button", { name: /Evening run: done/ })).toBeVisible();
+
+  // Step 2: Write amount 5 on recorded habit (same done=true)
+  const amountInput = row.getByLabel("Amount for Evening run");
+  await expect(amountInput).toBeEnabled();
+  await amountInput.fill("5");
+  await row.getByRole("button", { name: "Save details" }).click();
+
+  await expect(amountInput).toHaveValue("5");
+  expect(checkInCount).toBe(2);
+  expect(amountMutationId).toBeTruthy();
+  expect(toggleMutationId).toBeTruthy();
+  // Under the fix: full payload fingerprint produces distinct mutation key and fresh mutation ID
+  expect(amountMutationId).not.toBe(toggleMutationId);
+});
+
+test("displays validation error next to amount or note field and keeps user draft", async ({ page }) => {
+  const habit = await createHabit(page, "Guitar practice");
+  await openToday(page);
+  const card = habitsCard(page);
+
+  const row = card.locator(`[data-habit="${habit.id}"]`);
+  const amountInput = row.getByLabel("Amount for Guitar practice");
+  const noteInput = row.getByLabel("Note for Guitar practice");
+  const saveButton = row.getByRole("button", { name: "Save details" });
+
+  // Record today
+  await row.getByRole("button", { name: /Guitar practice: not recorded/ }).click();
+  await expect(amountInput).toBeEnabled();
+
+  // Invalid amount: negative number
+  await amountInput.fill("-5");
+  await saveButton.click();
+
+  const amountError = row.locator(".form-error");
+  await expect(amountError).toBeVisible();
+  await expect(amountError).toContainText("Check-in amount must be a whole number of 0 or more.");
+  await expect(amountInput).toHaveValue("-5");
+
+  // Correct amount
+  await amountInput.fill("30");
+  await saveButton.click();
+  await expect(amountError).toHaveCount(0);
+  await expect(amountInput).toHaveValue("30");
+
+  // Invalid note: over 2,000 characters
+  const overlongNote = "x".repeat(2001);
+  await noteInput.fill(overlongNote);
+  await saveButton.click();
+
+  const noteError = row.locator(".form-error");
+  await expect(noteError).toBeVisible();
+  await expect(noteError).toContainText("Check-in note must be 2,000 characters or fewer.");
+  await expect(noteInput).toHaveValue(overlongNote);
+
+  // Correct note
+  await noteInput.fill("Fingerpicking exercises");
+  await saveButton.click();
+  await expect(noteError).toHaveCount(0);
+  await expect(noteInput).toHaveValue("Fingerpicking exercises");
+
+  // Reload to verify persistence
+  await page.reload();
+  const reloadedRow = habitsCard(page).locator(`[data-habit="${habit.id}"]`);
+  await expect(reloadedRow.getByLabel("Amount for Guitar practice")).toHaveValue("30");
+  await expect(reloadedRow.getByLabel("Note for Guitar practice")).toHaveValue("Fingerpicking exercises");
+});

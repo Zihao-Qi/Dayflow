@@ -40,7 +40,11 @@ export function HabitsCard({
   createPending
 }: {
   habits: HabitSummary[];
-  onRecord: (habitId: string, done: boolean) => void;
+  onRecord: (
+    habitId: string,
+    done: boolean,
+    details?: { amount?: number | null; note?: string | null }
+  ) => Promise<{ ok: boolean; error?: string; field?: string }>;
   onCreate: (
     name: string,
     cadence?: HabitCadenceValue,
@@ -150,116 +154,37 @@ export function HabitsCard({
         <p className="quiet-empty">No habits yet. Add one to start recording.</p>
       ) : (
         <div className="captured-list">
-          {habits.map((habit) => {
-            const recorded = habit.today !== null;
-            const done = habit.today?.done === true;
-            const busy = busyHabitIds.has(habit.id);
-            const isEditing = editingHabitId === habit.id;
-
-            return (
-              <div key={habit.id} data-habit={habit.id}>
-                {isEditing ? (
-                  <form
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      void handleRenameSubmit(habit.id);
-                    }}
-                  >
-                    <input
-                      value={renameDraft}
-                      onChange={(event) => setRenameDraft(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Escape") {
-                          event.preventDefault();
-                          cancelRename();
-                        }
-                      }}
-                      aria-label={`Rename ${habit.name}`}
-                      disabled={renaming}
-                      autoFocus
-                    />
-                    {renameError && (
-                      <span className="form-error" role="alert">
-                        {renameError}
-                      </span>
-                    )}
-                    <div>
-                      <button
-                        type="submit"
-                        className="secondary-button"
-                        disabled={renaming}
-                      >
-                        {renaming ? "Saving…" : "Save"}
-                      </button>
-                      <button
-                        type="button"
-                        className="text-button"
-                        disabled={renaming}
-                        onClick={cancelRename}
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </form>
-                ) : (
-                  <>
-                    <button
-                      ref={(node) => {
-                        if (node) {
-                          habitToggleRefs.current.set(habit.id, node);
-                        } else {
-                          habitToggleRefs.current.delete(habit.id);
-                        }
-                      }}
-                      type="button"
-                      className="secondary-button"
-                      aria-pressed={done}
-                      disabled={busy}
-                      onClick={() => onRecord(habit.id, !done)}
-                    >
-                      {habit.name}
-                      {": "}
-                      {/* Never recorded reads differently from recorded as not done. */}
-                      {recorded ? (done ? "done today" : "not done today") : "not recorded today"}
-                    </button>
-                    <button
-                      ref={(node) => {
-                        if (node) {
-                          renameButtonRefs.current.set(habit.id, node);
-                        } else {
-                          renameButtonRefs.current.delete(habit.id);
-                        }
-                      }}
-                      type="button"
-                      className="text-button"
-                      disabled={busy}
-                      onClick={() => startRename(habit.id, habit.name)}
-                    >
-                      Rename
-                    </button>
-                    <button
-                      type="button"
-                      className="text-button"
-                      disabled={busy}
-                      onClick={() => setArchivingHabit(habit)}
-                    >
-                      Archive
-                    </button>
-                    <p className="quiet-empty">
-                      {habit.doneCount} of {habit.target} this period
-                    </p>
-                    <p aria-label={`${habit.name} by day`}>
-                      {habit.days.map((day) => (
-                        <span key={day.day} title={`${day.day}: ${DAY_LABEL[day.state]}`}>
-                          {DAY_MARK[day.state]}
-                        </span>
-                      ))}
-                    </p>
-                  </>
-                )}
-              </div>
-            );
-          })}
+          {habits.map((habit) => (
+            <HabitRowItem
+              key={habit.id}
+              habit={habit}
+              busy={busyHabitIds.has(habit.id)}
+              isEditing={editingHabitId === habit.id}
+              renameDraft={renameDraft}
+              renameError={renameError}
+              renaming={renaming}
+              onStartRename={startRename}
+              onCancelRename={cancelRename}
+              onRenameDraftChange={setRenameDraft}
+              onRenameSubmit={(id) => void handleRenameSubmit(id)}
+              onArchive={(h) => setArchivingHabit(h)}
+              onRecord={onRecord}
+              toggleRef={(node) => {
+                if (node) {
+                  habitToggleRefs.current.set(habit.id, node);
+                } else {
+                  habitToggleRefs.current.delete(habit.id);
+                }
+              }}
+              renameButtonRef={(node) => {
+                if (node) {
+                  renameButtonRefs.current.set(habit.id, node);
+                } else {
+                  renameButtonRefs.current.delete(habit.id);
+                }
+              }}
+            />
+          ))}
         </div>
       )}
 
@@ -370,5 +295,279 @@ export function HabitsCard({
         </div>
       )}
     </section>
+  );
+}
+
+function HabitRowItem({
+  habit,
+  busy,
+  isEditing,
+  renameDraft,
+  renameError,
+  renaming,
+  onStartRename,
+  onCancelRename,
+  onRenameDraftChange,
+  onRenameSubmit,
+  onArchive,
+  onRecord,
+  toggleRef,
+  renameButtonRef
+}: {
+  habit: HabitSummary;
+  busy: boolean;
+  isEditing: boolean;
+  renameDraft: string;
+  renameError: string;
+  renaming: boolean;
+  onStartRename: (habitId: string, name: string) => void;
+  onCancelRename: () => void;
+  onRenameDraftChange: (value: string) => void;
+  onRenameSubmit: (habitId: string) => void;
+  onArchive: (habit: HabitSummary) => void;
+  onRecord: (
+    habitId: string,
+    done: boolean,
+    details?: { amount?: number | null; note?: string | null }
+  ) => Promise<{ ok: boolean; error?: string; field?: string }>;
+  toggleRef: (node: HTMLButtonElement | null) => void;
+  renameButtonRef: (node: HTMLButtonElement | null) => void;
+}) {
+  const recorded = habit.today !== null;
+  const done = habit.today?.done === true;
+
+  const [amountDraft, setAmountDraft] = useState(
+    () =>
+      habit.today?.amount !== null && habit.today?.amount !== undefined
+        ? String(habit.today.amount)
+        : ""
+  );
+  const [noteDraft, setNoteDraft] = useState(() => habit.today?.note ?? "");
+  const [touchedAmount, setTouchedAmount] = useState(false);
+  const [touchedNote, setTouchedNote] = useState(false);
+  const [amountError, setAmountError] = useState("");
+  const [noteError, setNoteError] = useState("");
+  const [savingDetails, setSavingDetails] = useState(false);
+
+  useEffect(() => {
+    if (!touchedAmount) {
+      setAmountDraft(
+        habit.today?.amount !== null && habit.today?.amount !== undefined
+          ? String(habit.today.amount)
+          : ""
+      );
+    }
+  }, [habit.today?.amount, touchedAmount]);
+
+  useEffect(() => {
+    if (!touchedNote) {
+      setNoteDraft(habit.today?.note ?? "");
+    }
+  }, [habit.today?.note, touchedNote]);
+
+  async function handleSaveDetails() {
+    if (!habit.today) return;
+    setSavingDetails(true);
+    setAmountError("");
+    setNoteError("");
+
+    const details: { amount?: number | null; note?: string | null } = {};
+
+    if (touchedAmount) {
+      const trimmed = amountDraft.trim();
+      if (trimmed === "") {
+        details.amount = null;
+      } else {
+        const parsed = Number(trimmed);
+        details.amount = Number.isNaN(parsed)
+          ? (trimmed as unknown as number)
+          : parsed;
+      }
+    }
+
+    if (touchedNote) {
+      details.note = noteDraft === "" ? null : noteDraft;
+    }
+
+    try {
+      const res = await onRecord(habit.id, habit.today.done, details);
+      if (res.ok) {
+        setTouchedAmount(false);
+        setTouchedNote(false);
+        setAmountError("");
+        setNoteError("");
+      } else {
+        if (res.field === "amount") {
+          setAmountError(
+            res.error ?? "Check-in amount must be a whole number of 0 or more."
+          );
+        } else if (res.field === "note") {
+          setNoteError(
+            res.error ?? "Check-in note must be 2,000 characters or fewer."
+          );
+        } else {
+          setAmountError(res.error ?? "Check-in could not be saved.");
+        }
+      }
+    } finally {
+      setSavingDetails(false);
+    }
+  }
+
+  return (
+    <div data-habit={habit.id}>
+      {isEditing ? (
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            onRenameSubmit(habit.id);
+          }}
+        >
+          <input
+            value={renameDraft}
+            onChange={(event) => onRenameDraftChange(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                onCancelRename();
+              }
+            }}
+            aria-label={`Rename ${habit.name}`}
+            disabled={renaming}
+            autoFocus
+          />
+          {renameError && (
+            <span className="form-error" role="alert">
+              {renameError}
+            </span>
+          )}
+          <div>
+            <button
+              type="submit"
+              className="secondary-button"
+              disabled={renaming}
+            >
+              {renaming ? "Saving…" : "Save"}
+            </button>
+            <button
+              type="button"
+              className="text-button"
+              disabled={renaming}
+              onClick={onCancelRename}
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      ) : (
+        <>
+          <button
+            ref={toggleRef}
+            type="button"
+            className="secondary-button"
+            aria-pressed={done}
+            disabled={busy}
+            onClick={() => void onRecord(habit.id, !done)}
+          >
+            {habit.name}
+            {": "}
+            {/* Never recorded reads differently from recorded as not done. */}
+            {recorded ? (done ? "done today" : "not done today") : "not recorded today"}
+          </button>
+          <button
+            ref={renameButtonRef}
+            type="button"
+            className="text-button"
+            disabled={busy}
+            onClick={() => onStartRename(habit.id, habit.name)}
+          >
+            Rename
+          </button>
+          <button
+            type="button"
+            className="text-button"
+            disabled={busy}
+            onClick={() => onArchive(habit)}
+          >
+            Archive
+          </button>
+
+          <div>
+            {!recorded && (
+              <span className="quiet-empty">Record today first</span>
+            )}
+            <div>
+              <input
+                type="number"
+                min={0}
+                max={1000000}
+                value={amountDraft}
+                onChange={(e) => {
+                  setAmountDraft(e.target.value);
+                  setTouchedAmount(true);
+                  setAmountError("");
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void handleSaveDetails();
+                  }
+                }}
+                placeholder="Amount"
+                aria-label={`Amount for ${habit.name}`}
+                disabled={!recorded || busy || savingDetails}
+              />
+              {amountError && (
+                <span className="form-error" role="alert">
+                  {amountError}
+                </span>
+              )}
+              <input
+                type="text"
+                value={noteDraft}
+                onChange={(e) => {
+                  setNoteDraft(e.target.value);
+                  setTouchedNote(true);
+                  setNoteError("");
+                }}
+                onKeyDown={(e) => {
+                  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+                    e.preventDefault();
+                    void handleSaveDetails();
+                  }
+                }}
+                placeholder="Note"
+                aria-label={`Note for ${habit.name}`}
+                disabled={!recorded || busy || savingDetails}
+              />
+              {noteError && (
+                <span className="form-error" role="alert">
+                  {noteError}
+                </span>
+              )}
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={!recorded || busy || savingDetails}
+                onClick={() => void handleSaveDetails()}
+              >
+                {savingDetails ? "Saving…" : "Save details"}
+              </button>
+            </div>
+          </div>
+
+          <p className="quiet-empty">
+            {habit.doneCount} of {habit.target} this period
+          </p>
+          <p aria-label={`${habit.name} by day`}>
+            {habit.days.map((day) => (
+              <span key={day.day} title={`${day.day}: ${DAY_LABEL[day.state]}`}>
+                {DAY_MARK[day.state]}
+              </span>
+            ))}
+          </p>
+        </>
+      )}
+    </div>
   );
 }

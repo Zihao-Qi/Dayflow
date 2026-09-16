@@ -244,7 +244,7 @@ export function WorkspaceShell() {
             habitsSlot={
               <HabitsCard
                 habits={data.habits}
-                onRecord={(habitId, done) => void recordHabitCheckIn(habitId, done)}
+                onRecord={recordHabitCheckIn}
                 onCreate={createHabitFromDraft}
                 onRename={renameHabit}
                 onArchive={archiveHabit}

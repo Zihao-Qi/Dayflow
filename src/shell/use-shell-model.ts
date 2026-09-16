@@ -49,7 +49,9 @@ export function useShellModel() {
   const {
     refresh,
     retryBootstrap,
-    refreshAfterConfirmedMutation
+    refreshAfterConfirmedMutation,
+    readRefreshFailed,
+    clearReadRefreshFailed
   } = useBootstrap({
     ...state,
     focus,
@@ -322,6 +324,8 @@ export function useShellModel() {
     timeBlockTaskCandidates,
     refresh,
     retryBootstrap,
+    readRefreshFailed,
+    clearReadRefreshFailed,
     paletteResolution,
     openCommandPalette,
     dismissCommandPalette,

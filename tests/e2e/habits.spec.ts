@@ -163,6 +163,7 @@ test("separates confirmed write success from read-refresh failure", async ({ pag
   const card = habitsCard(page);
 
   let failRefresh = false;
+  let recoveredRefresh = false;
   await page.route("**/api/bootstrap", async (route) => {
     if (failRefresh) {
       await route.fulfill({
@@ -172,7 +173,16 @@ test("separates confirmed write success from read-refresh failure", async ({ pag
       });
       return;
     }
-    await route.continue();
+    const response = await route.fetch();
+    const payload = await response.json();
+    if (recoveredRefresh && Array.isArray(payload.habits) && payload.habits.length > 0) {
+      payload.habits.push({
+        ...payload.habits[0],
+        id: "synced-habit-id",
+        name: "Synced habit from refresh"
+      });
+    }
+    await route.fulfill({ response, json: payload });
   });
 
   const input = card.getByLabel("New habit name");
@@ -199,12 +209,14 @@ test("separates confirmed write success from read-refresh failure", async ({ pag
 
   // Recover read refresh and click Retry refresh (no page.reload!)
   failRefresh = false;
+  recoveredRefresh = true;
   await retryButton.click();
 
   // Read error is resolved and toast is dismissed
   await expect(toast).toHaveCount(0);
   // Fresh content is visible and preserved
   await expect(habitButton).toBeVisible();
+  await expect(card.getByRole("button", { name: /Synced habit from refresh/ })).toBeVisible();
   // Only a single write request was sent
   expect(habitCreateRequests).toBe(1);
 });
@@ -300,7 +312,9 @@ test("delayed check-in does not mark a new day done after calendar rollover", as
       const nextDay = new Date(currentToday);
       nextDay.setDate(nextDay.getDate() + 1);
       payload.today = nextDay.toISOString();
-      payload.todayKey = nextDay.toISOString().slice(0, 10);
+      payload.todayKey = `${nextDay.getFullYear()}-${String(nextDay.getMonth() + 1).padStart(2, "0")}-${String(nextDay.getDate()).padStart(2, "0")}`;
+      // Note: Deliberately partial fake new-day read that advances todayKey and resets habits[].today
+      // without shifting the full days strip, sufficient to verify rollover guard against stale todayKey.
       if (Array.isArray(payload.habits)) {
         payload.habits = payload.habits.map((h: Record<string, unknown>) => ({
           ...h,
@@ -341,4 +355,88 @@ test("delayed check-in does not mark a new day done after calendar rollover", as
   // Under rollover protection, yesterday's check-in must NOT mark today done!
   await expect(button).toHaveAttribute("aria-pressed", "false");
   await expect(button).toContainText("not recorded today");
+});
+
+test("retires all pending check-in retry IDs for habit and day upon confirmed success so superseded writes are not replayed", async ({ page }) => {
+  await createHabit(page, "Daily meditation");
+
+  let mutationIdA: string | undefined;
+  let mutationIdB: string | undefined;
+  let mutationIdC: string | undefined;
+  let checkInCount = 0;
+
+  await page.route("**/api/habits/*/check-in", async (route) => {
+    checkInCount += 1;
+    const req = route.request();
+    const headers = req.headers();
+    const mutationId = headers["x-dayflow-mutation-id"];
+
+    if (checkInCount === 1) {
+      // Step 1: Server commits done=true, but client receives network error/abort
+      mutationIdA = mutationId;
+      const response = await route.fetch();
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Network lost after commit" })
+      });
+      return;
+    }
+
+    if (checkInCount === 2) {
+      // Step 2: Opposite toggle (done=false) succeeds
+      mutationIdB = mutationId;
+      await route.continue();
+      return;
+    }
+
+    if (checkInCount === 3) {
+      // Step 3: Original toggle (done=true) clicked again
+      mutationIdC = mutationId;
+      await route.continue();
+      return;
+    }
+
+    await route.continue();
+  });
+
+  await openToday(page);
+  const card = habitsCard(page);
+  const button = card.getByRole("button", { name: /Daily meditation/ });
+  await expect(button).toHaveAttribute("aria-pressed", "false");
+
+  // Step 1: Click done=true. Server commits in DB, client receives 500 and retains mutation ID A.
+  await button.click();
+  const toast = page.locator(".app-error-toast");
+  await expect(toast).toBeVisible();
+  await toast.getByRole("button", { name: "Dismiss" }).click();
+
+  // Sync client view with committed server state without reloading the page session
+  const taskInput = page.getByPlaceholder("Add a task for today");
+  await taskInput.fill("Sync check");
+  await taskInput.press("Enter");
+  await expect(button).toHaveAttribute("aria-pressed", "true");
+
+  // Step 2: Opposite toggle (done=false). Succeeds normally with mutation ID B.
+  await button.click();
+  await expect(button).toHaveAttribute("aria-pressed", "false");
+  expect(checkInCount).toBe(2);
+
+  // Step 3: Original toggle (done=true) clicked again.
+  // Under the fix: Step 2 retired all pending entries for this habit/day, so Step 3 generates fresh mutation ID C.
+  await button.click();
+  await expect(button).toHaveAttribute("aria-pressed", "true");
+  expect(checkInCount).toBe(3);
+
+  // Crucial check: mutation ID C must NOT reuse mutation ID A from step 1
+  expect(mutationIdA).toBeDefined();
+  expect(mutationIdC).toBeDefined();
+  expect(mutationIdC).not.toBe(mutationIdA);
+
+  // Verify server DB actually persisted done=true rather than replaying old receipt without writing
+  await page.reload();
+  await openToday(page);
+  const reloadedCard = habitsCard(page);
+  const reloadedButton = reloadedCard.getByRole("button", { name: /Daily meditation/ });
+  await expect(reloadedButton).toHaveAttribute("aria-pressed", "true");
 });

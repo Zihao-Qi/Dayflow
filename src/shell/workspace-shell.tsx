@@ -123,7 +123,9 @@ export function WorkspaceShell() {
     busyHabitIds,
     habitCreatePending,
     createHabitFromDraft,
-    recordHabitCheckIn
+    recordHabitCheckIn,
+    readRefreshFailed,
+    clearReadRefreshFailed
   } = model;
   if (!data && bootstrapFailure) {
     const migrationRequired =
@@ -508,7 +510,7 @@ export function WorkspaceShell() {
       {appError && (
         <div className="app-error-toast" role="alert">
           <span>{appError}</span>
-          {appError.includes("refresh") && (
+          {readRefreshFailed && (
             <button
               type="button"
               className="secondary-button"
@@ -516,6 +518,7 @@ export function WorkspaceShell() {
                 try {
                   await refresh();
                   setAppError("");
+                  clearReadRefreshFailed();
                 } catch {
                   // read refresh remains in error
                 }
@@ -524,7 +527,13 @@ export function WorkspaceShell() {
               Retry refresh
             </button>
           )}
-          <button className="text-button" onClick={() => setAppError("")}>
+          <button
+            className="text-button"
+            onClick={() => {
+              setAppError("");
+              clearReadRefreshFailed();
+            }}
+          >
             Dismiss
           </button>
         </div>

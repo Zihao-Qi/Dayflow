@@ -44,9 +44,7 @@ export function useHabitActions({
         if (!current) return current;
         if (current.habits.some((h) => h.id === result.id)) return current;
         const todayDate = parseLocalDate(current.todayKey) ?? startOfLocalDay(new Date(current.today));
-        const periodStart = current.habits[0]?.days.length
-          ? (parseLocalDate(current.habits[0].days[0].day) ?? reviewPeriodRange(todayDate).start)
-          : (current.review?.periodStart ? (parseLocalDate(current.review.periodStart) ?? reviewPeriodRange(todayDate).start) : reviewPeriodRange(todayDate).start);
+        const periodStart = reviewPeriodRange(todayDate).start;
         const definition: HabitDefinition = {
           id: result.id,
           name: result.name,
@@ -96,10 +94,17 @@ export function useHabitActions({
 
     try {
       const result = await recordCheckIn(habitId, { date: targetDateKey, done }, mutationId);
-      // Confirmed write success: retire mutation id
-      checkInMutations.current.delete(mutationKey);
-
       const confirmedDayKey = result.date ? localDateKey(new Date(result.date)) : targetDateKey;
+
+      // Confirmed write success: retire all pending mutation entries for this habit and day
+      for (const key of Array.from(checkInMutations.current.keys())) {
+        if (
+          key.startsWith(`${habitId}:${targetDateKey}:`) ||
+          key.startsWith(`${habitId}:${confirmedDayKey}:`)
+        ) {
+          checkInMutations.current.delete(key);
+        }
+      }
 
       setData((current) => {
         if (!current) return current;
@@ -126,7 +131,7 @@ export function useHabitActions({
               ...h,
               today: updatedToday,
               days: updatedDays,
-              doneCount: updatedDays.length > 0 ? recomputedDoneCount : (done ? (previousToday?.done ? h.doneCount : h.doneCount + 1) : (previousToday?.done ? Math.max(0, h.doneCount - 1) : h.doneCount))
+              doneCount: recomputedDoneCount
             };
           })
         };

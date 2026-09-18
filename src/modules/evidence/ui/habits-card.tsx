@@ -32,6 +32,7 @@ const DAY_MARK: Record<CheckInDayState, string> = {
 
 export function HabitsCard({
   habits,
+  todayKey,
   onRecord,
   onCreate,
   onRename,
@@ -40,6 +41,7 @@ export function HabitsCard({
   createPending
 }: {
   habits: HabitSummary[];
+  todayKey?: string;
   onRecord: (
     habitId: string,
     done: boolean,
@@ -66,12 +68,17 @@ export function HabitsCard({
   const [editingHabitId, setEditingHabitId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [renameError, setRenameError] = useState("");
-  const [renaming, setRenaming] = useState(false);
+  const [submittingRenameHabitId, setSubmittingRenameHabitId] = useState<string | null>(null);
+
+  const renameOpRef = useRef(0);
+  const editingHabitIdRef = useRef<string | null>(null);
+  editingHabitIdRef.current = editingHabitId;
 
   const [archivingHabit, setArchivingHabit] = useState<HabitSummary | null>(null);
   const [archiving, setArchiving] = useState(false);
   const archiveDialogRef = useRef<HTMLElement | null>(null);
   const keepHabitRef = useRef<HTMLButtonElement | null>(null);
+  const createInputRef = useRef<HTMLInputElement | null>(null);
 
   const returnFocusHabitIdRef = useRef<string | null>(null);
   const renameButtonRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
@@ -98,6 +105,7 @@ export function HabitsCard({
   );
 
   function startRename(habitId: string, currentName: string) {
+    renameOpRef.current++;
     returnFocusHabitIdRef.current = habitId;
     setEditingHabitId(habitId);
     setRenameDraft(currentName);
@@ -105,36 +113,67 @@ export function HabitsCard({
   }
 
   function cancelRename() {
+    renameOpRef.current++;
     setEditingHabitId(null);
     setRenameDraft("");
     setRenameError("");
   }
 
   async function handleRenameSubmit(habitId: string) {
-    setRenaming(true);
+    const opToken = ++renameOpRef.current;
+    setSubmittingRenameHabitId(habitId);
     try {
       const res = await onRename(habitId, renameDraft);
+      // If user switched editor or started another rename operation, do not settle into current editor
+      if (renameOpRef.current !== opToken || editingHabitIdRef.current !== habitId) {
+        return;
+      }
       if (res.ok) {
-        cancelRename();
+        setEditingHabitId(null);
+        setRenameDraft("");
+        setRenameError("");
       } else {
         setRenameError(res.error ?? "Habit could not be renamed.");
       }
     } catch (error) {
+      if (renameOpRef.current !== opToken || editingHabitIdRef.current !== habitId) {
+        return;
+      }
       setRenameError(
         error instanceof Error ? error.message : "Habit could not be renamed."
       );
     } finally {
-      setRenaming(false);
+      setSubmittingRenameHabitId((curr) => (curr === habitId ? null : curr));
     }
   }
 
   async function handleArchiveConfirm() {
     if (!archivingHabit) return;
     setArchiving(true);
+    const habitIndex = habits.findIndex((h) => h.id === archivingHabit.id);
+    const nextTarget =
+      habits[habitIndex + 1] ?? habits[habitIndex - 1] ?? null;
+    const nextTargetId = nextTarget?.id ?? null;
+
     try {
       const ok = await onArchive(archivingHabit.id);
       if (ok) {
         setArchivingHabit(null);
+        // Move focus to a stable target: next Habit's toggle, else previous, else the "New habit name" input
+        requestAnimationFrame(() => {
+          if (nextTargetId) {
+            const nextBtn =
+              habitToggleRefs.current.get(nextTargetId) ??
+              document.querySelector<HTMLButtonElement>(
+                `[data-habit="${nextTargetId}"] button.habit-toggle-btn`
+              );
+            if (nextBtn && nextBtn.isConnected) {
+              nextBtn.focus();
+              return;
+            }
+          }
+          createInputRef.current?.focus();
+        });
       }
     } finally {
       setArchiving(false);
@@ -156,13 +195,14 @@ export function HabitsCard({
         <div className="habits-list">
           {habits.map((habit) => (
             <HabitRowItem
-              key={habit.id}
+              key={`${habit.id}:${todayKey ?? ""}`}
               habit={habit}
+              todayKey={todayKey}
               busy={busyHabitIds.has(habit.id)}
               isEditing={editingHabitId === habit.id}
               renameDraft={renameDraft}
               renameError={renameError}
-              renaming={renaming}
+              renaming={submittingRenameHabitId === habit.id}
               onStartRename={startRename}
               onCancelRename={cancelRename}
               onRenameDraftChange={setRenameDraft}
@@ -209,6 +249,7 @@ export function HabitsCard({
         }}
       >
         <input
+          ref={createInputRef}
           className="habit-create-input"
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
@@ -316,7 +357,8 @@ function HabitRowItem({
   onArchive,
   onRecord,
   toggleRef,
-  renameButtonRef
+  renameButtonRef,
+  todayKey
 }: {
   habit: HabitSummary;
   busy: boolean;
@@ -324,6 +366,7 @@ function HabitRowItem({
   renameDraft: string;
   renameError: string;
   renaming: boolean;
+  todayKey?: string;
   onStartRename: (habitId: string, name: string) => void;
   onCancelRename: () => void;
   onRenameDraftChange: (value: string) => void;
@@ -352,6 +395,19 @@ function HabitRowItem({
   const [amountError, setAmountError] = useState("");
   const [noteError, setNoteError] = useState("");
   const [savingDetails, setSavingDetails] = useState(false);
+
+  useEffect(() => {
+    setTouchedAmount(false);
+    setTouchedNote(false);
+    setAmountDraft(
+      habit.today?.amount !== null && habit.today?.amount !== undefined
+        ? String(habit.today.amount)
+        : ""
+    );
+    setNoteDraft(habit.today?.note ?? "");
+    setAmountError("");
+    setNoteError("");
+  }, [todayKey]);
 
   useEffect(() => {
     if (!touchedAmount) {

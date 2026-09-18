@@ -313,3 +313,55 @@ test("habit create with cadence, rename, and archive preserve contracts and deco
   const id2 = mutationIdFor(pendingMutationRef, { name: "Exercise", cadence: "TIMES_PER_WEEK", targetPerWeek: 3 });
   assert.notEqual(id2, id1);
 });
+
+test("createHabit rejects a structurally valid ACTIVE response with mismatched cadence or target", async (t) => {
+  let response = Response.json({
+    id: "habit-1",
+    name: "Read book",
+    cadence: "DAILY",
+    targetPerWeek: 7,
+    status: "ACTIVE"
+  }, { status: 201 });
+
+  t.mock.method(globalThis, "fetch", async () => response);
+
+  // Requesting TIMES_PER_WEEK / 4 but server answers with DAILY / 7 -> must reject
+  await assert.rejects(
+    () => createHabit({ name: "Read book", cadence: "TIMES_PER_WEEK", targetPerWeek: 4 }, "m-1"),
+    (err: Error) => {
+      assert.match(err.message, /Habit could not be saved\. Your draft is still here\./);
+      return true;
+    }
+  );
+
+  // Requesting TIMES_PER_WEEK / 4 but server answers with TIMES_PER_WEEK / 5 -> must reject
+  response = Response.json({
+    id: "habit-1",
+    name: "Read book",
+    cadence: "TIMES_PER_WEEK",
+    targetPerWeek: 5,
+    status: "ACTIVE"
+  }, { status: 201 });
+
+  await assert.rejects(
+    () => createHabit({ name: "Read book", cadence: "TIMES_PER_WEEK", targetPerWeek: 4 }, "m-2"),
+    (err: Error) => {
+      assert.match(err.message, /Habit could not be saved\. Your draft is still here\./);
+      return true;
+    }
+  );
+
+  // Matching response resolves
+  response = Response.json({
+    id: "habit-1",
+    name: "Read book",
+    cadence: "TIMES_PER_WEEK",
+    targetPerWeek: 4,
+    status: "ACTIVE"
+  }, { status: 201 });
+
+  const ok = await createHabit({ name: "Read book", cadence: "TIMES_PER_WEEK", targetPerWeek: 4 }, "m-3");
+  assert.equal(ok.cadence, "TIMES_PER_WEEK");
+  assert.equal(ok.targetPerWeek, 4);
+});
+

@@ -20,12 +20,19 @@ export function createHabit(
   mutationId: string | null
 ) {
   const name = input.name.trim();
+  const expectedCadence = input.cadence ?? "DAILY";
+  const expectedTarget =
+    expectedCadence === "DAILY" ? 7 : (input.targetPerWeek ?? 7);
   return request("/api/habits", {
     method: "POST",
     body: input,
     mutationId,
     decode: (result): result is HabitRecord =>
-      isHabitResponse(result) && result.name === name && result.status === "ACTIVE",
+      isHabitResponse(result) &&
+      result.name === name &&
+      result.status === "ACTIVE" &&
+      result.cadence === expectedCadence &&
+      result.targetPerWeek === expectedTarget,
     fallback: "Habit could not be saved. Your draft is still here."
   });
 }

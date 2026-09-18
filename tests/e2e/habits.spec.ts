@@ -357,6 +357,100 @@ test("delayed check-in does not mark a new day done after calendar rollover", as
   await expect(button).toContainText("not recorded today");
 });
 
+test("cross-midnight rollover resets unsaved amount and note drafts", async ({ page }) => {
+  await createHabit(page, "Morning stretch");
+
+  const now = new Date();
+  const loadingTime = new Date(now);
+  loadingTime.setHours(23, 55, 0, 0);
+  const lateToday = new Date(now);
+  lateToday.setHours(23, 59, 59, 0);
+  await page.clock.install({ time: loadingTime });
+
+  let shiftToNewDay = false;
+  let newDayRecorded = false;
+
+  await page.route("**/api/bootstrap", async (route) => {
+    const response = await route.fetch();
+    const payload = await response.json();
+    if (shiftToNewDay) {
+      const currentToday = new Date(payload.today);
+      const nextDay = new Date(currentToday);
+      nextDay.setDate(nextDay.getDate() + 1);
+      payload.today = nextDay.toISOString();
+      payload.todayKey = `${nextDay.getFullYear()}-${String(nextDay.getMonth() + 1).padStart(2, "0")}-${String(nextDay.getDate()).padStart(2, "0")}`;
+      if (Array.isArray(payload.habits)) {
+        payload.habits = payload.habits.map((h: Record<string, unknown>) => ({
+          ...h,
+          today: newDayRecorded ? { done: true, amount: null, note: null } : null
+        }));
+      }
+    }
+    await route.fulfill({ response, json: payload });
+  });
+
+  await page.route("**/api/habits/*/check-in", async (route) => {
+    if (shiftToNewDay && route.request().method() === "PUT") {
+      newDayRecorded = true;
+      const data = JSON.parse(route.request().postData() ?? "{}");
+      const url = route.request().url();
+      const habitIdMatch = url.match(/\/api\/habits\/([^/]+)\/check-in/);
+      const habitId = habitIdMatch ? decodeURIComponent(habitIdMatch[1]) : "h-1";
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          id: "checkin-new-day",
+          habitId,
+          date: `${data.date}T12:00:00.000Z`,
+          done: data.done,
+          amount: data.amount ?? null,
+          note: data.note ?? null
+        })
+      });
+      return;
+    }
+    await route.continue();
+  });
+
+  await openToday(page);
+  const card = habitsCard(page);
+  const row = card.locator("[data-habit]").first();
+
+  // 1. Record today
+  await row.getByRole("button", { name: /Morning stretch/ }).click();
+  await expect(row.getByRole("button", { name: /Morning stretch: done/ })).toBeVisible();
+
+  // 2. Type draft amount and note without saving
+  const amountInput = row.getByLabel("Amount for Morning stretch");
+  const noteInput = row.getByLabel("Note for Morning stretch");
+  await amountInput.fill("42");
+  await noteInput.fill("Unsaved draft from yesterday");
+
+  // 3. Advance clock across midnight to publish new-day read
+  const newDayResponse = page.waitForResponse(
+    (res) => res.url().includes("/api/bootstrap") && res.status() === 200
+  );
+  shiftToNewDay = true;
+  await page.clock.pauseAt(lateToday);
+  await page.clock.runFor(1_500);
+  await newDayResponse;
+
+  // The new day's row shows unrecorded
+  const newDayRow = card.locator("[data-habit]").first();
+  await expect(newDayRow.getByRole("button", { name: /Morning stretch: not recorded/ })).toBeVisible();
+
+  // 4. Record the new day
+  await newDayRow.getByRole("button", { name: /Morning stretch: not recorded/ }).click();
+  await expect(newDayRow.getByRole("button", { name: /Morning stretch: done/ })).toBeVisible();
+
+  // 5. Observe the draft: new day's draft must be empty, not carrying yesterday's unsaved values
+  const newAmountInput = newDayRow.getByLabel("Amount for Morning stretch");
+  const newNoteInput = newDayRow.getByLabel("Note for Morning stretch");
+  await expect(newAmountInput).toHaveValue("");
+  await expect(newNoteInput).toHaveValue("");
+});
+
 test("retires all pending check-in retry IDs for habit and day upon confirmed success so superseded writes are not replayed", async ({ page }) => {
   await createHabit(page, "Daily meditation");
 
@@ -478,9 +572,18 @@ test("creates a Habit with cadence and weekly target from the card", async ({ pa
   await expect(cadenceSelect).toHaveValue("DAILY");
   await expect(card.getByLabel("Target days per week")).toHaveCount(0);
 
-  // Survives page reload
+  // Survives page reload: assert cadence/target is visible/persisted, not just the name
   await page.reload();
-  await expect(habitsCard(page).getByRole("button", { name: /Read book/ })).toBeVisible();
+  const reloadedCard = habitsCard(page);
+  await expect(reloadedCard.getByRole("button", { name: /Read book/ })).toBeVisible();
+  await expect(reloadedCard.getByText("0 of 1 this period")).toBeVisible();
+  const habitsRes = await page.request.get("/api/habits");
+  const habitsData = await habitsRes.json();
+  const created = habitsData.find((h: { name: string }) => h.name === "Read book");
+  expect(created).toMatchObject({
+    cadence: "TIMES_PER_WEEK",
+    targetPerWeek: 4
+  });
 });
 
 test("changing cadence between failed attempts sends a new mutation ID, not a replay", async ({ page }) => {
@@ -610,16 +713,189 @@ test("renames a Habit inline and displays validation error keeping user draft", 
   ).toBeVisible();
 });
 
-test("archives a Habit behind a focus-trapped confirmation modal", async ({ page }) => {
-  const habit = await createHabit(page, "Deep meditation");
+test("delayed rename settlement is isolated and does not close or mislabel another habit editor", async ({ page }) => {
+  const habitA = await createHabit(page, "Habit Alpha");
+  const habitB = await createHabit(page, "Habit Beta");
   await openToday(page);
   const card = habitsCard(page);
 
+  const rowA = card.locator(`[data-habit="${habitA.id}"]`);
+  const rowB = card.locator(`[data-habit="${habitB.id}"]`);
+
+  // Path 1: Success path isolation
+  let releasePatchA: () => void = () => {};
+  const patchGateA = new Promise<void>((resolve) => {
+    releasePatchA = resolve;
+  });
+
+  await page.route(`**/api/habits/${habitA.id}`, async (route) => {
+    if (route.request().method() === "PATCH") {
+      await patchGateA;
+    }
+    await route.continue();
+  });
+
+  // Open A and start rename
+  await rowA.getByRole("button", { name: "Rename", exact: true }).click();
+  const inputA = rowA.getByLabel("Rename Habit Alpha");
+  await inputA.fill("Habit Alpha Renamed");
+  // Submit A (held in flight at patchGateA)
+  await rowA.getByRole("button", { name: "Save" }).click();
+
+  // While A's PATCH is pending, user opens B's rename editor
+  await rowB.getByRole("button", { name: "Rename", exact: true }).click();
+  const inputB = rowB.getByLabel("Rename Habit Beta");
+  await expect(inputB).toBeVisible();
+
+  // Release A's successful PATCH
+  releasePatchA();
+
+  // B's editor must remain open under isolation guard
+  await expect(inputB).toBeVisible();
+  await expect(rowB.locator(".form-error")).toHaveCount(0);
+
+  // Cancel B
+  await rowB.getByRole("button", { name: "Cancel" }).click();
+  await expect(inputB).toHaveCount(0);
+
+  // Path 2: Failure path isolation
+  let releaseFailPatch: () => void = () => {};
+  const failPatchGate = new Promise<void>((resolve) => {
+    releaseFailPatch = resolve;
+  });
+
+  await page.route(`**/api/habits/${habitB.id}`, async (route) => {
+    if (route.request().method() === "PATCH") {
+      await failPatchGate;
+      await route.fulfill({
+        status: 400,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: "Validation error on Habit B",
+          code: "VALIDATION_ERROR"
+        })
+      });
+      return;
+    }
+    await route.continue();
+  });
+
+  // Open B and submit invalid rename
+  await rowB.getByRole("button", { name: "Rename", exact: true }).click();
+  const inputB2 = rowB.getByLabel("Rename Habit Beta");
+  await inputB2.fill("Habit Beta Attempt");
+  await rowB.getByRole("button", { name: "Save" }).click();
+
+  // While B's PATCH is pending, user opens A's rename editor
+  await rowA.getByRole("button", { name: "Rename", exact: true }).click();
+  const inputA2 = rowA.getByLabel("Rename Habit Alpha Renamed");
+  await expect(inputA2).toBeVisible();
+
+  // Release B's failing PATCH
+  releaseFailPatch();
+
+  // A's editor must NOT receive B's error under isolation guard
+  await expect(inputA2).toBeVisible();
+  await expect(rowA.locator(".form-error")).toHaveCount(0);
+});
+
+test("rename and archive retain mutation ID across failures and retire it upon confirmed success", async ({ page }) => {
+  const habit = await createHabit(page, "Test Habit");
+  await openToday(page);
+  const card = habitsCard(page);
   const row = card.locator(`[data-habit="${habit.id}"]`);
-  const archiveTrigger = row.getByRole("button", { name: "Archive" });
+
+  // 1. Rename retry retention and retirement
+  const renameMutationIds: string[] = [];
+  let failRenameOnce = true;
+
+  await page.route(`**/api/habits/${habit.id}`, async (route) => {
+    if (route.request().method() === "PATCH") {
+      const mid = route.request().headers()["x-dayflow-mutation-id"];
+      if (mid) renameMutationIds.push(mid);
+      if (failRenameOnce) {
+        failRenameOnce = false;
+        await route.fulfill({
+          status: 500,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "Server error" })
+        });
+        return;
+      }
+    }
+    await route.continue();
+  });
+
+  await row.getByRole("button", { name: "Rename" }).click();
+  const renameInput = row.getByLabel("Rename Test Habit");
+  await renameInput.fill("Updated Habit");
+  // First attempt fails
+  await row.getByRole("button", { name: "Save" }).click();
+  await expect(row.locator(".form-error")).toBeVisible();
+  expect(renameMutationIds).toHaveLength(1);
+
+  // Retry with same draft: must reuse mutation ID
+  await row.getByRole("button", { name: "Save" }).click();
+  await expect(row.locator(".form-error")).toHaveCount(0);
+  expect(renameMutationIds).toHaveLength(2);
+  expect(renameMutationIds[1]).toBe(renameMutationIds[0]);
+
+  // Next rename after confirmed success: must use fresh mutation ID
+  await row.getByRole("button", { name: "Rename" }).click();
+  const renameInput2 = row.getByLabel("Rename Updated Habit");
+  await renameInput2.fill("Final Habit Name");
+  await row.getByRole("button", { name: "Save" }).click();
+  await expect(row.getByRole("button", { name: /Final Habit Name/ })).toBeVisible();
+  expect(renameMutationIds).toHaveLength(3);
+  expect(renameMutationIds[2]).not.toBe(renameMutationIds[0]);
+
+  // 2. Archive retry retention and retirement
+  const archiveMutationIds: string[] = [];
+  let failArchiveOnce = true;
+
+  await page.route(`**/api/habits/${habit.id}/archive`, async (route) => {
+    if (route.request().method() === "POST") {
+      const mid = route.request().headers()["x-dayflow-mutation-id"];
+      if (mid) archiveMutationIds.push(mid);
+      if (failArchiveOnce) {
+        failArchiveOnce = false;
+        await route.fulfill({
+          status: 500,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "Archive offline" })
+        });
+        return;
+      }
+    }
+    await route.continue();
+  });
+
+  await row.getByRole("button", { name: "Archive" }).click();
+  const dialog = page.getByRole("alertdialog", { name: "Archive Final Habit Name" });
+  await dialog.getByRole("button", { name: "Archive habit" }).click();
+  // First attempt failed, row preserved
+  await expect(row).toBeVisible();
+  expect(archiveMutationIds).toHaveLength(1);
+
+  // Retry archive in the open dialog: must reuse mutation ID
+  await dialog.getByRole("button", { name: "Archive habit" }).click();
+  await expect(row).toHaveCount(0);
+  expect(archiveMutationIds).toHaveLength(2);
+  expect(archiveMutationIds[1]).toBe(archiveMutationIds[0]);
+});
+
+test("archives a Habit behind a focus-trapped confirmation modal", async ({ page }) => {
+  const habit1 = await createHabit(page, "Deep meditation");
+  const habit2 = await createHabit(page, "Evening reading");
+  await openToday(page);
+  const card = habitsCard(page);
+
+  const row1 = card.locator(`[data-habit="${habit1.id}"]`);
+  const row2 = card.locator(`[data-habit="${habit2.id}"]`);
+  const archiveTrigger1 = row1.getByRole("button", { name: "Archive" });
 
   // Open archive confirmation
-  await archiveTrigger.click();
+  await archiveTrigger1.click();
 
   const dialog = page.getByRole("alertdialog", { name: "Archive Deep meditation" });
   await expect(dialog).toBeVisible();
@@ -639,27 +915,61 @@ test("archives a Habit behind a focus-trapped confirmation modal", async ({ page
   // Dismiss via Escape returns focus to the archive trigger
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
-  await expect(archiveTrigger).toBeFocused();
+  await expect(archiveTrigger1).toBeFocused();
 
   // Re-open and dismiss via Keep habit returns focus to the trigger
-  await archiveTrigger.click();
+  await archiveTrigger1.click();
   await expect(dialog).toBeVisible();
   await keepButton.click();
   await expect(dialog).toHaveCount(0);
-  await expect(archiveTrigger).toBeFocused();
+  await expect(archiveTrigger1).toBeFocused();
 
   // Re-open and confirm archive
-  await archiveTrigger.click();
+  await archiveTrigger1.click();
   await expect(dialog).toBeVisible();
+
+  // E2: Gate trailing refresh to verify row is removed while refresh is pending
+  let releaseRefresh: () => void = () => {};
+  const refreshGate = new Promise<void>((resolve) => {
+    releaseRefresh = resolve;
+  });
+  let gateNextBootstrap = false;
+
+  await page.route("**/api/bootstrap", async (route) => {
+    if (gateNextBootstrap) {
+      await refreshGate;
+    }
+    await route.continue();
+  });
+
+  gateNextBootstrap = true;
   await archiveConfirmButton.click();
 
-  // Row leaves card immediately without waiting for refresh
-  await expect(row).toHaveCount(0);
+  // Row leaves card immediately without waiting for trailing refresh (E2)
+  await expect(row1).toHaveCount(0);
   await expect(card.getByRole("button", { name: /Deep meditation/ })).toHaveCount(0);
 
-  // Persisted: habit stays gone after reload
+  // Release trailing refresh
+  releaseRefresh();
+
+  // F3: Focus moves to the next habit's toggle button
+  await expect(card.getByRole("button", { name: /Evening reading/ })).toBeFocused();
+
+  // Archive second habit: when last habit is archived, focus moves to "New habit name" input
+  const archiveTrigger2 = row2.getByRole("button", { name: "Archive" });
+  await archiveTrigger2.click();
+  const dialog2 = page.getByRole("alertdialog", { name: "Archive Evening reading" });
+  await expect(dialog2).toBeVisible();
+  await dialog2.getByRole("button", { name: "Archive habit" }).click();
+  await expect(row2).toHaveCount(0);
+
+  // F3: Focus moves to create input
+  await expect(card.getByLabel("New habit name")).toBeFocused();
+
+  // Persisted: both habits stay gone after reload
   await page.reload();
   await expect(habitsCard(page).getByRole("button", { name: /Deep meditation/ })).toHaveCount(0);
+  await expect(habitsCard(page).getByRole("button", { name: /Evening reading/ })).toHaveCount(0);
 });
 
 test("archive failure during trailing refresh preserves removed row and shows retry refresh toast", async ({ page }) => {
@@ -776,7 +1086,21 @@ test("note survives an amount edit when only amount is modified, and clearing no
 
   // Reload and confirm note cleared in DB
   await page.reload();
-  await expect(habitsCard(page).locator(`[data-habit="${habit.id}"]`).getByLabel("Note for Daily reading")).toHaveValue("");
+  const reloadedRow2 = habitsCard(page).locator(`[data-habit="${habit.id}"]`);
+  await expect(reloadedRow2.getByLabel("Note for Daily reading")).toHaveValue("");
+  await expect(reloadedRow2.getByLabel("Amount for Daily reading")).toHaveValue("25");
+
+  // Clear amount (E4)
+  const reloadedAmountInput = reloadedRow2.getByLabel("Amount for Daily reading");
+  await reloadedAmountInput.fill("");
+  await reloadedRow2.getByRole("button", { name: "Save details" }).click();
+  await expect(reloadedAmountInput).toHaveValue("");
+
+  // Reload and confirm both amount and note cleared in DB (E4)
+  await page.reload();
+  const clearedRow = habitsCard(page).locator(`[data-habit="${habit.id}"]`);
+  await expect(clearedRow.getByLabel("Amount for Daily reading")).toHaveValue("");
+  await expect(clearedRow.getByLabel("Note for Daily reading")).toHaveValue("");
 });
 
 test("a pending toggle retry does not collide with a subsequent amount write on the same habit and day", async ({ page }) => {

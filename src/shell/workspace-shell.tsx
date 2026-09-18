@@ -244,6 +244,7 @@ export function WorkspaceShell() {
             habitsSlot={
               <HabitsCard
                 habits={data.habits}
+                todayKey={data.todayKey}
                 onRecord={recordHabitCheckIn}
                 onCreate={createHabitFromDraft}
                 onRename={renameHabit}

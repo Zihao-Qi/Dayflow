@@ -364,4 +364,3 @@ test("createHabit rejects a structurally valid ACTIVE response with mismatched c
   assert.equal(ok.cadence, "TIMES_PER_WEEK");
   assert.equal(ok.targetPerWeek, 4);
 });
-

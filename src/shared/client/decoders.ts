@@ -85,7 +85,56 @@ export type Bootstrap = {
   stats: DayStat[];
   review: Review;
   reviewSummary: ReviewSummary;
+  habits: HabitSummaryRecord[];
 };
+
+export type HabitDayRecord = {
+  day: string;
+  /** Four states, because unrecorded and notDone must stay distinguishable. */
+  state: "done" | "notDone" | "unrecorded" | "outOfScope";
+  amount: number | null;
+};
+
+export type HabitSummaryRecord = {
+  id: string;
+  name: string;
+  cadence: "DAILY" | "TIMES_PER_WEEK";
+  targetPerWeek: number;
+  sortOrder: number;
+  today: { done: boolean; amount: number | null; note: string | null } | null;
+  days: HabitDayRecord[];
+  doneCount: number;
+  target: number;
+};
+
+export function isHabitSummaryRecord(value: unknown): value is HabitSummaryRecord {
+  if (!value || typeof value !== "object") return false;
+  const habit = value as Partial<HabitSummaryRecord>;
+  return (
+    typeof habit.id === "string" &&
+    typeof habit.name === "string" &&
+    (habit.cadence === "DAILY" || habit.cadence === "TIMES_PER_WEEK") &&
+    Number.isInteger(habit.targetPerWeek) &&
+    Number.isInteger(habit.sortOrder) &&
+    Number.isInteger(habit.doneCount) &&
+    Number.isInteger(habit.target) &&
+    (habit.today === null ||
+      (typeof habit.today === "object" &&
+        habit.today !== null &&
+        typeof habit.today.done === "boolean" &&
+        (habit.today.amount === null || Number.isInteger(habit.today.amount)) &&
+        (habit.today.note === null || typeof habit.today.note === "string"))) &&
+    Array.isArray(habit.days) &&
+    habit.days.every(
+      (day) =>
+        Boolean(day) &&
+        typeof day === "object" &&
+        typeof day.day === "string" &&
+        ["done", "notDone", "unrecorded", "outOfScope"].includes(day.state) &&
+        (day.amount === null || Number.isInteger(day.amount))
+    )
+  );
+}
 
 export function isPersistedReviewResponse(value: unknown): value is Review & {
   id: string;
@@ -501,7 +550,9 @@ export function isBootstrapResponse(value: unknown): value is Bootstrap {
       !Array.isArray(result.activityCategorySuggestions) ||
       !result.activityCategorySuggestions.every(
         (category: unknown) => typeof category === "string"
-      ));
+      ) ||
+      !Array.isArray(result.habits) ||
+      !result.habits.every(isHabitSummaryRecord));
 }
 
 /** The collapsed Project drawer has always validated only the task array. */
@@ -566,4 +617,46 @@ export function isFocusQueueResponse(
   if (!value || typeof value !== "object") return false;
   const result = value as { tasks?: unknown };
   return Array.isArray(result.tasks) && result.tasks.every(isTaskResponse);
+}
+
+export type CheckInRecord = {
+  id: string;
+  habitId: string;
+  date: string;
+  done: boolean;
+  amount: number | null;
+  note: string | null;
+};
+
+export function isCheckInResponse(value: unknown): value is CheckInRecord {
+  if (!value || typeof value !== "object") return false;
+  const row = value as Partial<CheckInRecord>;
+  return (
+    typeof row.id === "string" &&
+    typeof row.habitId === "string" &&
+    typeof row.date === "string" &&
+    typeof row.done === "boolean" &&
+    (row.amount === null || Number.isInteger(row.amount)) &&
+    (row.note === null || typeof row.note === "string")
+  );
+}
+
+export type HabitRecord = {
+  id: string;
+  name: string;
+  cadence: "DAILY" | "TIMES_PER_WEEK";
+  targetPerWeek: number;
+  status: "ACTIVE" | "ARCHIVED";
+};
+
+export function isHabitResponse(value: unknown): value is HabitRecord {
+  if (!value || typeof value !== "object") return false;
+  const habit = value as Partial<HabitRecord>;
+  return (
+    typeof habit.id === "string" &&
+    typeof habit.name === "string" &&
+    ["DAILY", "TIMES_PER_WEEK"].includes(String(habit.cadence)) &&
+    Number.isInteger(habit.targetPerWeek) &&
+    ["ACTIVE", "ARCHIVED"].includes(String(habit.status))
+  );
 }

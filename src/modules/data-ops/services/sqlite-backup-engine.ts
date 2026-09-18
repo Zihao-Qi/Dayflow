@@ -227,6 +227,27 @@ const CURRENT_TABLE_COLUMNS: Record<string, string[]> = {
     "responseJson",
     "createdAt"
   ],
+  Habit: [
+    "id",
+    "name",
+    "cadence",
+    "targetPerWeek",
+    "status",
+    "sortOrder",
+    "archivedAt",
+    "createdAt",
+    "updatedAt"
+  ],
+  HabitCheckIn: [
+    "id",
+    "habitId",
+    "date",
+    "done",
+    "amount",
+    "note",
+    "createdAt",
+    "updatedAt"
+  ],
   _prisma_migrations: [
     "id",
     "checksum",
@@ -940,7 +961,8 @@ function validateSemanticRelationships(
     ["ActivityEntry", "focusSessionId", "FocusSession"],
     ["FocusSession", "taskId", "Task"],
     ["FocusSession", "projectId", "Project"],
-    ["TaskScheduleChange", "taskId", "Task"]
+    ["TaskScheduleChange", "taskId", "Task"],
+    ["HabitCheckIn", "habitId", "Habit"]
   ] as const;
   for (const [
     sourceTable,

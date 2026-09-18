@@ -7,6 +7,7 @@ import { createTask, deleteTask, reorderTasks, saveTimeBlock } from "../../src/m
 import { createBackup, downloadCsv, stageRestore } from "../../src/modules/data-ops/ui/api";
 import { loadProjectDetail } from "../../src/modules/projects/ui/api";
 import { startFocus } from "../../src/modules/focus/ui/api";
+import { createHabit, recordCheckIn } from "../../src/modules/evidence/ui/api";
 import type { Task } from "../../src/modules/planning/ui/backlog-model";
 
 const task: Task = {
@@ -159,4 +160,53 @@ test("Journal history owns its endpoint and decoder while preserving query and a
     message: "Reference history could not be loaded."
   });
   assert.equal(call?.path, "/api/materials?limit=50");
+});
+
+test("recordCheckIn validates habitId, local date, done and explicit submitted metadata", async (t) => {
+  const habitId = "habit-1";
+  let response = Response.json({
+    id: "checkin-1",
+    habitId,
+    date: "2026-09-14T05:00:00.000Z",
+    done: true,
+    amount: 15,
+    note: "run"
+  });
+  t.mock.method(globalThis, "fetch", async () => response.clone());
+
+  // Matching date and amount
+  const result = await recordCheckIn(habitId, { date: "2026-09-14", done: true, amount: 15 }, null);
+  assert.equal(result.id, "checkin-1");
+
+  // Rejects different day
+  response = Response.json({
+    id: "checkin-1",
+    habitId,
+    date: "2026-09-13T05:00:00.000Z",
+    done: true,
+    amount: 15,
+    note: null
+  });
+  await assert.rejects(
+    recordCheckIn(habitId, { date: "2026-09-14", done: true }, null),
+    { name: "ApiError", message: "Check-in could not be saved." }
+  );
+
+  // Rejects mismatched explicit amount
+  response = Response.json({
+    id: "checkin-1",
+    habitId,
+    date: "2026-09-14T05:00:00.000Z",
+    done: true,
+    amount: 20,
+    note: null
+  });
+  await assert.rejects(
+    recordCheckIn(habitId, { date: "2026-09-14", done: true, amount: 10 }, null),
+    { name: "ApiError", message: "Check-in could not be saved." }
+  );
+
+  // Omitted metadata does not reject existing amount
+  const omittedCheck = await recordCheckIn(habitId, { date: "2026-09-14", done: true }, null);
+  assert.equal(omittedCheck.amount, 20);
 });

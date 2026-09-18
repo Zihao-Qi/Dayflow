@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Check, Pause, Play, Plus, RefreshCw } from "lucide-react";
 import { formatLongDate, formatShortDate } from "@/components/dashboard-formatters";
 import type { useFocusSession } from "@/components/focus-session-provider";
@@ -14,6 +14,12 @@ import { describeTaskMove, todayHeadline } from "@/modules/planning/ui/today-mod
 import type { TodayPageData } from "@/modules/planning/ui/use-today-page";
 
 export type TodayPageProps = TodayPageData & {
+  /**
+   * Habits render as a slot rather than a prop of their own: this page belongs
+   * to planning, and the module graph does not let planning reach evidence.
+   * The shell composes the card and hands it over already built.
+   */
+  habitsSlot?: ReactNode;
   onFocusTransition: ReturnType<typeof useFocusSession>["transition"];
   onAddTask: () => Promise<boolean>;
   newTask: string;
@@ -44,6 +50,7 @@ export type TodayPageProps = TodayPageData & {
 };
 
 export function TodayPage({
+  habitsSlot,
   layoutMode,
   today,
   tasks,
@@ -399,6 +406,8 @@ export function TodayPage({
           </button>
         </div>
       </details>
+
+      {habitsSlot}
 
       <section className="rail-card captured-card tablet-captured-card">
         <div className="captured-heading">

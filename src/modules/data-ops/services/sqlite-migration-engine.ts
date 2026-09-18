@@ -81,6 +81,7 @@ type MigrationSchemaState = {
   hasMutationReceipt: boolean;
   hasReview: boolean;
   hasCompleteReview: boolean;
+  hasHabit: boolean;
 };
 
 const MINIMUM_SUPPORTED_MIGRATION_COLUMNS: Record<
@@ -463,12 +464,13 @@ function readMigrationSchemaState(
                ORDER BY seqno
              )
            ) = 'periodStart|periodEnd'
-         );`
+         ),
+         EXISTS(SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'Habit');`
     ],
     { encoding: "utf8" }
   ).trim();
   const values = result.split("|");
-  if (values.length !== 17) {
+  if (values.length !== 18) {
     throw new Error("Could not inspect the active Dayflow schema.");
   }
   const booleanAt = (index: number) => values[index] === "1";
@@ -497,7 +499,8 @@ function readMigrationSchemaState(
     hasTaskScheduleChange: booleanAt(13),
     hasMutationReceipt: booleanAt(14),
     hasReview: booleanAt(15),
-    hasCompleteReview: booleanAt(16)
+    hasCompleteReview: booleanAt(16),
+    hasHabit: booleanAt(17)
   };
 }
 
@@ -958,6 +961,11 @@ function inferredUnversionedMigrations(
   if (state.hasCompleteReview) {
     migrations.push("20260728010000_weekly_reviews");
   }
+  // A database set up from init.sql carries no migration history, so the
+  // reference schema is inferred from what the tables themselves show.
+  if (state.hasHabit) {
+    migrations.push("20260914000000_habit_check_ins");
+  }
   return migrations;
 }
 
@@ -1056,7 +1064,8 @@ function baselineKnownSchema(options: {
     hasTask,
     hasActivityEntry,
     hasMutationReceipt,
-    hasCompleteReview
+    hasCompleteReview,
+    hasHabit
   } = readMigrationSchemaState(databasePath);
   const hasFocusCompletionColumns =
     focusCompletionColumnCount === 4;
@@ -1154,6 +1163,21 @@ function baselineKnownSchema(options: {
         "resolve",
         "--applied",
         "20260728010000_weekly_reviews"
+      ],
+      databaseUrl,
+      repositoryRoot,
+      environment
+    );
+  }
+  // A database set up from init.sql already carries the Habit tables. Without
+  // this the migration would be applied over them and fail on CREATE TABLE.
+  if (hasHabit) {
+    runPrisma(
+      [
+        "migrate",
+        "resolve",
+        "--applied",
+        "20260914000000_habit_check_ins"
       ],
       databaseUrl,
       repositoryRoot,

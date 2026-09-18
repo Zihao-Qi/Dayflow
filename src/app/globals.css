@@ -5735,6 +5735,165 @@ kbd {
   line-height: 1.4;
 }
 
+/* Habits and Check-ins */
+.habits-card {
+  display: grid;
+  gap: 14px;
+}
+
+.habits-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.habit-row-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.habit-row-item:last-child {
+  border-bottom: none;
+  padding-bottom: 2px;
+}
+
+.habit-row-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.habit-toggle-btn {
+  text-align: left;
+  white-space: normal;
+  line-height: 1.35;
+}
+
+.habit-toggle-btn[aria-pressed="true"] {
+  background: var(--surface-2);
+  border-color: var(--ink);
+  font-weight: 600;
+}
+
+.habit-row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.habit-rename-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.habit-rename-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.habit-rename-input {
+  flex: 1;
+  min-width: 160px;
+}
+
+.habit-details-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.habit-unrecorded-hint {
+  padding: 2px 0;
+}
+
+.habit-hint-text {
+  font-size: var(--text-xs);
+  color: var(--muted);
+  font-style: italic;
+}
+
+.habit-details-grid {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.habit-amount-field {
+  width: 100px;
+  flex-shrink: 0;
+}
+
+.habit-note-field {
+  flex: 1;
+  min-width: 180px;
+}
+
+.habit-amount-field input {
+  width: 100%;
+}
+
+.habit-note-field textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 48px;
+}
+
+.habit-progress-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: var(--text-2xs);
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.habit-count-label {
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+.habit-day-dots {
+  display: inline-flex;
+  gap: 4px;
+  font-family: monospace;
+  font-size: var(--text-sm);
+  letter-spacing: 2px;
+  color: var(--muted);
+}
+
+.habit-create-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.habit-create-input {
+  flex: 1;
+  min-width: 140px;
+}
+
+.habit-create-select {
+  width: auto;
+}
+
+.habit-create-target {
+  width: 60px;
+}
+
 .focus-break-callout {
   display: grid;
   grid-template-columns: 1fr auto;

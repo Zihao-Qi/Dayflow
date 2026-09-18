@@ -144,7 +144,7 @@ export function HabitsCard({
   // The card renders even with no Habits: it is the only place to create the
   // first one, so hiding it when empty made the feature unreachable.
   return (
-    <section className="rail-card captured-card" aria-labelledby="habits-heading">
+    <section className="rail-card captured-card habits-card" aria-labelledby="habits-heading">
       <p className="eyebrow">Check-ins</p>
       <h2 className="captured-heading" id="habits-heading">
         Habits
@@ -153,7 +153,7 @@ export function HabitsCard({
       {habits.length === 0 ? (
         <p className="quiet-empty">No habits yet. Add one to start recording.</p>
       ) : (
-        <div className="captured-list">
+        <div className="habits-list">
           {habits.map((habit) => (
             <HabitRowItem
               key={habit.id}
@@ -189,6 +189,7 @@ export function HabitsCard({
       )}
 
       <form
+        className="habit-create-form"
         onSubmit={(event) => {
           event.preventDefault();
           if (!trimmed) return;
@@ -208,6 +209,7 @@ export function HabitsCard({
         }}
       >
         <input
+          className="habit-create-input"
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           placeholder="Add a habit"
@@ -215,6 +217,7 @@ export function HabitsCard({
           disabled={createPending}
         />
         <select
+          className="habit-create-select"
           value={cadence}
           onChange={(event) =>
             setCadence(event.target.value as HabitCadenceValue)
@@ -227,6 +230,7 @@ export function HabitsCard({
         </select>
         {cadence === "TIMES_PER_WEEK" && (
           <input
+            className="habit-create-target"
             type="number"
             min={1}
             max={7}
@@ -408,33 +412,30 @@ function HabitRowItem({
   }
 
   return (
-    <div data-habit={habit.id}>
+    <div data-habit={habit.id} className="habit-row-item">
       {isEditing ? (
         <form
+          className="habit-rename-form"
           onSubmit={(event) => {
             event.preventDefault();
             onRenameSubmit(habit.id);
           }}
         >
-          <input
-            value={renameDraft}
-            onChange={(event) => onRenameDraftChange(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") {
-                event.preventDefault();
-                onCancelRename();
-              }
-            }}
-            aria-label={`Rename ${habit.name}`}
-            disabled={renaming}
-            autoFocus
-          />
-          {renameError && (
-            <span className="form-error" role="alert">
-              {renameError}
-            </span>
-          )}
-          <div>
+          <div className="habit-rename-row">
+            <input
+              className="habit-rename-input"
+              value={renameDraft}
+              onChange={(event) => onRenameDraftChange(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  onCancelRename();
+                }
+              }}
+              aria-label={`Rename ${habit.name}`}
+              disabled={renaming}
+              autoFocus
+            />
             <button
               type="submit"
               className="secondary-button"
@@ -451,93 +452,108 @@ function HabitRowItem({
               Cancel
             </button>
           </div>
+          {renameError && (
+            <span className="form-error" role="alert">
+              {renameError}
+            </span>
+          )}
         </form>
       ) : (
         <>
-          <button
-            ref={toggleRef}
-            type="button"
-            className="secondary-button"
-            aria-pressed={done}
-            disabled={busy}
-            onClick={() => void onRecord(habit.id, !done)}
-          >
-            {habit.name}
-            {": "}
-            {/* Never recorded reads differently from recorded as not done. */}
-            {recorded ? (done ? "done today" : "not done today") : "not recorded today"}
-          </button>
-          <button
-            ref={renameButtonRef}
-            type="button"
-            className="text-button"
-            disabled={busy}
-            onClick={() => onStartRename(habit.id, habit.name)}
-          >
-            Rename
-          </button>
-          <button
-            type="button"
-            className="text-button"
-            disabled={busy}
-            onClick={() => onArchive(habit)}
-          >
-            Archive
-          </button>
+          <div className="habit-row-header">
+            <button
+              ref={toggleRef}
+              type="button"
+              className="secondary-button habit-toggle-btn"
+              aria-pressed={done}
+              disabled={busy}
+              onClick={() => void onRecord(habit.id, !done)}
+            >
+              {habit.name}
+              {": "}
+              {/* Never recorded reads differently from recorded as not done. */}
+              {recorded ? (done ? "done today" : "not done today") : "not recorded today"}
+            </button>
+            <div className="habit-row-actions">
+              <button
+                ref={renameButtonRef}
+                type="button"
+                className="text-button"
+                disabled={busy}
+                onClick={() => onStartRename(habit.id, habit.name)}
+              >
+                Rename
+              </button>
+              <button
+                type="button"
+                className="text-button"
+                disabled={busy}
+                onClick={() => onArchive(habit)}
+              >
+                Archive
+              </button>
+            </div>
+          </div>
 
-          <div>
+          <div className="habit-details-section">
             {!recorded && (
-              <span className="quiet-empty">Record today first</span>
+              <div className="habit-unrecorded-hint">
+                <span className="habit-hint-text">Record today first</span>
+              </div>
             )}
-            <div>
-              <input
-                type="number"
-                min={0}
-                max={1000000}
-                value={amountDraft}
-                onChange={(e) => {
-                  setAmountDraft(e.target.value);
-                  setTouchedAmount(true);
-                  setAmountError("");
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    void handleSaveDetails();
-                  }
-                }}
-                placeholder="Amount"
-                aria-label={`Amount for ${habit.name}`}
-                disabled={!recorded || busy || savingDetails}
-              />
-              {amountError && (
-                <span className="form-error" role="alert">
-                  {amountError}
-                </span>
-              )}
-              <textarea
-                rows={2}
-                value={noteDraft}
-                onChange={(e) => {
-                  setNoteDraft(e.target.value);
-                  setTouchedNote(true);
-                  setNoteError("");
-                }}
-                onKeyDown={(e) => {
-                  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
-                    e.preventDefault();
-                    void handleSaveDetails();
-                  }
-                }}
-                placeholder="Note"
-                aria-label={`Note for ${habit.name}`}
-                disabled={!recorded || busy || savingDetails}
-              />
-              {noteError && (
-                <span className="form-error" role="alert">
-                  {noteError}
-                </span>
-              )}
+            <div className="habit-details-grid">
+              <div className="habit-amount-field">
+                <input
+                  type="number"
+                  min={0}
+                  max={1000000}
+                  value={amountDraft}
+                  onChange={(e) => {
+                    setAmountDraft(e.target.value);
+                    setTouchedAmount(true);
+                    setAmountError("");
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void handleSaveDetails();
+                    }
+                  }}
+                  placeholder="Amount"
+                  aria-label={`Amount for ${habit.name}`}
+                  disabled={!recorded || busy || savingDetails}
+                />
+                {amountError && (
+                  <span className="form-error" role="alert">
+                    {amountError}
+                  </span>
+                )}
+              </div>
+              <div className="habit-note-field">
+                <textarea
+                  rows={2}
+                  value={noteDraft}
+                  onChange={(e) => {
+                    setNoteDraft(e.target.value);
+                    setTouchedNote(true);
+                    setNoteError("");
+                  }}
+                  onKeyDown={(e) => {
+                    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+                      e.preventDefault();
+                      void handleSaveDetails();
+                    }
+                  }}
+                  placeholder="Note"
+                  aria-label={`Note for ${habit.name}`}
+                  disabled={!recorded || busy || savingDetails}
+                />
+                {noteError && (
+                  <span className="form-error" role="alert">
+                    {noteError}
+                  </span>
+                )}
+              </div>
               <button
                 type="button"
                 className="secondary-button"
@@ -549,16 +565,18 @@ function HabitRowItem({
             </div>
           </div>
 
-          <p className="quiet-empty">
-            {habit.doneCount} of {habit.target} this period
-          </p>
-          <p aria-label={`${habit.name} by day`}>
-            {habit.days.map((day) => (
-              <span key={day.day} title={`${day.day}: ${DAY_LABEL[day.state]}`}>
-                {DAY_MARK[day.state]}
-              </span>
-            ))}
-          </p>
+          <div className="habit-progress-row">
+            <span className="habit-count-label">
+              {habit.doneCount} of {habit.target} this period
+            </span>
+            <span className="habit-day-dots" aria-label={`${habit.name} by day`}>
+              {habit.days.map((day) => (
+                <span key={day.day} title={`${day.day}: ${DAY_LABEL[day.state]}`}>
+                  {DAY_MARK[day.state]}
+                </span>
+              ))}
+            </span>
+          </div>
         </>
       )}
     </div>

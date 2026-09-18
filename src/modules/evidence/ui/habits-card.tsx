@@ -41,7 +41,7 @@ export function HabitsCard({
   createPending
 }: {
   habits: HabitSummary[];
-  todayKey?: string;
+  todayKey: string;
   onRecord: (
     habitId: string,
     done: boolean,
@@ -162,11 +162,7 @@ export function HabitsCard({
         // Move focus to a stable target: next Habit's toggle, else previous, else the "New habit name" input
         requestAnimationFrame(() => {
           if (nextTargetId) {
-            const nextBtn =
-              habitToggleRefs.current.get(nextTargetId) ??
-              document.querySelector<HTMLButtonElement>(
-                `[data-habit="${nextTargetId}"] button.habit-toggle-btn`
-              );
+            const nextBtn = habitToggleRefs.current.get(nextTargetId);
             if (nextBtn && nextBtn.isConnected) {
               nextBtn.focus();
               return;
@@ -195,7 +191,7 @@ export function HabitsCard({
         <div className="habits-list">
           {habits.map((habit) => (
             <HabitRowItem
-              key={`${habit.id}:${todayKey ?? ""}`}
+              key={`${habit.id}:${todayKey}`}
               habit={habit}
               todayKey={todayKey}
               busy={busyHabitIds.has(habit.id)}
@@ -366,7 +362,7 @@ function HabitRowItem({
   renameDraft: string;
   renameError: string;
   renaming: boolean;
-  todayKey?: string;
+  todayKey: string;
   onStartRename: (habitId: string, name: string) => void;
   onCancelRename: () => void;
   onRenameDraftChange: (value: string) => void;

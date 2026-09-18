@@ -748,7 +748,22 @@ test("delayed rename settlement is isolated and does not close or mislabel anoth
   await expect(inputB).toBeVisible();
 
   // Release A's successful PATCH
+  const patchPromiseA = page.waitForResponse(
+    (resp) =>
+      resp.url().includes(`/api/habits/${habitA.id}`) &&
+      resp.request().method() === "PATCH"
+  );
+  const trailingBootstrapA = page.waitForResponse(
+    (resp) =>
+      resp.url().includes("/api/bootstrap") &&
+      resp.status() === 200
+  );
   releasePatchA();
+  await patchPromiseA;
+  await trailingBootstrapA;
+  await expect(
+    rowA.getByRole("button", { name: /Habit Alpha Renamed/ })
+  ).toBeVisible();
 
   // B's editor must remain open under isolation guard
   await expect(inputB).toBeVisible();
@@ -792,7 +807,13 @@ test("delayed rename settlement is isolated and does not close or mislabel anoth
   await expect(inputA2).toBeVisible();
 
   // Release B's failing PATCH
+  const failPromiseB = page.waitForResponse(
+    (resp) =>
+      resp.url().includes(`/api/habits/${habitB.id}`) &&
+      resp.request().method() === "PATCH"
+  );
   releaseFailPatch();
+  await failPromiseB;
 
   // A's editor must NOT receive B's error under isolation guard
   await expect(inputA2).toBeVisible();

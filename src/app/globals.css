@@ -5741,6 +5741,10 @@ kbd {
   gap: 14px;
 }
 
+html[data-layout-mode="phone"] .habits-card {
+  margin-inline: 2px;
+}
+
 .habits-list {
   display: flex;
   flex-direction: column;

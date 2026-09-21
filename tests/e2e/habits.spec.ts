@@ -47,22 +47,58 @@ test("a Check-in recorded from Today survives a reload", async ({ page }) => {
 test("an unrecorded Habit reads differently from one recorded as not done", async ({ page }) => {
   // The storage model keeps these apart, so the page must not collapse them.
   const habit = await createHabit(page, "Evening walk");
-  await createHabit(page, "Never touched");
-
-  const recorded = await page.request.put(
-    `/api/habits/${habit.id}/check-in`,
-    { data: { done: false } }
-  );
-  expect(recorded.ok(), await recorded.text()).toBe(true);
+  const untouched = await createHabit(page, "Never touched");
 
   await openToday(page);
   const card = habitsCard(page);
-  await expect(card.getByRole("button", { name: /Evening walk/ })).toContainText(
-    "not done today"
+  const walkRow = card.locator(`[data-habit="${habit.id}"]`);
+  const untouchedRow = card.locator(`[data-habit="${untouched.id}"]`);
+  const walkToggle = walkRow.getByRole("button", { name: /Evening walk/ });
+  const untouchedToggle = untouchedRow.getByRole("button", { name: /Never touched/ });
+
+  await expect(walkToggle).toContainText("not recorded today");
+  await expect(untouchedToggle).toContainText("not recorded today");
+
+  const putPayloads: unknown[] = [];
+  page.on("request", (req) => {
+    if (req.url().includes(`/api/habits/${habit.id}/check-in`) && req.method() === "PUT") {
+      putPayloads.push(req.postDataJSON());
+    }
+  });
+
+  const checkInPromise = page.waitForResponse(
+    (resp) =>
+      resp.url().includes(`/api/habits/${habit.id}/check-in`) &&
+      resp.request().method() === "PUT"
   );
-  await expect(card.getByRole("button", { name: /Never touched/ })).toContainText(
-    "not recorded today"
-  );
+
+  await walkRow.getByRole("button", { name: "Mark not done" }).click();
+  const checkInResponse = await checkInPromise;
+  expect(checkInResponse.ok()).toBe(true);
+
+  // Directly records done:false in ONE PUT without transiently writing done:true
+  expect(putPayloads).toHaveLength(1);
+  expect(putPayloads[0]).toMatchObject({ done: false });
+
+  await expect(walkToggle).toContainText("not done today");
+  await expect(walkToggle).toHaveAttribute("aria-pressed", "false");
+  await expect(walkRow.getByRole("button", { name: "Mark not done" })).toHaveCount(0);
+
+  // Untouched habit remains unrecorded
+  await expect(untouchedToggle).toContainText("not recorded today");
+
+  // State persists across reload from storage
+  await page.reload();
+  const cardAfterReload = habitsCard(page);
+  const reloadedWalkRow = cardAfterReload.locator(`[data-habit="${habit.id}"]`);
+  const reloadedUntouchedRow = cardAfterReload.locator(`[data-habit="${untouched.id}"]`);
+  const reloadedWalkToggle = reloadedWalkRow.getByRole("button", { name: /Evening walk/ });
+  const reloadedUntouchedToggle = reloadedUntouchedRow.getByRole("button", { name: /Never touched/ });
+
+  await expect(reloadedWalkToggle).toContainText("not done today");
+  await expect(reloadedWalkToggle).toHaveAttribute("aria-pressed", "false");
+  await expect(reloadedWalkRow.getByRole("button", { name: "Mark not done" })).toHaveCount(0);
+  await expect(reloadedUntouchedToggle).toContainText("not recorded today");
 });
 
 test("the first Habit is created from the card itself", async ({ page }) => {
@@ -1240,4 +1276,21 @@ test("displays validation error next to amount or note field and keeps user draf
   const reloadedRow = habitsCard(page).locator(`[data-habit="${habit.id}"]`);
   await expect(reloadedRow.getByLabel("Amount for Guitar practice")).toHaveValue("30");
   await expect(reloadedRow.getByLabel("Note for Guitar practice")).toHaveValue("Fingerpicking exercises");
+});
+
+test("habits card maintains at least 16px side gutter in phone mode", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openToday(page);
+  const card = habitsCard(page);
+  await expect(card).toBeVisible();
+
+  const box = await card.boundingBox();
+  expect(box).not.toBeNull();
+  if (!box) return;
+
+  const leftGutter = box.x;
+  const rightGutter = 390 - (box.x + box.width);
+
+  expect(leftGutter).toBeGreaterThanOrEqual(16);
+  expect(rightGutter).toBeGreaterThanOrEqual(16);
 });

@@ -527,6 +527,16 @@ function HabitRowItem({
               {recorded ? (done ? "done today" : "not done today") : "not recorded today"}
             </button>
             <div className="habit-row-actions">
+              {!recorded && (
+                <button
+                  type="button"
+                  className="text-button"
+                  disabled={busy}
+                  onClick={() => void onRecord(habit.id, false)}
+                >
+                  Mark not done
+                </button>
+              )}
               <button
                 ref={renameButtonRef}
                 type="button"

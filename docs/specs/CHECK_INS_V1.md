@@ -231,6 +231,24 @@ state conveyed by text or `aria` state and not by colour alone. The optional
 amount field is a separate labelled input, not an overload of the toggle. At
 phone width the list stacks to one column and keeps a minimum 16px side gutter.
 
+## Today Card Interactions (Stage 2 Implementation)
+
+The Today page renders a dedicated Habits card (`HabitsCard`) adjacent to the daily diary, supporting direct interaction with today's commitments:
+
+- **Creation with Cadence & Target**: Inline composer with a "New habit name" text input, a cadence selector (`DAILY` or `TIMES_PER_WEEK`), and an adjustable weekly target (1–7). Client-side response decoders enforce that the confirmed cadence and normalized target (7 for `DAILY`) match the request before accepting the newly created row.
+- **Inline Rename**: Triggered via a row-level "Rename" button, entering an autofocus inline form. Cancel and Escape dismiss the form and restore focus to the row's Rename button. Form submission is isolated via per-habit operation tokens (`renameOpRef` and `editingHabitIdRef`), guaranteeing that delayed server responses cannot close or inject errors into another habit's active editor. Validation errors (e.g. names exceeding 120 characters) retain the user's draft in place.
+- **Archive Confirmation & Focus Recovery**: The "Archive" button opens a focus-trapped `<dialog role="alertdialog">`. Escape and "Keep habit" dismiss the modal and restore focus to the trigger. Confirming archive removes the row from the card immediately without waiting for trailing refresh, and explicitly shifts focus to the next habit's toggle button, the previous habit's toggle button, or the "New habit name" input if all habits have been removed.
+- **Today's Check-in Record**: A primary secondary-button toggle with `aria-pressed` reflecting three distinct states: `"done today"`, `"not done today"`, and `"not recorded today"`. Check-in mutations track independent busy states per habit ID, preventing concurrent actions on separate habits from locking one another out.
+- **Amount & Note Editing**: Amount (integer `0–1,000,000`) and note (textarea, `rows={2}`, max 2,000 characters) fields remain disabled until the habit is recorded today. An independent "Save details" action commits changes; clearing an amount field sends `null`, and clearing a note field sends `null`, persisting the removal in storage.
+- **Confirmed-Write & Read-Refresh Feedback**: Mutations complete and update local UI state immediately upon confirmed write success, followed by an asynchronous background re-read (`refreshAfterConfirmedMutation`). If the trailing refresh fails, the confirmed write is preserved in the card and an announcement or retry toast is presented.
+- **Cross-Midnight Protection**: `HabitsCard` and its rows require a `todayKey: string` property and key each row item by `${habit.id}:${todayKey}`. Day-scoped drafts, errors, and touched flags reset across calendar boundaries, ensuring uncommitted drafts from yesterday cannot leak into the new day's editor.
+
+## Scope and Open Policy Tensions (Q1/Q2)
+
+- **v1 Scope Boundaries**: Habit reordering (`sortOrder` manipulation) and historical backfill beyond the Today card (e.g. multi-day retro-logging) remain part of the intended v1 feature scope, but are intentionally out of scope for the Stage 2 Today-card PR.
+- **Q1 Pre-Creation Backfill Tension**: Section *Recording and Backfill* allows recording a Check-in for "today or for any of the seven preceding days", while Section *Consistency* states "neither can a day before the Habit existed" be counted or missed. Whether a habit created mid-week may record valid check-in rows for days prior to its `createdAt` remains an unresolved policy question.
+- **Q2 Clipped vs. Fixed Weekly Target Tension**: Section *Consistency* states that a `TIMES_PER_WEEK` habit "keeps its weekly goal for the whole period" without clipping to elapsed days. However, the current summary calculation (`summarizeHabits`) clamps targets to countable period days (`Math.min(targetPerWeek, countableDays)`). This contradictory wording between spec intent and current calculation is retained unresolved for future decision.
+
 ## Non-Goals
 
 - **Specific weekdays** ("Mon/Wed/Fri"). That needs a weekday set and makes

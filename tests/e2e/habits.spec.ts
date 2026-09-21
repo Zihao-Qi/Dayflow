@@ -29,7 +29,7 @@ test("a Check-in recorded from Today survives a reload", async ({ page }) => {
   await createHabit(page, "Morning stretch");
   await openToday(page);
 
-  const toggle = habitsCard(page).getByRole("button", { name: /Morning stretch/ });
+  const toggle = habitsCard(page).getByRole("button", { name: /Morning stretch:/ });
   await expect(toggle).toHaveAttribute("aria-pressed", "false");
   await expect(toggle).toContainText("not recorded today");
 
@@ -39,7 +39,7 @@ test("a Check-in recorded from Today survives a reload", async ({ page }) => {
 
   // The state has to come back from storage, not from component memory.
   await page.reload();
-  const afterReload = habitsCard(page).getByRole("button", { name: /Morning stretch/ });
+  const afterReload = habitsCard(page).getByRole("button", { name: /Morning stretch:/ });
   await expect(afterReload).toHaveAttribute("aria-pressed", "true");
   await expect(afterReload).toContainText("done today");
 });
@@ -53,8 +53,8 @@ test("an unrecorded Habit reads differently from one recorded as not done", asyn
   const card = habitsCard(page);
   const walkRow = card.locator(`[data-habit="${habit.id}"]`);
   const untouchedRow = card.locator(`[data-habit="${untouched.id}"]`);
-  const walkToggle = walkRow.getByRole("button", { name: /Evening walk/ });
-  const untouchedToggle = untouchedRow.getByRole("button", { name: /Never touched/ });
+  const walkToggle = walkRow.getByRole("button", { name: /Evening walk:/ });
+  const untouchedToggle = untouchedRow.getByRole("button", { name: /Never touched:/ });
 
   await expect(walkToggle).toContainText("not recorded today");
   await expect(untouchedToggle).toContainText("not recorded today");
@@ -72,7 +72,12 @@ test("an unrecorded Habit reads differently from one recorded as not done", asyn
       resp.request().method() === "PUT"
   );
 
-  await walkRow.getByRole("button", { name: "Mark not done" }).click();
+  // Assert and use distinct accessible name for the unrecorded action
+  const markNotDoneButton = card.getByRole("button", {
+    name: `Mark ${habit.name} not done today`
+  });
+  await expect(markNotDoneButton).toBeVisible();
+  await markNotDoneButton.click();
   const checkInResponse = await checkInPromise;
   expect(checkInResponse.ok()).toBe(true);
 
@@ -82,23 +87,33 @@ test("an unrecorded Habit reads differently from one recorded as not done", asyn
 
   await expect(walkToggle).toContainText("not done today");
   await expect(walkToggle).toHaveAttribute("aria-pressed", "false");
-  await expect(walkRow.getByRole("button", { name: "Mark not done" })).toHaveCount(0);
+  await expect(
+    card.getByRole("button", { name: `Mark ${habit.name} not done today` })
+  ).toHaveCount(0);
 
-  // Untouched habit remains unrecorded
+  // Untouched habit remains unrecorded with its own distinct mark-not-done button
   await expect(untouchedToggle).toContainText("not recorded today");
+  await expect(
+    card.getByRole("button", { name: `Mark ${untouched.name} not done today` })
+  ).toBeVisible();
 
   // State persists across reload from storage
   await page.reload();
   const cardAfterReload = habitsCard(page);
   const reloadedWalkRow = cardAfterReload.locator(`[data-habit="${habit.id}"]`);
   const reloadedUntouchedRow = cardAfterReload.locator(`[data-habit="${untouched.id}"]`);
-  const reloadedWalkToggle = reloadedWalkRow.getByRole("button", { name: /Evening walk/ });
-  const reloadedUntouchedToggle = reloadedUntouchedRow.getByRole("button", { name: /Never touched/ });
+  const reloadedWalkToggle = reloadedWalkRow.getByRole("button", { name: /Evening walk:/ });
+  const reloadedUntouchedToggle = reloadedUntouchedRow.getByRole("button", { name: /Never touched:/ });
 
   await expect(reloadedWalkToggle).toContainText("not done today");
   await expect(reloadedWalkToggle).toHaveAttribute("aria-pressed", "false");
-  await expect(reloadedWalkRow.getByRole("button", { name: "Mark not done" })).toHaveCount(0);
+  await expect(
+    cardAfterReload.getByRole("button", { name: `Mark ${habit.name} not done today` })
+  ).toHaveCount(0);
   await expect(reloadedUntouchedToggle).toContainText("not recorded today");
+  await expect(
+    cardAfterReload.getByRole("button", { name: `Mark ${untouched.name} not done today` })
+  ).toBeVisible();
 });
 
 test("the first Habit is created from the card itself", async ({ page }) => {
@@ -112,13 +127,13 @@ test("the first Habit is created from the card itself", async ({ page }) => {
   await card.getByLabel("New habit name").fill("Morning stretch");
   await card.getByRole("button", { name: "Add habit" }).click();
 
-  await expect(card.getByRole("button", { name: /Morning stretch/ })).toBeVisible();
+  await expect(card.getByRole("button", { name: /Morning stretch:/ })).toBeVisible();
   await expect(card).not.toContainText("No habits yet");
 
   // It has to be stored, not just rendered.
   await page.reload();
   await expect(
-    habitsCard(page).getByRole("button", { name: /Morning stretch/ })
+    habitsCard(page).getByRole("button", { name: /Morning stretch:/ })
   ).toBeVisible();
 });
 
@@ -168,7 +183,7 @@ test("retries an unconfirmed Habit create with the same mutation ID and retires 
   await addButton.click();
 
   // Wait for button to be visible and input cleared
-  await expect(card.getByRole("button", { name: /Morning stretch/ })).toBeVisible();
+  await expect(card.getByRole("button", { name: /Morning stretch:/ })).toBeVisible();
   await expect(input).toHaveValue("");
   expect(mutationIds.length).toBe(2);
   expect(mutationIds[0]).toBeTruthy();
@@ -178,14 +193,14 @@ test("retries an unconfirmed Habit create with the same mutation ID and retires 
   await input.fill("Morning stretch");
   await addButton.click();
 
-  await expect(card.getByRole("button", { name: /Morning stretch/ })).toHaveCount(2);
+  await expect(card.getByRole("button", { name: /Morning stretch:/ })).toHaveCount(2);
   expect(mutationIds.length).toBe(3);
   expect(mutationIds[2]).toBeTruthy();
   expect(mutationIds[2]).not.toBe(mutationIds[0]);
 
   // Verify DB has exactly 2 distinct habits, not 1 or 3 (retry was idempotent, retirement enabled 2nd creation)
   await page.reload();
-  await expect(card.getByRole("button", { name: /Morning stretch/ })).toHaveCount(2);
+  await expect(card.getByRole("button", { name: /Morning stretch:/ })).toHaveCount(2);
 });
 
 test("separates confirmed write success from read-refresh failure", async ({ page }) => {
@@ -230,7 +245,7 @@ test("separates confirmed write success from read-refresh failure", async ({ pag
   await addButton.click();
 
   // The habit remains visible in the list because write succeeded
-  const habitButton = card.getByRole("button", { name: /Morning stretch/ });
+  const habitButton = card.getByRole("button", { name: /Morning stretch:/ });
   await expect(habitButton).toBeVisible();
   // Coherent display: not recorded today, canonical target 1 (not fabricated target 7 with 0 days)
   await expect(habitButton).toContainText("not recorded today");
@@ -252,7 +267,7 @@ test("separates confirmed write success from read-refresh failure", async ({ pag
   await expect(toast).toHaveCount(0);
   // Fresh content is visible and preserved
   await expect(habitButton).toBeVisible();
-  await expect(card.getByRole("button", { name: /Synced habit from refresh/ })).toBeVisible();
+  await expect(card.getByRole("button", { name: /Synced habit from refresh:/ })).toBeVisible();
   // Only a single write request was sent
   expect(habitCreateRequests).toBe(1);
 });
@@ -284,8 +299,8 @@ test("tracks independent busy states across simultaneous habit check-ins", async
   await openToday(page);
   const card = habitsCard(page);
 
-  const buttonA = card.getByRole("button", { name: /Morning stretch/ });
-  const buttonB = card.getByRole("button", { name: /Evening walk/ });
+  const buttonA = card.getByRole("button", { name: /Morning stretch:/ });
+  const buttonB = card.getByRole("button", { name: /Evening walk:/ });
 
   await expect(buttonA).toBeEnabled();
   await expect(buttonB).toBeEnabled();
@@ -363,7 +378,7 @@ test("delayed check-in does not mark a new day done after calendar rollover", as
 
   await openToday(page);
   const card = habitsCard(page);
-  const button = card.getByRole("button", { name: /Morning stretch/ });
+  const button = card.getByRole("button", { name: /Morning stretch:/ });
   await expect(button).toContainText("not recorded today");
 
   // Trigger check-in for Day 1; it pauses at checkInGate
@@ -454,7 +469,7 @@ test("cross-midnight rollover resets unsaved amount and note drafts", async ({ p
   const row = card.locator("[data-habit]").first();
 
   // 1. Record today
-  await row.getByRole("button", { name: /Morning stretch/ }).click();
+  await row.getByRole("button", { name: /Morning stretch:/ }).click();
   await expect(row.getByRole("button", { name: /Morning stretch: done/ })).toBeVisible();
 
   // 2. Type draft amount and note without saving
@@ -532,7 +547,7 @@ test("retires all pending check-in retry IDs for habit and day upon confirmed su
 
   await openToday(page);
   const card = habitsCard(page);
-  const button = card.getByRole("button", { name: /Daily meditation/ });
+  const button = card.getByRole("button", { name: /Daily meditation:/ });
   await expect(button).toHaveAttribute("aria-pressed", "false");
 
   // Step 1: Click done=true. Server commits in DB, client receives 500 and retains mutation ID A.
@@ -567,7 +582,7 @@ test("retires all pending check-in retry IDs for habit and day upon confirmed su
   await page.reload();
   await openToday(page);
   const reloadedCard = habitsCard(page);
-  const reloadedButton = reloadedCard.getByRole("button", { name: /Daily meditation/ });
+  const reloadedButton = reloadedCard.getByRole("button", { name: /Daily meditation:/ });
   await expect(reloadedButton).toHaveAttribute("aria-pressed", "true");
 });
 
@@ -595,7 +610,7 @@ test("creates a Habit with cadence and weekly target from the card", async ({ pa
 
   await card.getByRole("button", { name: "Add habit" }).click();
 
-  const habitToggle = card.getByRole("button", { name: /Read book/ });
+  const habitToggle = card.getByRole("button", { name: /Read book:/ });
   await expect(habitToggle).toBeVisible();
   expect(createPayload).toEqual({
     name: "Read book",
@@ -611,7 +626,7 @@ test("creates a Habit with cadence and weekly target from the card", async ({ pa
   // Survives page reload: assert cadence/target is visible/persisted, not just the name
   await page.reload();
   const reloadedCard = habitsCard(page);
-  await expect(reloadedCard.getByRole("button", { name: /Read book/ })).toBeVisible();
+  await expect(reloadedCard.getByRole("button", { name: /Read book:/ })).toBeVisible();
   await expect(reloadedCard.getByText("0 of 1 this period")).toBeVisible();
   const habitsRes = await page.request.get("/api/habits");
   const habitsData = await habitsRes.json();
@@ -678,7 +693,7 @@ test("changing cadence between failed attempts sends a new mutation ID, not a re
   await addButton.click();
 
   // Third attempt succeeds
-  await expect(card.getByRole("button", { name: /Evening stretch/ })).toBeVisible();
+  await expect(card.getByRole("button", { name: /Evening stretch:/ })).toBeVisible();
   expect(mutationIds.length).toBe(3);
   expect(mutationIds[2]).toBeTruthy();
   expect(mutationIds[2]).not.toBe(mutationIds[0]);
@@ -736,7 +751,7 @@ test("renames a Habit inline and displays validation error keeping user draft", 
   await row.getByRole("button", { name: "Save" }).click();
 
   // Input closes and row displays new name
-  await expect(row.getByRole("button", { name: /Evening yoga/ })).toBeVisible();
+  await expect(row.getByRole("button", { name: /Evening yoga:/ })).toBeVisible();
   await expect(renameInput).toHaveCount(0);
 
   // Focus restored to the row's Rename button after Save (G1)
@@ -745,7 +760,7 @@ test("renames a Habit inline and displays validation error keeping user draft", 
   // Persisted in storage
   await page.reload();
   await expect(
-    habitsCard(page).getByRole("button", { name: /Evening yoga/ })
+    habitsCard(page).getByRole("button", { name: /Evening yoga:/ })
   ).toBeVisible();
 });
 
@@ -798,7 +813,7 @@ test("delayed rename settlement is isolated and does not close or mislabel anoth
   await patchPromiseA;
   await trailingBootstrapA;
   await expect(
-    rowA.getByRole("button", { name: /Habit Alpha Renamed/ })
+    rowA.getByRole("button", { name: /Habit Alpha Renamed:/ })
   ).toBeVisible();
 
   // B's editor must remain open under isolation guard
@@ -902,7 +917,7 @@ test("rename and archive retain mutation ID across failures and retire it upon c
   const renameInput2 = row.getByLabel("Rename Updated Habit");
   await renameInput2.fill("Final Habit Name");
   await row.getByRole("button", { name: "Save" }).click();
-  await expect(row.getByRole("button", { name: /Final Habit Name/ })).toBeVisible();
+  await expect(row.getByRole("button", { name: /Final Habit Name:/ })).toBeVisible();
   expect(renameMutationIds).toHaveLength(3);
   expect(renameMutationIds[2]).not.toBe(renameMutationIds[0]);
 
@@ -1010,7 +1025,7 @@ test("archives a Habit behind a focus-trapped confirmation modal", async ({ page
   releaseRefresh();
 
   // F3: Focus moves to the next habit's toggle button
-  await expect(card.getByRole("button", { name: /Evening reading/ })).toBeFocused();
+  await expect(card.getByRole("button", { name: /Evening reading:/ })).toBeFocused();
 
   // Archive second habit: when last habit is archived, focus moves to "New habit name" input
   const archiveTrigger2 = row2.getByRole("button", { name: "Archive" });

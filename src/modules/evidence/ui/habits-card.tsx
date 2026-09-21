@@ -531,6 +531,7 @@ function HabitRowItem({
                 <button
                   type="button"
                   className="text-button"
+                  aria-label={`Mark ${habit.name} not done today`}
                   disabled={busy}
                   onClick={() => void onRecord(habit.id, false)}
                 >

@@ -72,9 +72,9 @@ test("an unrecorded Habit reads differently from one recorded as not done", asyn
       resp.request().method() === "PUT"
   );
 
-  // Assert and use distinct accessible name for the unrecorded action
+  // Assert and use distinct accessible name for the unrecorded action (satisfies WCAG 2.5.3 Label in Name)
   const markNotDoneButton = card.getByRole("button", {
-    name: `Mark ${habit.name} not done today`
+    name: `Mark not done for ${habit.name}`
   });
   await expect(markNotDoneButton).toBeVisible();
   await markNotDoneButton.click();
@@ -88,13 +88,13 @@ test("an unrecorded Habit reads differently from one recorded as not done", asyn
   await expect(walkToggle).toContainText("not done today");
   await expect(walkToggle).toHaveAttribute("aria-pressed", "false");
   await expect(
-    card.getByRole("button", { name: `Mark ${habit.name} not done today` })
+    card.getByRole("button", { name: `Mark not done for ${habit.name}` })
   ).toHaveCount(0);
 
   // Untouched habit remains unrecorded with its own distinct mark-not-done button
   await expect(untouchedToggle).toContainText("not recorded today");
   await expect(
-    card.getByRole("button", { name: `Mark ${untouched.name} not done today` })
+    card.getByRole("button", { name: `Mark not done for ${untouched.name}` })
   ).toBeVisible();
 
   // State persists across reload from storage
@@ -108,11 +108,11 @@ test("an unrecorded Habit reads differently from one recorded as not done", asyn
   await expect(reloadedWalkToggle).toContainText("not done today");
   await expect(reloadedWalkToggle).toHaveAttribute("aria-pressed", "false");
   await expect(
-    cardAfterReload.getByRole("button", { name: `Mark ${habit.name} not done today` })
+    cardAfterReload.getByRole("button", { name: `Mark not done for ${habit.name}` })
   ).toHaveCount(0);
   await expect(reloadedUntouchedToggle).toContainText("not recorded today");
   await expect(
-    cardAfterReload.getByRole("button", { name: `Mark ${untouched.name} not done today` })
+    cardAfterReload.getByRole("button", { name: `Mark not done for ${untouched.name}` })
   ).toBeVisible();
 });
 

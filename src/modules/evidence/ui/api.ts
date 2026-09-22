@@ -13,14 +13,60 @@ import {
   type HabitRecord
 } from "@/shared/client/decoders";
 
-export function createHabit(name: string, mutationId: string | null) {
+import type { HabitCadenceValue } from "@/modules/evidence/domain/habit";
+
+export function createHabit(
+  input: { name: string; cadence?: HabitCadenceValue; targetPerWeek?: number },
+  mutationId: string | null
+) {
+  const name = input.name.trim();
+  const expectedCadence = input.cadence ?? "DAILY";
+  const expectedTarget =
+    expectedCadence === "DAILY" ? 7 : (input.targetPerWeek ?? 7);
   return request("/api/habits", {
     method: "POST",
+    body: input,
+    mutationId,
+    decode: (result): result is HabitRecord =>
+      isHabitResponse(result) &&
+      result.name === name &&
+      result.status === "ACTIVE" &&
+      result.cadence === expectedCadence &&
+      result.targetPerWeek === expectedTarget,
+    fallback: "Habit could not be saved. Your draft is still here."
+  });
+}
+
+export function renameHabit(
+  habitId: string,
+  name: string,
+  mutationId: string | null
+) {
+  return request(`/api/habits/${encodeURIComponent(habitId)}`, {
+    method: "PATCH",
     body: { name },
     mutationId,
     decode: (result): result is HabitRecord =>
-      isHabitResponse(result) && result.name === name && result.status === "ACTIVE",
-    fallback: "Habit could not be saved. Your draft is still here."
+      isHabitResponse(result) &&
+      result.id === habitId &&
+      result.name === name.trim() &&
+      result.status === "ACTIVE",
+    fallback: "Habit could not be renamed."
+  });
+}
+
+export function archiveHabit(
+  habitId: string,
+  mutationId: string | null
+) {
+  return request(`/api/habits/${encodeURIComponent(habitId)}/archive`, {
+    method: "POST",
+    mutationId,
+    decode: (result): result is HabitRecord =>
+      isHabitResponse(result) &&
+      result.id === habitId &&
+      result.status === "ARCHIVED",
+    fallback: "Habit could not be archived."
   });
 }
 

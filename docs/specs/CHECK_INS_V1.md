@@ -147,10 +147,10 @@ a common rolling seven-local-day geometry:
 
 Each form evaluates an interval `[asOf - 6 .. asOf]`, where `asOf` is today for
 the current Review Period, the chosen ending day for a historical Review Window,
-and the stored period-end local day for a saved Past Review Period. In
-production, every summary caller evaluates the interval as of its final day.
-Because all evaluated dates have already elapsed, future days never enter
-production review evaluations.
+and the last included local day immediately before its exclusive stored `periodEnd`
+boundary for a saved Past Review Period. In production, every summary caller
+evaluates the interval as of its final day. Because all evaluated dates have
+already elapsed, future days never enter production review evaluations.
 
 ### Habit Target Capacity and Effective Target
 

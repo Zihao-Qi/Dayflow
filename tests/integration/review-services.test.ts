@@ -335,21 +335,29 @@ test("Review Habit consistency", async context => {
 
         const summaries = await db.$transaction(tx => readReviewHabits(tx, past, now));
         assert.deepEqual(
-          summaries.map(s => s.name),
-          ["Created after past period", "Archived before past period"]
+          summaries.map(s => ({
+            name: s.name,
+            doneCount: s.doneCount,
+            target: s.target,
+            evidenceState: s.days.find(
+              d => d.day === (s.name === "Created after past period" ? "2026-08-20" : "2026-08-21")
+            )?.state
+          })),
+          [
+            {
+              name: "Created after past period",
+              doneCount: 1,
+              target: 1,
+              evidenceState: "done"
+            },
+            {
+              name: "Archived before past period",
+              doneCount: 1,
+              target: 1,
+              evidenceState: "done"
+            }
+          ]
         );
-        for (const summary of summaries) {
-          assert.equal(summary.doneCount, 1, `${summary.name} doneCount should be 1`);
-          assert.equal(summary.target, 1, `${summary.name} DAILY target should be 1`);
-        }
-
-        const createdLaterDay = summaries[0].days.find(d => d.day === "2026-08-20");
-        assert.ok(createdLaterDay);
-        assert.equal(createdLaterDay.state, "done");
-
-        const archivedEarlierDay = summaries[1].days.find(d => d.day === "2026-08-21");
-        assert.ok(archivedEarlierDay);
-        assert.equal(archivedEarlierDay.state, "done");
       }
     );
   });

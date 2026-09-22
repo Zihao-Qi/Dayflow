@@ -211,43 +211,23 @@ test("days after a Habit was archived are not counted as misses", () => {
   assert.equal(summary.target, 2, "only the days it was active can be required");
 });
 
-test("a times-per-week target can never exceed the capacity days available to meet it", () => {
-  // Target capacity is the union of Habit Lifetime days and explicit Check-in Evidence.
-  // A Habit whose lifetime inside the window is limited cannot be expected to exceed its capacity.
+test("a times-per-week Habit retains its stored target when capacity is full", () => {
+  const reviewStart = addDays(today, -6);
   const [summary] = summarizeHabits(
     [
       definition({
         cadence: "TIMES_PER_WEEK",
         targetPerWeek: 5,
-        createdAt: addDays(periodStart, 2)
+        createdAt: reviewStart
       })
     ],
     [],
-    periodStart,
+    reviewStart,
     today
   );
-  assert.ok(
-    summary.target <= summary.days.filter((day) => day.state !== "outOfScope").length,
-    `target ${summary.target} exceeds the available days`
-  );
-});
-
-test("explicit out-of-lifetime Check-ins contribute unique capacity days to Habit Target Capacity", () => {
-  // An active habit created two days ago has three in-window lifetime days.
-  // An explicit pre-creation Check-in contributes a unique capacity day, expanding capacity.
-  const habit = definition({
-    cadence: "TIMES_PER_WEEK",
-    targetPerWeek: 5,
-    createdAt: addDays(periodStart, 2)
-  });
-  const checkIn = record(0); // Dated before createdAt: adds unique capacity day
-  const [summary] = summarizeHabits([habit], [checkIn], periodStart, today);
-  const capacityDays = summary.days.filter((d) => d.state !== "outOfScope").length;
-  assert.equal(capacityDays, 3); // day 0 (pre-creation record) + days 2, 3 (lifetime days)
-  assert.equal(summary.target, 3); // min(5, 3) = 3
-  assert.equal(summary.doneCount, 1);
-  assert.equal(summary.days[0].state, "done");
-  assert.equal(summary.days[1].state, "outOfScope");
+  const capacity = summary.days.filter((day) => day.state !== "outOfScope").length;
+  assert.equal(capacity, 7);
+  assert.equal(summary.target, 5);
 });
 
 test("a daily Habit's target grows with the period", () => {
@@ -261,18 +241,35 @@ test("a daily Habit's target grows with the period", () => {
   assert.equal(summary.target, 4);
 });
 
-test("a times-per-week Habit target scales to in-scope capacity over the rolling review geometry", () => {
-  // Over a rolling seven-day window ending on the as-of day, the effective target
-  // is min(targetPerWeek, capacityDays), where capacity is the union of Habit Lifetime
-  // days and explicit Evidence dates.
-  const [summary] = summarizeHabits(
-    [definition({ cadence: "TIMES_PER_WEEK", targetPerWeek: 3 })],
-    [record(0)],
-    periodStart,
-    today
-  );
-  assert.equal(summary.target, 3);
+test("a times-per-week target cannot exceed union capacity including pre-creation Check-ins", () => {
+  const reviewStart = addDays(today, -6);
+  const habit = definition({
+    id: "habit-today",
+    cadence: "TIMES_PER_WEEK",
+    targetPerWeek: 5,
+    createdAt: today
+  });
+  const evidenceDate = reviewStart;
+  const checkIn: CheckInRecord = {
+    habitId: "habit-today",
+    date: evidenceDate,
+    done: true,
+    amount: null,
+    note: null
+  };
+  const [summary] = summarizeHabits([habit], [checkIn], reviewStart, today);
+  const capacity = summary.days.filter((day) => day.state !== "outOfScope").length;
+  assert.equal(capacity, 2);
+  assert.equal(summary.target, 2);
   assert.equal(summary.doneCount, 1);
+  const evidenceDay = summary.days.find((day) => day.day === localDateKey(evidenceDate));
+  assert.equal(evidenceDay?.state, "done");
+  const todayDay = summary.days.find((day) => day.day === localDateKey(today));
+  assert.equal(todayDay?.state, "unrecorded");
+  const missingPreCreationDay = summary.days.find(
+    (day) => day.day === localDateKey(addDays(reviewStart, 1))
+  );
+  assert.equal(missingPreCreationDay?.state, "outOfScope");
 });
 
 test("today's own record is surfaced separately", () => {

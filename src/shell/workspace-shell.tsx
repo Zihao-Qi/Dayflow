@@ -16,7 +16,6 @@ import { Plus, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { ActivityDialog } from "@/modules/evidence/ui/activity-dialog";
 import { HabitsCard } from "@/modules/evidence/ui/habits-card";
-import { createHabit, recordCheckIn } from "@/modules/evidence/ui/api";
 import { MobileMoreMenu, Navigation } from "./navigation";
 import { useShellModel } from "./use-shell-model";
 import { type DayView } from "./use-shell-state";
@@ -123,6 +122,8 @@ export function WorkspaceShell() {
     busyHabitIds,
     habitCreatePending,
     createHabitFromDraft,
+    renameHabit,
+    archiveHabit,
     recordHabitCheckIn,
     readRefreshFailed,
     clearReadRefreshFailed
@@ -243,8 +244,11 @@ export function WorkspaceShell() {
             habitsSlot={
               <HabitsCard
                 habits={data.habits}
-                onRecord={(habitId, done) => void recordHabitCheckIn(habitId, done)}
+                todayKey={data.todayKey}
+                onRecord={recordHabitCheckIn}
                 onCreate={createHabitFromDraft}
+                onRename={renameHabit}
+                onArchive={archiveHabit}
                 busyHabitIds={busyHabitIds}
                 createPending={habitCreatePending}
               />

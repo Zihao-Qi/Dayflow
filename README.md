@@ -19,6 +19,9 @@ app runs locally without accounts or hosted services.
 - Six stable workspace destinations: Today, Log, Projects, Backlog, Journal, and
   Review, with responsive navigation that condenses access without changing
   content ownership.
+- Habit Check-ins on Today with daily or weekly cadence, inline rename, confirmed
+  archive with focus recovery, direct done and not-done recording, optional amount
+  and note capture, and verified read-refresh synchronization.
 - Confirmation-based unfinished-task handling with rescheduling, backlog return, leave-in-place, and undo.
 - Expandable task details keep status, deadline, estimate, urgency, and importance available without crowding each row.
 - Log views for scheduled work and recorded daily activity, plus Backlog
@@ -61,6 +64,7 @@ app runs locally without accounts or hosted services.
 
 Product and corrective specifications:
 
+- [Habit Check-ins v1](./docs/specs/CHECK_INS_V1.md)
 - [Evidence Integrity v1](./docs/specs/EVIDENCE_INTEGRITY_V1.md)
 - [Weekly Evidence Review v1](./docs/specs/WEEKLY_EVIDENCE_REVIEW_V1.md)
 - [Review Period Browsing v1](./docs/specs/REVIEW_PERIOD_BROWSING_V1.md)

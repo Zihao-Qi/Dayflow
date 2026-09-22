@@ -291,6 +291,8 @@ export function useShellModel() {
     busyHabitIds,
     habitCreatePending,
     createHabitFromDraft,
+    renameHabit,
+    archiveHabit,
     recordHabitCheckIn
   } = useHabitActions({
     ...state,
@@ -302,6 +304,8 @@ export function useShellModel() {
     busyHabitIds,
     habitCreatePending,
     createHabitFromDraft,
+    renameHabit,
+    archiveHabit,
     recordHabitCheckIn,
     registerReviewRefresh,
     focus,

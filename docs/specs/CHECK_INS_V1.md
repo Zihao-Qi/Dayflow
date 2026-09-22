@@ -135,8 +135,8 @@ Consistency is computed per Habit over a seven-local-day review interval as
 
 ### Review Intervals and Common Geometry
 
-Dayflow evaluates consistency over two distinct review surfaces that share a
-common rolling seven-local-day geometry:
+Dayflow evaluates consistency across three named review interval forms that share
+a common rolling seven-local-day geometry:
 
 - **Review Period**: the seven local calendar days ending today (`today - 6 .. today`),
   used for period-bound Review evidence in the active workspace.
@@ -145,9 +145,10 @@ common rolling seven-local-day geometry:
 - **Past Review Period**: the exact seven-local-day window of a Review saved before
   the current Review Period, identified by its stored boundaries.
 
-Both evaluate an interval `[asOf - 6 .. asOf]`, where `asOf` is today for the
-current Review Period, or the chosen ending day for a historical Review Window.
-In production, every summary caller evaluates the interval as of its final day.
+Each form evaluates an interval `[asOf - 6 .. asOf]`, where `asOf` is today for
+the current Review Period, the chosen ending day for a historical Review Window,
+and the stored period-end local day for a saved Past Review Period. In
+production, every summary caller evaluates the interval as of its final day.
 Because all evaluated dates have already elapsed, future days never enter
 production review evaluations.
 
@@ -194,10 +195,10 @@ Consequently, a displayed consistency of `0/0` is not a valid production state.
 
 ### Historical Service Retrieval Invariant
 
-To evaluate consistency accurately in historical Review Windows, the retrieval
-service must select all Habit definitions whose Habit Lifetime overlaps the
-evaluated seven-day interval OR which carry any Check-in Evidence dated within
-that interval.
+To evaluate consistency accurately across historical Review Windows and saved
+Past Review Periods, the retrieval service must select all Habit definitions
+whose Habit Lifetime overlaps the evaluated seven-day interval OR which carry
+any Check-in Evidence dated within that interval.
 
 *Implementation Invariant*: This is a required implementation and acceptance
 invariant. The current production query in `readHabitsActiveDuring` filters

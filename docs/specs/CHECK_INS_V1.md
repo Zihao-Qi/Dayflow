@@ -22,7 +22,10 @@ seven-day statistics, which is a far larger change than recording a habit.
 - Create, rename, reorder and archive a Habit.
 - Record a Check-in for a Habit on a given day: done or not done, with an
   optional number and an optional note.
-- Show today's Habits and their state on the Today page, beside the diary.
+- Show today's Habits and act on them directly on the Today page as an active
+  commitments card. Journal remains a dedicated destination for long-form
+  entries and reflection; Habits do not reside in Journal or depend on diary
+  placement.
 - Show consistency over the current review period, computed against the Habit's
   cadence rather than against raw day count.
 
@@ -82,7 +85,10 @@ away.
 ## Recording and Backfill
 
 A Check-in may be recorded for today or for any of the **seven** preceding days.
-Earlier days are refused; the record is closed, not silently discarded.
+Together with today, this backfill window encompasses exactly **eight** writable
+calendar dates (`today - 7` through `today`). Earlier days and future dates are
+refused with status 400 and code `VALIDATION_ERROR`; the record is closed, not
+silently discarded.
 
 Recording is an upsert keyed by `(habitId, date)`, mirroring `upsertDiary`, so
 repeating the same action is naturally idempotent. Mutations carry
@@ -93,8 +99,24 @@ recorded — are separate columns. A Check-in recorded three days late remains
 identifiable as such, which keeps an honest streak computable later without a
 migration.
 
-A Check-in may be recorded against an `ARCHIVED` Habit only within the backfill
-window, so archiving never destroys the ability to correct the recent past.
+**Explicit Evidence Policy**: Any Check-in recorded within the permitted
+eight-day window is canonical Evidence, even if dated before the Habit's
+local creation day or after its local archival day. If the user explicitly
+records a Check-in on a date, that row adds the unique local calendar day to
+Habit Target Capacity; if recorded as `done: true`, it also increments
+`doneCount` (completion), whereas an explicit `done: false` adds capacity
+without incrementing completion. The user's direct report of what occurred is
+honored.
+
+**Absence Outside Lifetime**: Conversely, missing days outside a Habit's
+lifetime (local calendar days before its local creation day or after its local
+archival day with no Check-in row) remain `outOfScope`. Unrecorded silence
+outside a Habit's active existence is neither an obligation nor a failure: it is
+never classified as `unrecorded` or missed, and does not consume target capacity.
+
+A Check-in may be recorded against an `ARCHIVED` Habit within the eight-day
+backfill window, so archiving never destroys the ability to correct the recent
+past.
 
 ## Archival
 
@@ -108,29 +130,99 @@ existing export and backup tooling.
 
 ## Consistency
 
-Consistency is computed per Habit over the current review period as
+Consistency is computed per Habit over a seven-local-day review interval as
 `done Check-ins ÷ target`.
 
-The target depends on the cadence, because the two cadences mean different
-things:
+### Review Intervals and Common Geometry
 
-- A **`DAILY`** Habit's target is the number of days of the period that are in
-  scope. Three days in, the target is three. A day that has not happened yet
-  cannot have been missed, and neither can a day before the Habit existed.
-- A **`TIMES_PER_WEEK`** Habit keeps its weekly goal for the whole period. Those
-  days may be used in any order and the week is not over, so clipping the target
-  to elapsed days would demand three runs by Wednesday from a Habit that only
-  promised three by Sunday.
+Dayflow evaluates consistency across three named review interval forms that share
+a common rolling seven-local-day geometry:
 
-An unrecorded day therefore lowers a daily Habit's ratio, exactly as a recorded
-miss would. That is a presentation rule, not a storage one, and the two are
-still held apart where it matters: every day carries one of four states —
-`done`, `notDone`, `unrecorded`, `outOfScope` — and the UI must not render
-`unrecorded` and `notDone` identically.
+- **Review Period**: the seven local calendar days ending today (`today - 6 .. today`),
+  used for period-bound Review evidence in the active workspace.
+- **Review Window**: a read-only seven-local-day interval ending on a chosen past day
+  (`ending - 6 .. ending`), whether or not a Review was saved for those boundaries.
+- **Past Review Period**: the exact seven-local-day window of a Review saved before
+  the current Review Period, identified by its stored boundaries.
 
-An earlier draft of this section said an unrecorded day "contributes nothing to
-either side of that ratio", which contradicted the clipped target in the same
-paragraph. The rule above replaces it.
+Each form evaluates an interval `[asOf - 6 .. asOf]`, where `asOf` is today for
+the current Review Period, the chosen ending day for a historical Review Window,
+and the last included local day immediately before its exclusive stored `periodEnd`
+boundary for a saved Past Review Period. In production, every summary caller
+evaluates the interval as of its final day. Because all evaluated dates have
+already elapsed, future days never enter production review evaluations.
+
+### Habit Target Capacity and Effective Target
+
+Consistency evaluation is bounded by **Habit Target Capacity**: the count of
+in-scope days in the seven-day review interval, defined as the union of local
+calendar days inside the Habit Lifetime (from its local creation day through its
+local archival day, inclusive; or through the evaluated day while `ACTIVE`) and
+any out-of-lifetime days carrying explicit Check-in Evidence.
+
+The effective target depends on cadence:
+
+- A **`DAILY`** Habit's target is the count of in-scope days within the interval
+  (its Habit Target Capacity). For a Habit active throughout the seven-day
+  interval, the target is 7. For a Habit created two days ago, three days are in
+  scope (`today - 2`, `today - 1`, `today`), so the target is 3.
+- A **`TIMES_PER_WEEK`** Habit's effective target is
+  `min(targetPerWeek, targetCapacity)`. A long-lived Habit active across the full
+  interval retains its weekly target (e.g. `min(5, 7) = 5`). If the Habit was
+  created two days ago, its target capacity is 3, yielding an effective target of
+  `min(5, 3) = 3`. This scaling reflects actual available lifetime capacity,
+  ensuring a Habit is never expected to satisfy an obligation on days it did not
+  exist, absent explicit Check-in Evidence.
+
+### Explicit Facts Guarantee Non-Zero Target
+
+Any day carrying an explicit Check-in row—whether `done: true` or `done: false`,
+and including days prior to the local creation day or following the local
+archival day—adds that unique local calendar day to Habit Target Capacity. Only
+`done: true` increments `doneCount` (completion). Consequently, an interval
+containing any explicit Check-in Evidence always has a target capacity of at
+least 1, preventing the effective target from collapsing to 0 when evidence
+exists.
+
+### Zero-Capacity Invariant
+
+Production summary selection only emits a Habit for an evaluation interval when
+Habit Lifetime overlap or explicit Check-in Evidence yields a Habit Target
+Capacity of at least 1 (`targetCapacity >= 1`). If a Habit neither existed during
+the interval nor has any Check-in recorded within it, its capacity is 0 and it is
+omitted entirely from the summary rather than rendered with zero capacity.
+Consequently, a displayed consistency of `0/0` is not a valid production state.
+
+### Historical Service Retrieval Invariant
+
+To evaluate consistency accurately across historical Review Windows and saved
+Past Review Periods, the retrieval service must select all Habit definitions
+whose Habit Lifetime overlaps the evaluated seven-day interval OR which carry
+any Check-in Evidence dated within that interval.
+
+*Implementation Invariant*: This is a required implementation and acceptance
+invariant. The current production query in `readHabitsActiveDuring` filters
+purely by lifecycle (`createdAt < period.end` and `archivedAt >= period.start`),
+which omits Habits created after `period.end` that carry valid pre-creation
+Check-in Evidence within the window. Resolving this query gap is an explicit code
+defect fix scheduled for the subsequent PR; this specification pins the invariant
+without claiming current code is already compliant.
+
+### Unclamped Done Count
+
+`doneCount` is the honest sum of completed Check-ins (`done: true`) within the
+interval. It is never clamped to the target: if a user completes 4 check-ins for
+a Habit with an effective target of 3, the result is displayed honestly as `4/3`.
+
+### Presentation of Absence vs. Misses
+
+An unrecorded day within the Habit Lifetime lowers a daily Habit's ratio,
+exactly as a recorded miss would. That is a presentation rule, not a storage
+one, and the two are still held apart where it matters: every day carries one of
+four states — `done`, `notDone`, `unrecorded`, `outOfScope` — and the UI must not
+render `unrecorded` and `notDone` identically. Days outside the Habit Lifetime
+without explicit Check-ins evaluate as `outOfScope` and do not count as misses or
+reduce consistency.
 
 Streaks are deliberately absent from v1. A streak is a presentation rule layered
 on this data, and the data supports several. Choosing one before the record exists
@@ -243,12 +335,28 @@ The Today page renders a dedicated Habits card (`HabitsCard`), supporting direct
 - **Confirmed-Write & Read-Refresh Feedback**: A confirmed write updates local UI state immediately, but the action stays pending while `useHabitActions` awaits a trailing read-refresh (`refreshAfterConfirmedMutation`). If the trailing refresh fails, the confirmed write is preserved in the card and an announcement or retry toast is presented.
 - **Cross-Midnight Protection**: `HabitsCard` and its rows require a `todayKey: string` property and key each row item by `${habit.id}:${todayKey}`. Day-scoped drafts, errors, and touched flags reset across calendar boundaries, ensuring uncommitted drafts from yesterday cannot leak into the new day's editor.
 
-## Scope, Placement, and Open Policy Tensions (Q1/Q2)
+## Resolved Policy Decisions and Scope
 
-- **v1 Scope Boundaries**: Habit reordering (`sortOrder` manipulation) and historical backfill beyond the Today card (e.g. multi-day retro-logging) remain part of the intended v1 feature scope, but are intentionally out of scope for the Stage 2 Today-card PR.
-- **Stage 2 Placement Status**: The originating v1 scope specifies showing today's Habits on the Today page "beside the diary". In the current application structure, the Habits card is rendered on the Today page while the diary resides in the Journal workspace destination. Physical adjacency beside the diary is therefore an unmet/deferred v1 placement question requiring user decision; Stage 2 leaves the card on Today without moving UI or deciding placement policy.
-- **Q1 Pre-Creation Backfill Policy**: Section *Recording and Backfill* permits recording a Check-in for "today or for any of the seven preceding days", while Section *Consistency* states that "neither can a day before the Habit existed" be counted as a miss. In the current implementation, the check-in route (`/api/habits/[id]/check-in`) enforces the 7-day date window but has no creation-date guard, and `summarizeHabits` checks for an existing check-in row before evaluating `beforeHabit`, so pre-creation check-ins are accepted and counted toward completion. The intended policy remains an open question needing user decision, retained without altering domain code.
-- **Q2 Clipped vs. Fixed Weekly Target Mismatch**: Section *Consistency* states that a `TIMES_PER_WEEK` habit "keeps its weekly goal for the whole period" and notes that clipping to elapsed days would demand runs before the week has ended. However, the domain calculation in `summarizeHabits` clamps the target via `Math.min(targetPerWeek, countableDays)`. Within the same active review period—for example, a `TIMES_PER_WEEK` habit with target 5 created on Monday viewed on Wednesday, where future days are `outOfScope` yielding `countableDays = 3`—the code sets the target to 3, directly clipping to elapsed days in contradiction to the originating specification. This exact spec/code mismatch is retained as an unresolved policy issue; neither the domain code nor the originating spec is altered.
+- **v1 Scope Boundaries**: Habit reordering (`sortOrder` manipulation) and historical backfill beyond the Today card (e.g. multi-day retro-logging) remain part of the intended v1 feature scope, to be delivered incrementally.
+- **Placement Decision**: Habits are acted on directly on the Today page (`HabitsCard`), where today's active commitments reside. Journal remains a dedicated destination for long-form entries, notes, materials, and reflections. The originating specification's phrase "beside the diary" is explicitly replaced by this architectural separation: Habits do not reside in Journal, nor do they require physical diary adjacency.
+- **Q1 Pre-Creation & Post-Archive Evidence**: A Check-in within the permitted eight-day backfill window is explicit Evidence regardless of whether it precedes the Habit's local creation day or follows its local archival day. Both `done: true` and `done: false` rows add the unique local calendar day to Habit Target Capacity; only `done: true` increments `doneCount` (completion). Conversely, absent days outside the Habit Lifetime (local calendar days before the local creation day or after the local archival day with no Check-in row) evaluate as `outOfScope`, avoiding false misses or artificial target inflation.
+- **Q2 Target Capacity vs. Elapsed Days**: The review interval is always a rolling seven local calendar days ending on the evaluated day: today for the current Review Period, or the chosen ending day for a historical Review Window. Because every production summary uses the interval's last day as its as-of day, Dayflow does not divide fixed calendar weeks mid-flight or clip future elapsed days in production. The calculation `min(targetPerWeek, targetCapacity)` scales weekly targets solely against available Habit Lifetime days and explicit Evidence days, ensuring fair targets for newly created or archived commitments absent explicit Check-in Evidence. The earlier framing of mid-week elapsed clipping was an artifact of synthetic unit test fixtures (`periodStart = today - 3`), not reachable production calendar behavior.
+
+### Policy Acceptance Matrix
+
+| Scenario | Given / Action | Result / Invariant |
+| --- | --- | --- |
+| Long-lived weekly target | `TIMES_PER_WEEK` with target 5, active across full 7-day trailing window | Effective target is `min(5, 7) = 5`. |
+| Newly created habit | `TIMES_PER_WEEK` with target 5, created 2 days ago (3 lifetime days: `today - 2`, `today - 1`, `today`) | Effective target is `min(5, 3) = 3`. |
+| Recently archived habit | `TIMES_PER_WEEK` with target 5, archived with 3 in-window lifetime days | Effective target is `min(5, 3) = 3`. |
+| Pre-creation explicit evidence | Check-in recorded with `done: true` or `done: false` on a local day prior to local creation day within backfill window | Accepted, displayed as `done` or `notDone`; adds day to Habit Target Capacity; only `done: true` increments `doneCount`. |
+| Absent pre/post lifetime days | Local calendar days prior to local creation day or after local archival day with no Check-in row | Evaluated as `outOfScope`; not counted as missed and excluded from Habit Target Capacity. |
+| Post-archive explicit fact | Check-in recorded on a local day after local archival day within backfill window | Accepted, displayed; adds day to Habit Target Capacity; only `done: true` increments `doneCount`. |
+| Done count exceeds target | Habit with effective target 3 has 4 completed check-ins in the window | `doneCount` is 4; displayed honestly as `4/3` without clamping. |
+| Future request rejected | Check-in request with date after today (`date > today`) | Refused with status 400 and code `VALIDATION_ERROR` on field `date`. |
+| Writable date window boundary | Check-in window spans today plus seven preceding local days | Exactly 8 writable local calendar dates: `today - 7` accepted; `today - 8` refused with `VALIDATION_ERROR`. |
+| Zero capacity emission | Habit with no lifetime overlap and no Check-in rows in the evaluated interval | Capacity is 0; Habit is omitted from summary selection; displayed `0/0` is an invalid production state. |
+| Historical service retrieval | Habit created after historical Review Window end carrying pre-creation Check-in in window | Retrieval service must select the Habit by evidence union; required implementation invariant for subsequent PR. |
 
 ## Non-Goals
 
@@ -267,15 +375,27 @@ The Today page renders a dedicated Habits card (`HabitsCard`), supporting direct
   proved against a seeded conflict rather than asserted.
 - Recording twice with the same mutation id replays one response and leaves one
   row, matching the existing idempotency tests.
-- A Check-in dated one day outside the backfill window is refused with
-  `VALIDATION_ERROR`, and one day inside it succeeds. The pair is the
-  negative control; neither test is meaningful alone.
+- Check-in date boundary: exactly eight writable local calendar dates (`today`
+  and the seven preceding local days) succeed; `today - 8` and dates after today
+  are refused with `VALIDATION_ERROR`. The pair is the negative control; neither
+  test is meaningful alone.
 - An unrecorded day and an explicit `done: false` produce different read-model
   output. A test that cannot tell them apart would pass under the rejected design
   and must fail here.
+- Explicit Check-ins recorded before local creation day or after local archival
+  day within the backfill window are accepted, displayed, and add the unique local
+  calendar day to Habit Target Capacity; only `done: true` increments `doneCount`.
+- Absent days before local creation day or after local archival day evaluate as
+  `outOfScope`, contributing neither to target capacity nor to missed counts.
+- `TIMES_PER_WEEK` consistency scales target by `min(targetPerWeek, targetCapacity)`
+  over rolling seven-local-day review intervals, and displays `doneCount > target`
+  without clamping.
+- `DAILY` consistency scales target by countable in-scope days.
+- Zero-capacity invariant: production summary selection emits only Habits with
+  capacity >= 1, preventing `0/0` from rendering.
+- Historical retrieval invariant: historical Review Window queries select Habits
+  with lifetime overlap OR explicit Check-in Evidence within the interval.
 - Archiving a Habit preserves every Check-in and removes it from Today.
-- Consistency for a `TIMES_PER_WEEK` Habit ignores which days were used, and
-  never counts days before the Habit existed.
 - Validation errors are returned with storage unavailable.
 - Backup and restore round-trip both tables with their rows intact — the control
   for consequence 1 above, which otherwise fails silently.

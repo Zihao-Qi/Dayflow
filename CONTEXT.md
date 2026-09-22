@@ -48,6 +48,26 @@ _Avoid_: Task, completion, time block
 A timed recovery interval suggested after focus. It is stored for timer continuity but does not create Activity evidence or count as Invested Time.
 _Avoid_: Focus Session, Rest activity
 
+**Habit**:
+A named repeating commitment with a defined cadence and weekly target. It represents an ongoing intention rather than a historical record of what happened on a specific day.
+_Avoid_: Recurring task, routine, task group
+
+**Check-in**:
+An explicit piece of Evidence recording whether a Habit happened on a specific local calendar day, with an optional quantity and note. A missing Check-in indicates an unrecorded day, not an inferred miss.
+_Avoid_: Task completion, attendance, default miss
+
+**Habit Lifetime**:
+The span of local calendar days from a Habit's creation local day through its archival local day, inclusive; while active, its upper bound remains open through the evaluated day. Days outside this span are out of scope absent explicit Check-in Evidence.
+_Avoid_: Active window, expiry, habit age
+
+**Habit Target Capacity**:
+The number of countable days available to evaluate a Habit within a seven-local-day review interval (the current Review Period or a historical Review Window), defined as the union of local calendar days inside Habit Lifetime and any out-of-lifetime days carrying explicit Check-in Evidence.
+_Avoid_: Elapsed days, calendar week length, potential capacity
+
+**Habit Consistency**:
+The ratio of completed Check-ins to the effective target over a seven-local-day review interval. The target is derived from the Habit's cadence and Habit Target Capacity, and completed Check-ins are never clamped to the target.
+_Avoid_: Streak, success rate, score, clamped progress
+
 **Plan Progress**:
 The number of completed tasks divided by all currently defined tasks in a Project or Phase. Recorded activity time is evidence of effort, not Plan Progress.
 _Avoid_: Percent complete, effort

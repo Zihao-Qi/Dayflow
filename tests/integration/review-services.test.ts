@@ -275,7 +275,7 @@ test("Review Habit consistency", async context => {
       );
     });
 
-    await context.test("a Habit archived before the period does not appear in it", async () => {
+    await context.test("a Habit archived before the period does not appear without period Evidence", async () => {
       // The control for the case above: reading the active list alone would
       // fail both, and returning every Habit would pass both.
       await reset();
@@ -292,12 +292,65 @@ test("Review Habit consistency", async context => {
       assert.deepEqual(summaries, []);
     });
 
-    await context.test("a Habit created after the period never appears in it", async () => {
+    await context.test("a Habit created after the period does not appear without period Evidence", async () => {
       await reset();
       await db.habit.create({
         data: { name: "Created later", createdAt: day("2026-09-02") }
       });
       assert.deepEqual(await db.$transaction(tx => readReviewHabits(tx, past, now)), []);
     });
+
+    await context.test(
+      "historical Review includes out-of-lifetime Habits that carry period Evidence",
+      async () => {
+        await reset();
+        const createdLater = await db.habit.create({
+          data: {
+            name: "Created after past period",
+            status: "ACTIVE",
+            createdAt: day("2026-08-28"),
+            cadence: "DAILY",
+            targetPerWeek: 7,
+            sortOrder: 1
+          }
+        });
+        await db.habitCheckIn.create({
+          data: { habitId: createdLater.id, date: day("2026-08-20"), done: true }
+        });
+
+        const archivedEarlier = await db.habit.create({
+          data: {
+            name: "Archived before past period",
+            status: "ARCHIVED",
+            archivedAt: day("2026-08-10"),
+            createdAt: createdBeforeEverything,
+            cadence: "DAILY",
+            targetPerWeek: 7,
+            sortOrder: 2
+          }
+        });
+        await db.habitCheckIn.create({
+          data: { habitId: archivedEarlier.id, date: day("2026-08-21"), done: true }
+        });
+
+        const summaries = await db.$transaction(tx => readReviewHabits(tx, past, now));
+        assert.deepEqual(
+          summaries.map(s => s.name),
+          ["Created after past period", "Archived before past period"]
+        );
+        for (const summary of summaries) {
+          assert.equal(summary.doneCount, 1, `${summary.name} doneCount should be 1`);
+          assert.equal(summary.target, 1, `${summary.name} DAILY target should be 1`);
+        }
+
+        const createdLaterDay = summaries[0].days.find(d => d.day === "2026-08-20");
+        assert.ok(createdLaterDay);
+        assert.equal(createdLaterDay.state, "done");
+
+        const archivedEarlierDay = summaries[1].days.find(d => d.day === "2026-08-21");
+        assert.ok(archivedEarlierDay);
+        assert.equal(archivedEarlierDay.state, "done");
+      }
+    );
   });
 });

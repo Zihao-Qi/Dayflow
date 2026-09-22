@@ -49,9 +49,11 @@ export function readActiveHabits(tx: Prisma.TransactionClient) {
 }
 
 /**
- * Habits as they stood during a past period: still active, or archived only
- * after it began. Reading the active list instead would quietly erase a Habit
- * from every historical review the moment it was retired.
+ * Habits relevant to a past period: either their lifecycle overlapped the
+ * interval (active, or archived only after it began), or they carry explicit
+ * Check-in Evidence within it. Reading the active list alone would quietly erase
+ * a Habit from historical reviews upon retirement, while checking lifecycle
+ * alone would drop Habits carrying valid pre-creation or post-archive Evidence.
  */
 export function readHabitsActiveDuring(
   tx: Prisma.TransactionClient,
@@ -59,8 +61,19 @@ export function readHabitsActiveDuring(
 ) {
   return tx.habit.findMany({
     where: {
-      createdAt: { lt: period.end },
-      OR: [{ status: "ACTIVE" }, { archivedAt: { gte: period.start } }]
+      OR: [
+        {
+          createdAt: { lt: period.end },
+          OR: [{ status: "ACTIVE" }, { archivedAt: { gte: period.start } }]
+        },
+        {
+          checkIns: {
+            some: {
+              date: { gte: period.start, lt: period.end }
+            }
+          }
+        }
+      ]
     },
     orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }]
   });

@@ -211,8 +211,9 @@ test("days after a Habit was archived are not counted as misses", () => {
   assert.equal(summary.target, 2, "only the days it was active can be required");
 });
 
-test("a times-per-week target can never exceed the days available to meet it", () => {
-  // A Habit created with three days left cannot be done five times.
+test("a times-per-week target can never exceed the capacity days available to meet it", () => {
+  // Target capacity is the union of Habit Lifetime days and explicit Check-in Evidence.
+  // A Habit whose lifetime inside the window is limited cannot be expected to exceed its capacity.
   const [summary] = summarizeHabits(
     [
       definition({
@@ -231,6 +232,24 @@ test("a times-per-week target can never exceed the days available to meet it", (
   );
 });
 
+test("explicit out-of-lifetime Check-ins contribute unique capacity days to Habit Target Capacity", () => {
+  // An active habit created two days ago has three in-window lifetime days.
+  // An explicit pre-creation Check-in contributes a unique capacity day, expanding capacity.
+  const habit = definition({
+    cadence: "TIMES_PER_WEEK",
+    targetPerWeek: 5,
+    createdAt: addDays(periodStart, 2)
+  });
+  const checkIn = record(0); // Dated before createdAt: adds unique capacity day
+  const [summary] = summarizeHabits([habit], [checkIn], periodStart, today);
+  const capacityDays = summary.days.filter((d) => d.state !== "outOfScope").length;
+  assert.equal(capacityDays, 3); // day 0 (pre-creation record) + days 2, 3 (lifetime days)
+  assert.equal(summary.target, 3); // min(5, 3) = 3
+  assert.equal(summary.doneCount, 1);
+  assert.equal(summary.days[0].state, "done");
+  assert.equal(summary.days[1].state, "outOfScope");
+});
+
 test("a daily Habit's target grows with the period", () => {
   const [summary] = summarizeHabits(
     [definition()],
@@ -242,9 +261,10 @@ test("a daily Habit's target grows with the period", () => {
   assert.equal(summary.target, 4);
 });
 
-test("a times-per-week Habit keeps its weekly goal mid-period", () => {
-  // Clipping to elapsed days would demand three by Wednesday from a Habit that
-  // only promised three by Sunday.
+test("a times-per-week Habit target scales to in-scope capacity over the rolling review geometry", () => {
+  // Over a rolling seven-day window ending on the as-of day, the effective target
+  // is min(targetPerWeek, capacityDays), where capacity is the union of Habit Lifetime
+  // days and explicit Evidence dates.
   const [summary] = summarizeHabits(
     [definition({ cadence: "TIMES_PER_WEEK", targetPerWeek: 3 })],
     [record(0)],

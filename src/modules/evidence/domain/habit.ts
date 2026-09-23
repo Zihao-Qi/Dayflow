@@ -119,14 +119,10 @@ export type HabitSummary = {
 };
 
 /**
- * A daily Habit's target grows with the period: three days in, it is three,
- * because a day that has not happened cannot have been missed. A
- * times-per-week Habit keeps its weekly goal, since those days may be used in
- * any order and the week is not over.
- *
- * Neither target may exceed the days actually available to meet it. A Habit
- * created with three days left in the period cannot be done five times, and a
- * target it cannot reach is a score it is guaranteed to fail.
+ * Computes the target required for a Habit over a Review Period:
+ * DAILY target = countable days; TIMES_PER_WEEK target =
+ * Math.min(targetPerWeek, countable days). Countable days are in-lifetime days
+ * in the interval plus out-of-lifetime days carrying an explicit Check-in.
  */
 export function habitTarget(
   habit: Pick<HabitDefinition, "cadence" | "targetPerWeek">,

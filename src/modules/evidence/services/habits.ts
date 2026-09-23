@@ -49,7 +49,7 @@ export function readActiveHabits(tx: Prisma.TransactionClient) {
 }
 
 /**
- * Habits relevant to a past period: either their lifecycle overlapped the
+ * Habits relevant to a Review Period: either their lifecycle overlapped the
  * interval (active, or archived only after it began), or they carry explicit
  * Check-in Evidence within it. Reading the active list alone would quietly erase
  * a Habit from historical reviews upon retirement, while checking lifecycle

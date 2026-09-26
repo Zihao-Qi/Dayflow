@@ -346,6 +346,7 @@ test.describe("Habit History & Backfill (Real Routes)", () => {
 
     const dateButtons = dialog.locator("button.habit-history-date-btn");
     await expect(dateButtons).toHaveCount(8);
+    await expect(dialog.getByRole("button", { name: "Refresh habit history" })).toBeEnabled();
 
     // 1. Tab / Shift-Tab boundary trap: focus wraps at first and last elements
     const focusableSelector =

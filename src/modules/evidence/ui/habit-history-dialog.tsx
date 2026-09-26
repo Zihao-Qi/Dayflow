@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { type RefObject, useEffect, useMemo, useRef } from "react";
 import { useModalFocusTrap } from "@/components/use-modal-focus-trap";
 import {
   computeDayState,
@@ -26,11 +26,23 @@ const DAY_STATE_MARKS: Record<HabitHistoryDayState, string> = {
 
 const WEEKDAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
+function canReceiveFocus(element: unknown): element is HTMLElement {
+  return Boolean(
+    element instanceof HTMLElement &&
+      element !== document.body &&
+      element.isConnected &&
+      element.getClientRects().length > 0 &&
+      !element.hasAttribute("disabled") &&
+      element.getAttribute("aria-hidden") !== "true"
+  );
+}
+
 export type HabitHistoryDialogProps = {
   history: ReturnType<typeof useHabitHistory>;
+  openerRef?: RefObject<HTMLElement | null>;
 };
 
-export function HabitHistoryDialog({ history }: HabitHistoryDialogProps) {
+export function HabitHistoryDialog({ history, openerRef }: HabitHistoryDialogProps) {
   const {
     isOpen,
     requestClose,
@@ -63,6 +75,58 @@ export function HabitHistoryDialog({ history }: HabitHistoryDialogProps) {
   const dialogRef = useRef<HTMLElement | null>(null);
   const discardDialogRef = useRef<HTMLElement | null>(null);
   const discardKeepBtnRef = useRef<HTMLButtonElement | null>(null);
+
+  const outerOpenerRef = useRef<HTMLElement | null>(null);
+  const wasOpenRef = useRef(false);
+  const restoreFrameRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      if (restoreFrameRef.current !== null) {
+        window.cancelAnimationFrame(restoreFrameRef.current);
+        restoreFrameRef.current = null;
+      }
+      if (!wasOpenRef.current) {
+        const candidate =
+          openerRef?.current ??
+          (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+        if (canReceiveFocus(candidate)) {
+          outerOpenerRef.current = candidate;
+        }
+      }
+      wasOpenRef.current = true;
+    } else {
+      if (wasOpenRef.current) {
+        wasOpenRef.current = false;
+        const opener = outerOpenerRef.current;
+        if (restoreFrameRef.current !== null) {
+          window.cancelAnimationFrame(restoreFrameRef.current);
+        }
+        restoreFrameRef.current = window.requestAnimationFrame(() => {
+          restoreFrameRef.current = null;
+          const current = document.activeElement;
+          const focusMovedOn =
+            current instanceof HTMLElement &&
+            current !== document.body &&
+            current.isConnected &&
+            current !== opener;
+          if (focusMovedOn) return;
+          if (canReceiveFocus(opener)) {
+            opener.focus();
+          }
+          outerOpenerRef.current = null;
+        });
+      }
+    }
+  }, [isOpen, openerRef]);
+
+  useEffect(() => {
+    return () => {
+      if (restoreFrameRef.current !== null) {
+        window.cancelAnimationFrame(restoreFrameRef.current);
+      }
+    };
+  }, []);
 
   const editButtonRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
   const prevEditingHabitIdRef = useRef<string | null>(null);

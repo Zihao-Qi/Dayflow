@@ -89,6 +89,7 @@ export function HabitsCard({
   const archiveDialogRef = useRef<HTMLElement | null>(null);
   const keepHabitRef = useRef<HTMLButtonElement | null>(null);
   const createInputRef = useRef<HTMLInputElement | null>(null);
+  const historyButtonRef = useRef<HTMLButtonElement | null>(null);
 
   const returnFocusHabitIdRef = useRef<string | null>(null);
   const renameButtonRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
@@ -246,6 +247,7 @@ export function HabitsCard({
           </h2>
         </div>
         <button
+          ref={historyButtonRef}
           type="button"
           className="text-button habit-history-btn"
           onClick={history.openHistory}
@@ -424,7 +426,7 @@ export function HabitsCard({
         </div>
       )}
 
-      <HabitHistoryDialog history={history} />
+      <HabitHistoryDialog history={history} openerRef={historyButtonRef} />
     </section>
   );
 }

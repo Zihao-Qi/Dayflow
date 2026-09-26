@@ -309,13 +309,25 @@ export function beginHistoryLoad(session: HistorySession) {
   };
 }
 
-function overlayGuards(session: HistorySession, checkIns: HabitHistoryCheckIn[], readStartedAt: number) {
+function outsideWindow(date: string, bounds: { earliestDate: string; latestDate: string }) {
+  return date < bounds.earliestDate || date > bounds.latestDate;
+}
+
+function overlayGuards(
+  session: HistorySession,
+  checkIns: HabitHistoryCheckIn[],
+  readStartedAt: number,
+  bounds: { earliestDate: string; latestDate: string }
+) {
   const owned = new Map<string, { startedAt: number; row: HabitHistoryCheckIn | null }>();
   for (const [key, guard] of session.guards) {
     if (guard.startedAt > readStartedAt) owned.set(key, guard);
   }
   for (const [key, read] of session.recordReads) {
-    if (read.startedAt <= readStartedAt) continue;
+    const parsed = readHistoryRecordKey(key);
+    // A rolling history read has no evidence for a date outside its window.
+    const exactOutside = parsed !== null && outsideWindow(parsed.date, bounds);
+    if (read.startedAt <= readStartedAt && !exactOutside) continue;
     const current = owned.get(key);
     if (!current || read.startedAt > current.startedAt) owned.set(key, read);
   }
@@ -335,6 +347,27 @@ function pruneStarted<T extends { startedAt: number }>(rows: Map<string, T>, rea
     if (row.startedAt <= readStartedAt) next.delete(key);
   }
   return next;
+}
+
+function pruneRecordReads(
+  rows: Map<string, RecordRead>,
+  readStartedAt: number,
+  bounds: { earliestDate: string; latestDate: string }
+) {
+  const next = new Map(rows);
+  for (const [key, row] of rows) {
+    const parsed = readHistoryRecordKey(key);
+    const exactOutside = parsed !== null && outsideWindow(parsed.date, bounds);
+    if (!exactOutside && row.startedAt <= readStartedAt) next.delete(key);
+  }
+  return next;
+}
+
+function windowMoved(before: HabitHistoryPayload | null, after: HabitHistoryPayload | null) {
+  if (!before || !after) return false;
+  return before.todayKey !== after.todayKey ||
+    before.earliestDate !== after.earliestDate ||
+    before.latestDate !== after.latestDate;
 }
 
 export function settleHistoryLoad(
@@ -359,25 +392,29 @@ export function settleHistoryLoad(
       }
     };
   }
-  let history = {
+  const bounds = session.windowAsOf > startedAt && session.history
+    ? {
+        todayKey: session.history.todayKey,
+        earliestDate: session.history.earliestDate,
+        latestDate: session.history.latestDate
+      }
+    : {
+        todayKey: outcome.data.todayKey,
+        earliestDate: outcome.data.earliestDate,
+        latestDate: outcome.data.latestDate
+      };
+  const history = {
     ...outcome.data,
-    checkIns: overlayGuards(session, outcome.data.checkIns, startedAt)
+    ...bounds,
+    checkIns: overlayGuards(session, outcome.data.checkIns, startedAt, bounds)
   };
-  if (session.windowAsOf > startedAt && session.history) {
-    history = {
-      ...history,
-      todayKey: session.history.todayKey,
-      earliestDate: session.history.earliestDate,
-      latestDate: session.history.latestDate
-    };
-  }
   return {
     applied: true as const,
     session: {
       ...session,
       history,
       guards: pruneStarted(session.guards, startedAt),
-      recordReads: pruneStarted(session.recordReads, startedAt),
+      recordReads: pruneRecordReads(session.recordReads, startedAt, bounds),
       selectedDate: session.selectedDate || outcome.data.todayKey,
       loading: false,
       loadError: null,
@@ -614,7 +651,22 @@ export function settleReconcile(
   const pending = session.pending.get(key);
   const intentionAt = session.intentionStart.get(key);
   const olderThanIntention = pending !== undefined && intentionAt !== undefined && input.startedAt < intentionAt;
-  const untouched = { session, shellRefresh: false, announcement: null as string | null };
+  const untouched = {
+    session,
+    shellRefresh: false,
+    announcement: null as string | null,
+    refreshHistory: false
+  };
+  const finished = (
+    next: HistorySession,
+    shellRefresh: boolean,
+    announcement: string | null
+  ) => ({
+    session: next,
+    shellRefresh,
+    announcement,
+    refreshHistory: windowMoved(session.history, next.history)
+  });
   if (!input.outcome.ok) {
     if (olderThanIntention || pending?.isSaving || readOwnsRecord(session, key, input.startedAt)) {
       return untouched;
@@ -622,7 +674,8 @@ export function settleReconcile(
     return {
       session: withError(session, key, { message: input.outcome.message }),
       shellRefresh: false,
-      announcement: null
+      announcement: null,
+      refreshHistory: false
     };
   }
   if (olderThanIntention) return untouched;
@@ -635,21 +688,17 @@ export function settleReconcile(
     input.outcome.result
   );
   if (next === session) return untouched;
-  if (pending?.isSaving) return { session: next, shellRefresh: false, announcement: null };
+  if (pending?.isSaving) return finished(next, false, null);
   const attempt = pending ? parseAttempt(pending.fingerprint) : null;
   const matches = attempt
     ? evidenceMatchesAttempt(input.outcome.result.checkIn, attempt, input.habitId)
     : false;
   if (pending && matches && input.outcome.result.checkIn) {
-    return {
-      session: dropResolved(next, key, input.habitId, input.date),
-      shellRefresh: true,
-      announcement: MATCHED_ANNOUNCEMENT
-    };
+    return finished(dropResolved(next, key, input.habitId, input.date), true, MATCHED_ANNOUNCEMENT);
   }
   if (pending) {
-    return {
-      session: withError(
+    return finished(
+      withError(
         {
           ...next,
           pending: new Map(next.pending).set(key, { ...pending, isSaving: false, isUncertain: true }),
@@ -658,9 +707,9 @@ export function settleReconcile(
         key,
         { message: RECONCILE_MISMATCH_MESSAGE }
       ),
-      shellRefresh: false,
-      announcement: null
-    };
+      false,
+      null
+    );
   }
-  return { session: next, shellRefresh: false, announcement: null };
+  return finished(next, false, null);
 }

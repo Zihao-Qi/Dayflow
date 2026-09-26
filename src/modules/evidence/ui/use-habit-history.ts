@@ -247,6 +247,7 @@ export function useHabitHistory({
       commit(settled.session);
       if (settled.announcement) setAppAnnouncement?.(settled.announcement);
       if (settled.shellRefresh) void refreshAfterConfirmedMutation?.().catch(() => {});
+      if (settled.refreshHistory) void runLoad();
       return result;
     } catch (error) {
       const settled = settleReconcile(sessionRef.current, {
@@ -261,7 +262,7 @@ export function useHabitHistory({
       commit(settled.session);
       return null;
     }
-  }, [commit, refreshAfterConfirmedMutation, setAppAnnouncement]);
+  }, [commit, refreshAfterConfirmedMutation, runLoad, setAppAnnouncement]);
 
   const activeHabits = useMemo(() => {
     if (!session.history) return [];

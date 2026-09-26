@@ -596,3 +596,98 @@ test("a reconcile that started before a save cannot unlock or resolve that save"
   assert.equal(failed.session.pending.get(key)?.isSaving, true, "stale reconcile failure preserves in-flight save lock");
   assert.equal(failed.session.errors.has(key), false);
 });
+
+test("a rolled exact-date window keeps its fact and asks for the rest of the new window", () => {
+  const nextToday = "2026-09-27";
+  const nextEarliest = "2026-09-20";
+  const key = historyRecordKey(habitId, earliest);
+  let session = withHistory(earliest, [row(earliest, "before"), row(today, "old today")]);
+  session = {
+    ...session,
+    drafts: new Map([[key, doneDraft({ note: "still drafting" })]])
+  };
+  const unchanged = beginReconcile(session);
+  const sameWindow = settleReconcile(unchanged.session, {
+    habitId,
+    date: earliest,
+    startedAt: unchanged.startedAt,
+    outcome: {
+      ok: true,
+      result: {
+        todayKey: today,
+        earliestDate: earliest,
+        latestDate: today,
+        habitId,
+        date: earliest,
+        checkIn: row(earliest, "same day")
+      }
+    }
+  });
+  assert.equal(sameWindow.refreshHistory, false, "an unchanged window does not refetch history");
+  const save = beginCheckInSave(session, {
+    habitId,
+    date: earliest,
+    draft: doneDraft({ note: "still drafting" }),
+    createId: () => "mutation-rollover"
+  });
+  assert.equal(save.ok, true);
+  if (!save.ok) return;
+  session = settleCheckInSave(save.session, {
+    habitId,
+    date: earliest,
+    mutationId: save.mutationId,
+    startedAt: save.startedAt,
+    outcome: { type: "failure", message: "lost" }
+  }).session;
+  const early = beginHistoryLoad(session);
+  const read = beginReconcile(early.session);
+  const rolled = settleReconcile(read.session, {
+    habitId,
+    date: earliest,
+    startedAt: read.startedAt,
+    outcome: {
+      ok: true,
+      result: {
+        todayKey: nextToday,
+        earliestDate: nextEarliest,
+        latestDate: nextToday,
+        habitId,
+        date: earliest,
+        checkIn: row(earliest, "expired fact")
+      }
+    }
+  });
+  assert.equal(rolled.refreshHistory, true, "a changed window requests a complete history read");
+  assert.equal(rolled.session.selectedDate, earliest, "selected expired date stays");
+  assert.equal(rolled.session.history?.todayKey, nextToday);
+  assert.equal(rolled.session.history?.checkIns.find((item) => item.day === earliest)?.note, "expired fact");
+  assert.equal(rolled.session.pending.get(key)?.mutationId, "mutation-rollover");
+  assert.equal(rolled.session.pending.get(key)?.isUncertain, true);
+  assert.equal(rolled.session.drafts.get(key)?.note, "still drafting");
+  const stale = settleHistoryLoad(rolled.session, early.generation, early.startedAt, {
+    ok: true,
+    data: history([row(today, "older list")], { earliest, today })
+  });
+  assert.equal(stale.applied, true);
+  assert.equal(stale.session.history?.todayKey, nextToday, "an older history read cannot roll the window back");
+  assert.equal(stale.session.history?.checkIns.find((item) => item.day === earliest)?.note, "expired fact");
+  assert.equal(stale.session.history?.checkIns.some((item) => item.day === nextToday), false);
+  const complete = beginHistoryLoad(stale.session);
+  const filled = settleHistoryLoad(complete.session, complete.generation, complete.startedAt, {
+    ok: true,
+    data: history([row(nextToday, "new today"), row(today, "current"), row(earliest, "older")], {
+      earliest: nextEarliest,
+      today: nextToday
+    })
+  });
+  assert.equal(filled.session.history?.checkIns.find((item) => item.day === nextToday)?.note, "new today");
+  assert.equal(
+    filled.session.history?.checkIns.find((item) => item.day === earliest)?.note,
+    "expired fact",
+    "a later window read cannot replace the exact-date fact with an older row"
+  );
+  assert.equal(filled.session.selectedDate, earliest);
+  assert.equal(filled.session.pending.get(key)?.mutationId, "mutation-rollover");
+  assert.equal(filled.session.pending.get(key)?.isSaving, false);
+  assert.equal(filled.session.drafts.get(key)?.note, "still drafting");
+});

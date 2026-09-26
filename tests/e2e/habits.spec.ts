@@ -1584,6 +1584,16 @@ test("uncertain reorder retry replaying historical receipt does not project stal
   let secondPatchMutationId = "";
   let failTrailingRefresh = false;
 
+  let resolveFirstXCommitted!: () => void;
+  const firstXCommitted = new Promise<void>((resolve) => {
+    resolveFirstXCommitted = resolve;
+  });
+
+  let releaseRetryReceipt!: () => void;
+  const retryReceiptBarrier = new Promise<void>((resolve) => {
+    releaseRetryReceipt = resolve;
+  });
+
   await page.route("**/api/habits", async (route) => {
     if (route.request().method() === "PATCH") {
       patchCount++;
@@ -1593,13 +1603,19 @@ test("uncertain reorder retry replaying historical receipt does not project stal
         // Allow server commit & receipt creation via route.fetch(), then drop the response
         const serverResp = await route.fetch();
         expect(serverResp.status()).toBe(200);
+        resolveFirstXCommitted();
         await route.abort();
         return;
       }
       if (patchCount === 2) {
         secondPatchMutationId = mutId;
-        // Deliver server response (receipt replay)
+        // Assert receipt response is 200 with expected payload/IDs
         const serverResp = await route.fetch();
+        expect(serverResp.status()).toBe(200);
+        const receiptJson = await serverResp.json();
+        expect(receiptJson).toEqual({ ids: [habitB.id, habitA.id, habitC.id] });
+        // Hold response until release barrier is signaled
+        await retryReceiptBarrier;
         await route.fulfill({ response: serverResp });
         return;
       }
@@ -1622,7 +1638,10 @@ test("uncertain reorder retry replaying historical receipt does not project stal
   const rowA = card.locator(`[data-habit="${habitA.id}"]`);
   await rowA.getByRole("button", { name: "Move Retry A down" }).click();
 
-  // Verify UI remains O = [A, B, C]
+  // Milestone: await first X server commit and client unconfirmed feedback
+  await firstXCommitted;
+  const toast = page.locator(".app-error-toast");
+  await expect(toast).toContainText("Habit order status unconfirmed. Refresh to check.");
   await expect(rows.nth(0)).toHaveAttribute("data-habit", habitA.id);
   await expect(rows.nth(1)).toHaveAttribute("data-habit", habitB.id);
   await expect(rows.nth(2)).toHaveAttribute("data-habit", habitC.id);
@@ -1643,30 +1662,48 @@ test("uncertain reorder retry replaying historical receipt does not project stal
   const listAfterY = await (await page.request.get("/api/habits")).json();
   expect(listAfterY.map((h: { id: string }) => h.id)).toEqual([habitC.id, habitB.id, habitA.id]);
 
-  // Step 3: Repeat the same UI move, verify it reuses X's mutation ID and receives X's original receipt. Fail trailing read.
+  // Step 3: Attach announcement observer, repeat the same UI move, verify it reuses X's mutation ID and receives X's original receipt
+  await page.evaluate(() => {
+    (window as any).__announcements = [];
+    const el = document.querySelector('[aria-live="polite"]');
+    if (el) {
+      const observer = new MutationObserver(() => {
+        if (el.textContent) {
+          (window as any).__announcements.push(el.textContent);
+        }
+      });
+      observer.observe(el, { childList: true, characterData: true, subtree: true });
+    }
+  });
+
   failTrailingRefresh = true;
-  await rowA.getByRole("button", { name: "Move Retry A down" }).click();
+  const retryClickPromise = rowA.getByRole("button", { name: "Move Retry A down" }).click();
+
+  // Release receipt response delivery barrier
+  releaseRetryReceipt();
+  await retryClickPromise;
 
   expect(patchCount).toBe(2);
   expect(secondPatchMutationId).toBe(firstPatchMutationId);
 
-  // Step 4: DB must still be Y.
-  const dbCheck = await (await page.request.get("/api/habits")).json();
-  expect(dbCheck.map((h: { id: string }) => h.id)).toEqual([habitC.id, habitB.id, habitA.id]);
-
-  // UI must NOT publish X's historical order [B, A, C] or announce its old position as current.
-  // It must retain O with latest-state-unavailable / read-retry feedback.
-  const announcer = page.locator('[aria-live="polite"]');
-  await expect(announcer).not.toHaveText(/Moved "Retry A" to position 2 of 3/);
-  await expect(rows.nth(0)).toHaveAttribute("data-habit", habitA.id);
-  await expect(rows.nth(1)).toHaveAttribute("data-habit", habitB.id);
-  await expect(rows.nth(2)).toHaveAttribute("data-habit", habitC.id);
-
-  const toast = page.locator(".app-error-toast");
+  // Step 4: Wait for distinctive saved-but-refresh-failed toast indicating receipt delivery and failed refresh settlement
   await expect(toast).toBeVisible();
   await expect(toast).toContainText("Your change was saved, but Dayflow could not refresh the latest view");
   const retryBtn = toast.getByRole("button", { name: "Retry refresh" });
   await expect(retryBtn).toBeVisible();
+
+  // AFTER settlement: assert UI order remains initial O = [A, B, C]
+  await expect(rows.nth(0)).toHaveAttribute("data-habit", habitA.id);
+  await expect(rows.nth(1)).toHaveAttribute("data-habit", habitB.id);
+  await expect(rows.nth(2)).toHaveAttribute("data-habit", habitC.id);
+
+  // Observe announcement history: verify no historical position was announced during retry
+  const recordedAnnouncements = await page.evaluate(() => (window as any).__announcements as string[]);
+  expect(recordedAnnouncements.some((msg) => msg.includes('Moved "Retry A" to position 2 of 3'))).toBe(false);
+
+  // DB must still be Y
+  const dbCheck = await (await page.request.get("/api/habits")).json();
+  expect(dbCheck.map((h: { id: string }) => h.id)).toEqual([habitC.id, habitB.id, habitA.id]);
 
   // Step 5: Allow READ-only Retry refresh; UI must then show Y, with zero reorder requests from retry button.
   failTrailingRefresh = false;

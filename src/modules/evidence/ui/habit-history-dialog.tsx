@@ -1,6 +1,6 @@
 "use client";
 
-import { type RefObject, useEffect, useMemo, useRef } from "react";
+import { type RefObject, useCallback, useEffect, useMemo, useRef } from "react";
 import { useModalFocusTrap } from "@/components/use-modal-focus-trap";
 import {
   computeDayState,
@@ -140,6 +140,106 @@ export function HabitHistoryDialog({ history, openerRef }: HabitHistoryDialogPro
     prevEditingHabitIdRef.current = editingHabitId;
   }, [editingHabitId]);
 
+  const dateBarRef = useRef<HTMLDivElement | null>(null);
+
+  const scrollSelectedDateIntoView = useCallback(() => {
+    const bar = dateBarRef.current;
+    if (!bar) return false;
+    const selectedBtn = bar.querySelector<HTMLButtonElement>(
+      ".habit-history-date-btn--selected"
+    );
+    if (!selectedBtn) return false;
+
+    const barRect = bar.getBoundingClientRect();
+    const btnRect = selectedBtn.getBoundingClientRect();
+    const PADDING = 4;
+
+    const isFullyContained =
+      btnRect.left >= barRect.left + PADDING &&
+      btnRect.right <= barRect.right - PADDING;
+
+    if (!isFullyContained) {
+      if (btnRect.left < barRect.left + PADDING) {
+        bar.scrollLeft -= (barRect.left + PADDING - btnRect.left);
+      } else if (btnRect.right > barRect.right - PADDING) {
+        bar.scrollLeft += (btnRect.right - (barRect.right - PADDING));
+      }
+    }
+    return true;
+  }, []);
+
+  const hasRevealedForOpenRef = useRef(false);
+  const prevSelectedDateRef = useRef<string | null>(null);
+  const prevBarWidthRef = useRef<number>(0);
+
+  useEffect(() => {
+    if (!isOpen) {
+      hasRevealedForOpenRef.current = false;
+      prevSelectedDateRef.current = null;
+      prevBarWidthRef.current = 0;
+      return;
+    }
+
+    const isNewSelection =
+      prevSelectedDateRef.current !== null &&
+      prevSelectedDateRef.current !== selectedDate;
+    const needsReveal = !hasRevealedForOpenRef.current || isNewSelection;
+
+    if (!needsReveal) return;
+
+    prevSelectedDateRef.current = selectedDate;
+
+    const frameId = window.requestAnimationFrame(() => {
+      const handled = scrollSelectedDateIntoView();
+      if (handled) {
+        hasRevealedForOpenRef.current = true;
+        if (dateBarRef.current) {
+          prevBarWidthRef.current = dateBarRef.current.clientWidth;
+        }
+      }
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [isOpen, selectedDate, dates, scrollSelectedDateIntoView]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const bar = dateBarRef.current;
+    if (!bar) return;
+
+    const checkResize = () => {
+      const currentWidth = bar.clientWidth;
+      if (prevBarWidthRef.current > 0 && Math.abs(currentWidth - prevBarWidthRef.current) > 1) {
+        prevBarWidthRef.current = currentWidth;
+        scrollSelectedDateIntoView();
+      } else {
+        prevBarWidthRef.current = currentWidth;
+      }
+    };
+
+    let resizeObserver: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined") {
+      resizeObserver = new ResizeObserver(() => {
+        checkResize();
+      });
+      resizeObserver.observe(bar);
+    }
+
+    const onWindowResize = () => {
+      checkResize();
+    };
+    window.addEventListener("resize", onWindowResize);
+
+    return () => {
+      if (resizeObserver) {
+        resizeObserver.disconnect();
+      }
+      window.removeEventListener("resize", onWindowResize);
+    };
+  }, [isOpen, scrollSelectedDateIntoView]);
+
   const isAnySaving = useMemo(() => {
     if (!pendingMutations) return false;
     for (const pending of pendingMutations.values()) {
@@ -264,6 +364,7 @@ export function HabitHistoryDialog({ history, openerRef }: HabitHistoryDialogPro
         )}
 
         <div
+          ref={dateBarRef}
           className="habit-history-date-bar"
           role="region"
           aria-label="Select history date"

@@ -1158,4 +1158,149 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
     expect(putCount).toBe(0);
     expect(getCount).toBeGreaterThanOrEqual(1);
   });
+
+  test("Mobile layout: selected date is visible on fresh open and reopen, reveal on select and resize, compact checkbox", async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 667 });
+    await openToday(page);
+    await createHabit(page, "Daily reading");
+
+    const historyOpener = page.getByRole("button", { name: "History" });
+    await historyOpener.click();
+    const dialog = page.getByRole("dialog", { name: "Habit history" });
+    await expect(dialog).toBeVisible();
+    const initialScrollY = await page.evaluate(() => window.scrollY);
+
+    // 1. Dialog fits within viewport without right-edge overflow
+    const dialogBox = await dialog.boundingBox();
+    expect(dialogBox).not.toBeNull();
+    expect(dialogBox!.x + dialogBox!.width).toBeLessThanOrEqual(375);
+    expect(dialogBox!.x).toBeGreaterThanOrEqual(0);
+
+    // Close button fits inside the dialog
+    const closeBtn = dialog.getByRole("button", { name: "Close habit history" });
+    await expect(closeBtn).toBeVisible();
+    const closeBox = await closeBtn.boundingBox();
+    expect(closeBox!.x + closeBox!.width).toBeLessThanOrEqual(dialogBox!.x + dialogBox!.width);
+
+    // 2. Fresh open: Today button is selected and fully contained within date strip
+    const dateBar = dialog.locator(".habit-history-date-bar");
+    await expect(dateBar).toBeVisible();
+    const todayBtn = dateBar.locator(".habit-history-date-btn--selected");
+    await expect(todayBtn).toBeVisible();
+    await expect(todayBtn).toHaveAttribute("aria-pressed", "true");
+    await expect(todayBtn).toContainText("Today");
+
+    const isTodayContained = await dateBar.evaluate((bar) => {
+      const btn = bar.querySelector(".habit-history-date-btn--selected");
+      if (!btn) return false;
+      const barRect = bar.getBoundingClientRect();
+      const btnRect = btn.getBoundingClientRect();
+      return btnRect.left >= barRect.left - 1 && btnRect.right <= barRect.right + 1;
+    });
+    expect(isTodayContained).toBe(true);
+
+    // 3. Compact checkbox: explicit dimensions, no 40px height inheritance
+    const checkbox = dialog.locator(".habit-history-archived-toggle input[type='checkbox']");
+    const cbBox = await checkbox.boundingBox();
+    expect(cbBox).not.toBeNull();
+    expect(cbBox!.height).toBeLessThanOrEqual(20);
+    expect(cbBox!.width).toBeLessThanOrEqual(20);
+
+    // 4. Selecting an earlier date reveals it inside the date strip
+    const firstDateBtn = dateBar.locator(".habit-history-date-btn").first();
+    await firstDateBtn.click();
+    await expect(firstDateBtn).toHaveAttribute("aria-pressed", "true");
+
+    const isFirstContained = await dateBar.evaluate((bar) => {
+      const btn = bar.querySelector(".habit-history-date-btn--selected");
+      if (!btn) return false;
+      const barRect = bar.getBoundingClientRect();
+      const btnRect = btn.getBoundingClientRect();
+      return btnRect.left >= barRect.left - 1 && btnRect.right <= barRect.right + 1;
+    });
+    expect(isFirstContained).toBe(true);
+
+    // 5. Clean close and reopen: persisted selected date is restored and visible
+    await page.keyboard.press("Escape");
+    await expect(dialog).not.toBeVisible();
+
+    await historyOpener.click();
+    await expect(dialog).toBeVisible();
+
+    const isReopenedContained = await dateBar.evaluate((bar) => {
+      const btn = bar.querySelector(".habit-history-date-btn--selected");
+      if (!btn) return false;
+      const barRect = bar.getBoundingClientRect();
+      const btnRect = btn.getBoundingClientRect();
+      return btnRect.left >= barRect.left - 1 && btnRect.right <= barRect.right + 1;
+    });
+    expect(isReopenedContained).toBe(true);
+
+    // 6. Viewport resize to 320px keeps selection visible and dialog contained
+    await page.setViewportSize({ width: 320, height: 568 });
+    await page.waitForTimeout(100);
+
+    const dialogBox320 = await dialog.boundingBox();
+    expect(dialogBox320!.x + dialogBox320!.width).toBeLessThanOrEqual(320);
+
+    const isResizedContained = await dateBar.evaluate((bar) => {
+      const btn = bar.querySelector(".habit-history-date-btn--selected");
+      if (!btn) return false;
+      const barRect = bar.getBoundingClientRect();
+      const btnRect = btn.getBoundingClientRect();
+      return btnRect.left >= barRect.left - 1 && btnRect.right <= barRect.right + 1;
+    });
+    expect(isResizedContained).toBe(true);
+
+    // 7. Scroll isolation: intentional manual scroll is preserved during draft edits and toggling
+    await page.setViewportSize({ width: 375, height: 667 });
+    await page.waitForTimeout(100);
+
+    // Select Today again to ensure it is at the end of the strip
+    const todayDateBtn = dateBar.locator(".habit-history-date-btn").last();
+    await todayDateBtn.click();
+    await expect(todayDateBtn).toHaveAttribute("aria-pressed", "true");
+    await page.waitForTimeout(50);
+
+    // Manually scroll date bar to start (scrollLeft = 0) so Today is clipped offscreen to the right
+    await dateBar.evaluate((bar) => { bar.scrollLeft = 0; });
+    const isTodayContainedAfterManualScroll = await dateBar.evaluate((bar) => {
+      const btn = bar.querySelector(".habit-history-date-btn--selected");
+      if (!btn) return false;
+      const barRect = bar.getBoundingClientRect();
+      const btnRect = btn.getBoundingClientRect();
+      return btnRect.left >= barRect.left - 1 && btnRect.right <= barRect.right + 1;
+    });
+    expect(isTodayContainedAfterManualScroll).toBe(false);
+
+    // Draft edit: typing into note input must not snap manual scroll back to selection
+    await dialog.getByRole("button", { name: /Record/ }).first().click();
+    const noteInput = dialog.getByRole("textbox", { name: "Note (optional)" });
+    await expect(noteInput).toBeVisible();
+    await noteInput.fill("Preserving manual scroll");
+
+    const scrollLeftAfterDraft = await dateBar.evaluate((bar) => bar.scrollLeft);
+    expect(scrollLeftAfterDraft).toBe(0);
+
+    // Toggle "Show archived": must not snap manual scroll back to selection
+    await checkbox.click();
+    const scrollLeftAfterToggle = await dateBar.evaluate((bar) => bar.scrollLeft);
+    expect(scrollLeftAfterToggle).toBe(0);
+
+    // Document and list scroll positions remain isolated (no scrollIntoView leak)
+    const docScrollY = await page.evaluate(() => window.scrollY);
+    expect(docScrollY).toBe(initialScrollY);
+    const listScrollTop = await dialog.locator(".habit-history-list").evaluate((el) => el.scrollTop);
+    expect(listScrollTop).toBe(0);
+
+    // 8. Desktop 1280px: dialog is centered with 680px width, all 8 dates fit without horizontal scroll
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.waitForTimeout(100);
+
+    const dialogBox1280 = await dialog.boundingBox();
+    expect(dialogBox1280).not.toBeNull();
+    expect(Math.round(dialogBox1280!.width)).toBe(680);
+    expect(dialogBox1280!.x).toBeGreaterThanOrEqual(250);
+  });
 });
+

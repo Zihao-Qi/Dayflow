@@ -30,6 +30,7 @@ export type CheckInAttempt = {
 };
 
 type RowGuard = { startedAt: number; row: HabitHistoryCheckIn };
+type RecordRead = { startedAt: number; row: HabitHistoryCheckIn | null };
 
 export type HistorySession = {
   selectedDate: string;
@@ -43,6 +44,12 @@ export type HistorySession = {
   pending: Map<string, PendingIntention>;
   holds: Set<string>;
   guards: Map<string, RowGuard>;
+  recordReads: Map<string, RecordRead>;
+  intentionStart: Map<string, number>;
+  /** Set when a replay was acknowledged and must not be painted until a later read. */
+  receiptAwaitingRead: boolean;
+  /** startedAt of the read that last owned the eight-day window fields. */
+  windowAsOf: number;
   issue: number;
   readGeneration: number;
   latestAppliedReadStart: number;
@@ -59,6 +66,10 @@ export const RECONCILE_MISMATCH_MESSAGE =
   "This date does not match the saved attempt. The attempt is still unconfirmed.";
 export const REFRESH_FAILURE_MESSAGE =
   "History could not be refreshed. Confirmed check-ins already on screen stay put.";
+export const ACKNOWLEDGED_REFRESH_MESSAGE =
+  "The save was acknowledged. The on-screen record stays until a current read finishes.";
+export const ACKNOWLEDGED_REFRESH_FAILURE =
+  "The save was acknowledged, but the current record could not be refreshed. The on-screen record was left in place.";
 export const SAVED_ANNOUNCEMENT = "Saved check-in.";
 export const MATCHED_ANNOUNCEMENT = "Saved check-in is the current record.";
 
@@ -75,6 +86,10 @@ export function createHistorySession(selectedDate = ""): HistorySession {
     pending: new Map(),
     holds: new Set(),
     guards: new Map(),
+    recordReads: new Map(),
+    intentionStart: new Map(),
+    receiptAwaitingRead: false,
+    windowAsOf: 0,
     issue: 0,
     readGeneration: 0,
     latestAppliedReadStart: 0
@@ -295,21 +310,29 @@ export function beginHistoryLoad(session: HistorySession) {
 }
 
 function overlayGuards(session: HistorySession, checkIns: HabitHistoryCheckIn[], readStartedAt: number) {
-  let next = checkIns.slice();
+  const owned = new Map<string, { startedAt: number; row: HabitHistoryCheckIn | null }>();
   for (const [key, guard] of session.guards) {
-    if (guard.startedAt <= readStartedAt) continue;
+    if (guard.startedAt > readStartedAt) owned.set(key, guard);
+  }
+  for (const [key, read] of session.recordReads) {
+    if (read.startedAt <= readStartedAt) continue;
+    const current = owned.get(key);
+    if (!current || read.startedAt > current.startedAt) owned.set(key, read);
+  }
+  let next = checkIns.slice();
+  for (const [key, item] of owned) {
     const parsed = readHistoryRecordKey(key);
     if (!parsed) continue;
     next = next.filter((row) => !(row.habitId === parsed.habitId && row.day === parsed.date));
-    next.push(guard.row);
+    if (item.row) next.push(item.row);
   }
   return next;
 }
 
-function pruneGuards(guards: Map<string, RowGuard>, readStartedAt: number) {
-  const next = new Map(guards);
-  for (const [key, guard] of guards) {
-    if (guard.startedAt <= readStartedAt) next.delete(key);
+function pruneStarted<T extends { startedAt: number }>(rows: Map<string, T>, readStartedAt: number) {
+  const next = new Map(rows);
+  for (const [key, row] of rows) {
+    if (row.startedAt <= readStartedAt) next.delete(key);
   }
   return next;
 }
@@ -328,25 +351,39 @@ export function settleHistoryLoad(
       session: {
         ...session,
         loading: false,
+        receiptAwaitingRead: false,
         loadError: refreshing ? session.loadError : outcome.message,
-        refreshError: refreshing ? REFRESH_FAILURE_MESSAGE : session.refreshError
+        refreshError: refreshing
+          ? (session.receiptAwaitingRead ? ACKNOWLEDGED_REFRESH_FAILURE : REFRESH_FAILURE_MESSAGE)
+          : session.refreshError
       }
     };
   }
-  const history = {
+  let history = {
     ...outcome.data,
     checkIns: overlayGuards(session, outcome.data.checkIns, startedAt)
   };
+  if (session.windowAsOf > startedAt && session.history) {
+    history = {
+      ...history,
+      todayKey: session.history.todayKey,
+      earliestDate: session.history.earliestDate,
+      latestDate: session.history.latestDate
+    };
+  }
   return {
     applied: true as const,
     session: {
       ...session,
       history,
-      guards: pruneGuards(session.guards, startedAt),
+      guards: pruneStarted(session.guards, startedAt),
+      recordReads: pruneStarted(session.recordReads, startedAt),
       selectedDate: session.selectedDate || outcome.data.todayKey,
       loading: false,
       loadError: null,
       refreshError: null,
+      receiptAwaitingRead: false,
+      windowAsOf: Math.max(session.windowAsOf, startedAt),
       latestAppliedReadStart: Math.max(session.latestAppliedReadStart, startedAt)
     }
   };
@@ -387,9 +424,11 @@ export function beginCheckInSave(
   pending.set(key, { mutationId, fingerprint, isUncertain: retained, isSaving: true });
   const holds = new Set(session.holds);
   if (retained) holds.add(key);
+  const intentionStart = new Map(session.intentionStart);
+  intentionStart.set(key, next.startedAt);
   return {
     ok: true as const,
-    session: { ...next.session, pending, holds },
+    session: { ...next.session, pending, holds, intentionStart },
     body: parsed.body,
     mutationId,
     fingerprint,
@@ -403,6 +442,8 @@ function dropResolved(session: HistorySession, key: string, habitId: string, dat
   pending.delete(key);
   const holds = new Set(session.holds);
   holds.delete(key);
+  const intentionStart = new Map(session.intentionStart);
+  intentionStart.delete(key);
   const drafts = new Map(session.drafts);
   const stored = drafts.get(key);
   if (!stored || attemptFingerprint(draftBodyOrStored(date, stored)) === session.pending.get(key)?.fingerprint) {
@@ -410,7 +451,7 @@ function dropResolved(session: HistorySession, key: string, habitId: string, dat
   }
   const editingHabitId =
     session.editingHabitId === habitId && session.selectedDate === date ? null : session.editingHabitId;
-  return withoutError({ ...session, pending, holds, drafts, editingHabitId }, key);
+  return withoutError({ ...session, pending, holds, drafts, editingHabitId, intentionStart }, key);
 }
 
 function draftBodyOrStored(date: string, draft: HabitHistoryDraft): CheckInAttempt {
@@ -466,7 +507,19 @@ export function settleCheckInSave(
     habitId: input.habitId,
     day: input.date
   };
-  const newerRead = session.latestAppliedReadStart > input.startedAt;
+  // A retained retry's success is the original receipt, not proof of what is current now.
+  if (pending.isUncertain || session.holds.has(key)) {
+    return {
+      session: { ...dropResolved(session, key, input.habitId, input.date), receiptAwaitingRead: true },
+      shellRefresh: true,
+      refreshHistory: true,
+      announcement: ACKNOWLEDGED_REFRESH_MESSAGE,
+      result: { ok: true as const }
+    };
+  }
+  const recordRead = session.recordReads.get(key);
+  const newerRead = session.latestAppliedReadStart > input.startedAt ||
+    (recordRead !== undefined && recordRead.startedAt > input.startedAt);
   if (newerRead) {
     const current = findCheckIn(session.history, input.habitId, input.date);
     if (attempt && evidenceMatchesAttempt(current, attempt, input.habitId)) {
@@ -512,6 +565,42 @@ export function beginReconcile(session: HistorySession) {
   return tick(session);
 }
 
+function readOwnsRecord(session: HistorySession, key: string, startedAt: number) {
+  const guard = session.guards.get(key);
+  const prior = session.recordReads.get(key);
+  return (guard !== undefined && guard.startedAt > startedAt) ||
+    (prior !== undefined && prior.startedAt > startedAt) ||
+    session.latestAppliedReadStart > startedAt;
+}
+
+function applyExactRead(
+  session: HistorySession,
+  key: string,
+  habitId: string,
+  date: string,
+  startedAt: number,
+  result: HabitCheckInReconciliation
+) {
+  if (readOwnsRecord(session, key, startedAt)) return session;
+  const recordReads = new Map(session.recordReads);
+  recordReads.set(key, { startedAt, row: result.checkIn });
+  let history = session.history;
+  let windowAsOf = session.windowAsOf;
+  if (history) {
+    if (startedAt > session.windowAsOf) {
+      history = {
+        ...history,
+        todayKey: result.todayKey,
+        earliestDate: result.earliestDate,
+        latestDate: result.latestDate
+      };
+      windowAsOf = startedAt;
+    }
+    history = replaceCheckIn(history, habitId, date, result.checkIn);
+  }
+  return { ...session, history, recordReads, windowAsOf };
+}
+
 export function settleReconcile(
   session: HistorySession,
   input: {
@@ -522,58 +611,38 @@ export function settleReconcile(
   }
 ) {
   const key = historyRecordKey(input.habitId, input.date);
+  const pending = session.pending.get(key);
+  const intentionAt = session.intentionStart.get(key);
+  const olderThanIntention = pending !== undefined && intentionAt !== undefined && input.startedAt < intentionAt;
+  const untouched = { session, shellRefresh: false, announcement: null as string | null };
   if (!input.outcome.ok) {
+    if (olderThanIntention || pending?.isSaving || readOwnsRecord(session, key, input.startedAt)) {
+      return untouched;
+    }
     return {
       session: withError(session, key, { message: input.outcome.message }),
-      shellRefresh: false,
-      announcement: null as string | null
-    };
-  }
-  const pending = session.pending.get(key);
-  const attempt = pending ? parseAttempt(pending.fingerprint) : null;
-  const guard = session.guards.get(key);
-  const blocked = (guard !== undefined && guard.startedAt > input.startedAt) ||
-    session.latestAppliedReadStart > input.startedAt;
-  const matches = attempt ? evidenceMatchesAttempt(input.outcome.result.checkIn, attempt, input.habitId) : false;
-  if (blocked) {
-    const current = findCheckIn(session.history, input.habitId, input.date);
-    if (pending && attempt && evidenceMatchesAttempt(current, attempt, input.habitId)) {
-      return {
-        session: dropResolved(session, key, input.habitId, input.date),
-        shellRefresh: true,
-        announcement: MATCHED_ANNOUNCEMENT
-      };
-    }
-    if (!pending) return { session, shellRefresh: false, announcement: null };
-    return {
-      session: withError(
-        {
-          ...session,
-          pending: new Map(session.pending).set(key, { ...pending, isSaving: false, isUncertain: true }),
-          holds: new Set(session.holds).add(key)
-        },
-        key,
-        { message: RECONCILE_MISMATCH_MESSAGE }
-      ),
       shellRefresh: false,
       announcement: null
     };
   }
-  let history = session.history;
-  if (history) {
-    history = {
-      ...history,
-      todayKey: input.outcome.result.todayKey,
-      earliestDate: input.outcome.result.earliestDate,
-      latestDate: input.outcome.result.latestDate
-    };
-    history = replaceCheckIn(history, input.habitId, input.date, input.outcome.result.checkIn);
-  }
+  if (olderThanIntention) return untouched;
+  const next = applyExactRead(
+    session,
+    key,
+    input.habitId,
+    input.date,
+    input.startedAt,
+    input.outcome.result
+  );
+  if (next === session) return untouched;
+  if (pending?.isSaving) return { session: next, shellRefresh: false, announcement: null };
+  const attempt = pending ? parseAttempt(pending.fingerprint) : null;
+  const matches = attempt
+    ? evidenceMatchesAttempt(input.outcome.result.checkIn, attempt, input.habitId)
+    : false;
   if (pending && matches && input.outcome.result.checkIn) {
-    const guards = new Map(session.guards);
-    guards.set(key, { startedAt: input.startedAt, row: input.outcome.result.checkIn });
     return {
-      session: dropResolved({ ...session, history, guards }, key, input.habitId, input.date),
+      session: dropResolved(next, key, input.habitId, input.date),
       shellRefresh: true,
       announcement: MATCHED_ANNOUNCEMENT
     };
@@ -582,10 +651,9 @@ export function settleReconcile(
     return {
       session: withError(
         {
-          ...session,
-          history,
-          pending: new Map(session.pending).set(key, { ...pending, isSaving: false, isUncertain: true }),
-          holds: new Set(session.holds).add(key)
+          ...next,
+          pending: new Map(next.pending).set(key, { ...pending, isSaving: false, isUncertain: true }),
+          holds: new Set(next.holds).add(key)
         },
         key,
         { message: RECONCILE_MISMATCH_MESSAGE }
@@ -594,5 +662,5 @@ export function settleReconcile(
       announcement: null
     };
   }
-  return { session: { ...session, history }, shellRefresh: false, announcement: null };
+  return { session: next, shellRefresh: false, announcement: null };
 }

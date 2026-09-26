@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { HabitHistoryCheckIn, HabitHistoryPayload } from "../../src/modules/evidence/ui/history-api";
 import {
+  ACKNOWLEDGED_REFRESH_FAILURE,
   beginCheckInSave,
   beginHistoryLoad,
   beginReconcile,
@@ -414,4 +415,184 @@ test("one in-flight save blocks the surface, and foreground refresh follows open
   assert.equal(historyForegroundRefresh(true, "hidden"), false);
   assert.equal(historyDayRefresh("2026-09-26", "2026-09-27"), true);
   assert.equal(historyDayRefresh(undefined, "2026-09-27"), false);
+});
+
+test("a same-id retry does not project its original receipt over a read that preceded the retry", () => {
+  let session = withHistory(today, [row(today, "initial")]);
+  const first = beginCheckInSave(session, {
+    habitId,
+    date: today,
+    draft: doneDraft({ note: "original" }),
+    createId: () => "m"
+  });
+  assert.equal(first.ok, true);
+  if (!first.ok) return;
+  session = settleCheckInSave(first.session, {
+    habitId,
+    date: today,
+    mutationId: first.mutationId,
+    startedAt: first.startedAt,
+    outcome: { type: "failure", message: "lost" }
+  }).session;
+  const load = beginHistoryLoad(session);
+  session = settleHistoryLoad(load.session, load.generation, load.startedAt, {
+    ok: true,
+    data: history([row(today, "newer current fact")])
+  }).session;
+  const retry = beginCheckInSave(session, {
+    habitId,
+    date: today,
+    draft: doneDraft({ note: "original" }),
+    createId: () => "wrong-new-id"
+  });
+  assert.equal(retry.ok, true);
+  if (!retry.ok) return;
+  assert.equal(retry.mutationId, "m");
+  const replay = settleCheckInSave(retry.session, {
+    habitId,
+    date: today,
+    mutationId: retry.mutationId,
+    startedAt: retry.startedAt,
+    outcome: { type: "success", checkIn: row(today, "original") }
+  });
+  assert.equal(replay.session.history?.checkIns[0]?.note, "newer current fact", "retry receipt does not replace read predating retry");
+  assert.equal(replay.shellRefresh, true, "shell confirmation is separate from the on-screen record");
+  assert.notEqual(replay.announcement, "Saved check-in.");
+  const refresh = beginHistoryLoad(replay.session);
+  const failed = settleHistoryLoad(refresh.session, refresh.generation, refresh.startedAt, {
+    ok: false,
+    message: "down"
+  });
+  assert.equal(failed.session.history?.checkIns[0]?.note, "newer current fact");
+  assert.equal(failed.session.refreshError, ACKNOWLEDGED_REFRESH_FAILURE, "acknowledged save stays unrefreshed without another receipt");
+});
+
+test("an older exact-date read cannot replace a newer one, and a history list cannot either", () => {
+  let session = withHistory(today, [row(today, "initial")]);
+  const older = beginReconcile(session);
+  const newer = beginReconcile(older.session);
+  session = settleReconcile(newer.session, {
+    habitId,
+    date: today,
+    startedAt: newer.startedAt,
+    outcome: {
+      ok: true,
+      result: {
+        todayKey: today,
+        earliestDate: earliest,
+        latestDate: today,
+        habitId,
+        date: today,
+        checkIn: row(today, "newer")
+      }
+    }
+  }).session;
+  session = settleReconcile(session, {
+    habitId,
+    date: today,
+    startedAt: older.startedAt,
+    outcome: {
+      ok: true,
+      result: {
+        todayKey: today,
+        earliestDate: earliest,
+        latestDate: today,
+        habitId,
+        date: today,
+        checkIn: row(today, "older")
+      }
+    }
+  }).session;
+  assert.equal(session.history?.checkIns[0]?.note, "newer", "older reconcile cannot replace newer reconcile");
+  const earlyList = beginHistoryLoad(withHistory(today, [row(today, "initial")]));
+  const exact = beginReconcile(earlyList.session);
+  const exactSession = settleReconcile(exact.session, {
+    habitId,
+    date: today,
+    startedAt: exact.startedAt,
+    outcome: {
+      ok: true,
+      result: {
+        todayKey: today,
+        earliestDate: earliest,
+        latestDate: today,
+        habitId,
+        date: today,
+        checkIn: row(today, "exact")
+      }
+    }
+  }).session;
+  const lateList = settleHistoryLoad(exactSession, earlyList.generation, earlyList.startedAt, {
+    ok: true,
+    data: history([row(today, "list-old")])
+  });
+  assert.equal(
+    lateList.session.history?.checkIns.find((item) => item.day === today)?.note,
+    "exact",
+    "history list started before an exact-date read cannot replace it"
+  );
+  const after = beginHistoryLoad(lateList.session);
+  const replaced = settleHistoryLoad(after.session, after.generation, after.startedAt, {
+    ok: true,
+    data: history([row(today, "list-new")])
+  });
+  assert.equal(replaced.session.history?.checkIns[0]?.note, "list-new", "a later history list owns the row");
+});
+
+test("a reconcile that started before a save cannot unlock or resolve that save", () => {
+  let session = withHistory(today, [row(today, "initial", 1)]);
+  const read = beginReconcile(session);
+  const save = beginCheckInSave(read.session, {
+    habitId,
+    date: today,
+    draft: doneDraft(),
+    createId: () => "m2"
+  });
+  assert.equal(save.ok, true);
+  if (!save.ok) return;
+  const key = historyRecordKey(habitId, today);
+  const missing = settleReconcile(save.session, {
+    habitId,
+    date: today,
+    startedAt: read.startedAt,
+    outcome: {
+      ok: true,
+      result: {
+        todayKey: today,
+        earliestDate: earliest,
+        latestDate: today,
+        habitId,
+        date: today,
+        checkIn: null
+      }
+    }
+  });
+  assert.equal(missing.session.pending.get(key)?.isSaving, true, "stale reconcile preserves in-flight save lock");
+  assert.equal(missing.session.history?.checkIns[0]?.note, "initial", "stale reconcile does not clear the in-flight row");
+  const matched = settleReconcile(save.session, {
+    habitId,
+    date: today,
+    startedAt: read.startedAt,
+    outcome: {
+      ok: true,
+      result: {
+        todayKey: today,
+        earliestDate: earliest,
+        latestDate: today,
+        habitId,
+        date: today,
+        checkIn: row(today, "kept")
+      }
+    }
+  });
+  assert.equal(matched.session.pending.get(key)?.mutationId, "m2", "stale matching reconcile does not resolve the in-flight save");
+  assert.equal(matched.session.pending.get(key)?.isSaving, true);
+  const failed = settleReconcile(save.session, {
+    habitId,
+    date: today,
+    startedAt: read.startedAt,
+    outcome: { ok: false, message: "read failed" }
+  });
+  assert.equal(failed.session.pending.get(key)?.isSaving, true, "stale reconcile failure preserves in-flight save lock");
+  assert.equal(failed.session.errors.has(key), false);
 });

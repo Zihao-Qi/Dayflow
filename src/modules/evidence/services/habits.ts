@@ -1,8 +1,10 @@
 import type { Prisma } from "@prisma/client";
 import { AppError } from "@/shared/kernel/errors";
 import { evidenceErrors } from "../domain/activity";
+import type { Calendar } from "@/shared/kernel/calendar";
 import {
   assertHabitReorder,
+  habitHistoryBounds,
   targetForCadence,
   type CheckInMutation,
   type HabitCreateMutation,
@@ -201,4 +203,125 @@ export function readHabitCheckIns(
     where: { habitId, date: { gte: range.start, lt: range.end } },
     orderBy: { date: "asc" }
   });
+}
+
+function compareText(left: string, right: string) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function historyHabit(habit: {
+  id: string;
+  name: string;
+  cadence: "DAILY" | "TIMES_PER_WEEK";
+  targetPerWeek: number;
+  status: "ACTIVE" | "ARCHIVED";
+  sortOrder: number;
+  createdAt: Date;
+  archivedAt: Date | null;
+}, calendar: Calendar) {
+  return {
+    id: habit.id,
+    name: habit.name,
+    cadence: habit.cadence,
+    targetPerWeek: habit.targetPerWeek,
+    status: habit.status,
+    sortOrder: habit.sortOrder,
+    createdAt: habit.createdAt.toISOString(),
+    archivedAt: habit.archivedAt ? habit.archivedAt.toISOString() : null,
+    createdDay: calendar.dayOf(habit.createdAt),
+    archivedDay: habit.archivedAt ? calendar.dayOf(habit.archivedAt) : null
+  };
+}
+
+function historyCheckIn(row: {
+  id: string;
+  habitId: string;
+  date: Date;
+  done: boolean;
+  amount: number | null;
+  note: string | null;
+}, calendar: Calendar) {
+  return {
+    id: row.id,
+    habitId: row.habitId,
+    date: row.date.toISOString(),
+    day: calendar.dayOf(row.date),
+    done: row.done,
+    amount: row.amount,
+    note: row.note
+  };
+}
+
+/**
+ * Every definition, active and archived, plus check-ins inside the eight-day
+ * history window. Both reads share the caller's transaction. No writes.
+ */
+export async function readHabitHistory(
+  tx: Prisma.TransactionClient,
+  now: Date,
+  calendar: Calendar
+) {
+  const bounds = habitHistoryBounds(calendar, now);
+  const [definitions, rows] = await Promise.all([
+    tx.habit.findMany(),
+    tx.habitCheckIn.findMany({
+      where: { date: { gte: bounds.start, lt: bounds.end } }
+    })
+  ]);
+  const active = definitions
+    .filter((habit) => habit.status === "ACTIVE")
+    .sort((left, right) =>
+      left.sortOrder - right.sortOrder ||
+      left.createdAt.getTime() - right.createdAt.getTime() ||
+      compareText(left.id, right.id)
+    );
+  const archived = definitions
+    .filter((habit) => habit.status === "ARCHIVED")
+    .sort((left, right) =>
+      (right.archivedAt?.getTime() ?? Number.NEGATIVE_INFINITY) -
+        (left.archivedAt?.getTime() ?? Number.NEGATIVE_INFINITY) ||
+      right.createdAt.getTime() - left.createdAt.getTime() ||
+      compareText(left.id, right.id)
+    );
+  const checkIns = rows
+    .map((row) => historyCheckIn(row, calendar))
+    .sort((left, right) =>
+      compareText(left.day, right.day) ||
+      compareText(left.habitId, right.habitId) ||
+      compareText(left.id, right.id)
+    );
+  return {
+    todayKey: bounds.todayKey,
+    earliestDate: bounds.earliestDate,
+    latestDate: bounds.latestDate,
+    habits: [...active, ...archived].map((habit) => historyHabit(habit, calendar)),
+    checkIns
+  };
+}
+
+/**
+ * Current evidence for one Habit on one local date, including dates that have
+ * left the writable window. A missing row is null. An unknown Habit is not.
+ */
+export async function readHabitCheckInOnDate(
+  tx: Prisma.TransactionClient,
+  habitId: string,
+  date: Date,
+  now: Date,
+  calendar: Calendar
+) {
+  const habit = await readHabit(tx, habitId);
+  if (!habit) throw new AppError(evidenceErrors.habitNotFound);
+  const row = await tx.habitCheckIn.findUnique({
+    where: { habitId_date: { habitId, date } }
+  });
+  const bounds = habitHistoryBounds(calendar, now);
+  return {
+    todayKey: bounds.todayKey,
+    earliestDate: bounds.earliestDate,
+    latestDate: bounds.latestDate,
+    habitId,
+    date: calendar.dayOf(date),
+    checkIn: row ? historyCheckIn(row, calendar) : null
+  };
 }

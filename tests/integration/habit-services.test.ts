@@ -10,7 +10,9 @@ import {
   createHabit,
   readActiveHabits,
   readCheckIns,
+  readHabitCheckInOnDate,
   readHabitCheckIns,
+  readHabitHistory,
   reorderHabits,
   updateHabit,
   upsertCheckIn
@@ -298,5 +300,81 @@ test("habit services run headlessly on SQLite", async (context) => {
       const afterH = await readActiveHabits(tx);
       assert.deepEqual(afterH.map((item) => item.id), [f.id, g.id, h.id]);
     });
+  });
+});
+
+test("habit history read orders every definition and keeps eight-day evidence", async (context) => {
+  await withDatabase(context, async (prisma) => {
+    const tx = prisma as unknown as Prisma.TransactionClient;
+    const { calendar } = await import("../../src/lib/time");
+    const now = new Date("2026-03-08T15:00:00Z");
+    const { habitHistoryBounds } = await import("../../src/modules/evidence/domain/habit");
+    const bounds = habitHistoryBounds(calendar, now);
+    assert.equal(bounds.todayKey, "2026-03-08");
+    assert.equal(bounds.earliestDate, "2026-03-01", "eight-day window includes today-7");
+    assert.equal(bounds.end.getTime() - bounds.start.getTime(), 191 * 60 * 60 * 1000);
+
+    const low = await createHabit(tx, { name: "Low", cadence: "DAILY", targetPerWeek: 7 });
+    const high = await createHabit(tx, { name: "High", cadence: "DAILY", targetPerWeek: 7 });
+    const tiedCreated = new Date("2026-02-01T15:00:00Z");
+    await prisma.habit.update({ where: { id: low.id }, data: { sortOrder: 1, createdAt: tiedCreated } });
+    await prisma.habit.update({ where: { id: high.id }, data: { sortOrder: 1, createdAt: tiedCreated } });
+    const tied = [low.id, high.id].sort();
+    const later = await createHabit(tx, { name: "Later", cadence: "DAILY", targetPerWeek: 7 });
+    await prisma.habit.update({
+      where: { id: later.id },
+      data: { sortOrder: 4, createdAt: new Date("2026-03-08T15:00:00Z") }
+    });
+
+    const newerArchived = await createHabit(tx, { name: "Newer archived", cadence: "DAILY", targetPerWeek: 7 });
+    const olderArchived = await createHabit(tx, { name: "Older archived", cadence: "DAILY", targetPerWeek: 7 });
+    const silent = await createHabit(tx, { name: "Silent archived", cadence: "DAILY", targetPerWeek: 7 });
+    const sameArchive = new Date("2026-03-05T18:00:00Z");
+    await prisma.habit.update({
+      where: { id: newerArchived.id },
+      data: { status: "ARCHIVED", archivedAt: sameArchive, createdAt: new Date("2026-02-02T15:00:00Z") }
+    });
+    await prisma.habit.update({
+      where: { id: olderArchived.id },
+      data: { status: "ARCHIVED", archivedAt: sameArchive, createdAt: new Date("2026-01-02T15:00:00Z") }
+    });
+    await prisma.habit.update({
+      where: { id: silent.id },
+      data: {
+        status: "ARCHIVED",
+        archivedAt: new Date("2020-01-15T18:00:00Z"),
+        createdAt: new Date("2019-06-01T15:00:00Z")
+      }
+    });
+
+    await upsertCheckIn(tx, later.id, {
+      date: bounds.start,
+      done: false,
+      amount: 0,
+      note: "kept verbatim"
+    });
+    const outside = calendar.startOf(calendar.addDays(bounds.earliestDate, -1));
+    await prisma.habitCheckIn.create({
+      data: { habitId: silent.id, date: outside, done: true, amount: 0, note: "aged note" }
+    });
+
+    const history = await readHabitHistory(tx, now, calendar);
+    const ids = history.habits.map((habit) => habit.id);
+    assert.ok(ids.includes(newerArchived.id), "archived overlapping the window is listed");
+    assert.ok(ids.includes(silent.id), "archived with no overlap or in-window evidence is listed");
+    assert.deepEqual(ids, [...tied, later.id, newerArchived.id, olderArchived.id, silent.id]);
+    assert.equal(history.checkIns.length, 1, "pre-creation evidence stays in the window");
+    assert.equal(history.checkIns[0].day, "2026-03-01");
+    assert.equal(history.checkIns[0].amount, 0, "history keeps amount zero");
+    assert.equal(history.checkIns[0].note, "kept verbatim", "history keeps the stored note");
+    assert.ok(history.checkIns[0].day < history.habits.find((habit) => habit.id === later.id)!.createdDay);
+
+    const expired = await readHabitCheckInOnDate(tx, silent.id, outside, now, calendar);
+    assert.equal(expired.checkIn?.note, "aged note", "expired reconciliation date stays readable");
+    assert.equal(expired.checkIn?.amount, 0);
+    const gap = calendar.startOf(calendar.addDays(bounds.earliestDate, 1));
+    const missing = await readHabitCheckInOnDate(tx, later.id, gap, now, calendar);
+    assert.equal(missing.checkIn, null);
+    assert.equal(missing.date, "2026-03-02");
   });
 });

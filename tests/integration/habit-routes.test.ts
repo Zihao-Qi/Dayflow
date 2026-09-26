@@ -19,6 +19,8 @@ type Routes = {
   patchHabit: typeof import("../../src/app/api/habits/[id]/route").PATCH;
   archiveHabit: typeof import("../../src/app/api/habits/[id]/archive/route").POST;
   recordCheckIn: typeof import("../../src/app/api/habits/[id]/check-in/route").PUT;
+  readHistory: typeof import("../../src/app/api/habits/history/route").GET;
+  readCheckIn: typeof import("../../src/app/api/habits/[id]/check-in/route").GET;
 };
 
 function jsonRequest(path: string, method: string, body?: unknown, mutationId?: string) {
@@ -56,11 +58,12 @@ async function withRoutes(
   ], { cwd: process.cwd(), stdio: "pipe" });
 
   // Load the routes only after the client is pointed at a disposable database.
-  const [habits, habitById, archive, checkIn, { getPrisma }] = await Promise.all([
+  const [habits, habitById, archive, checkIn, history, { getPrisma }] = await Promise.all([
     import("../../src/app/api/habits/route"),
     import("../../src/app/api/habits/[id]/route"),
     import("../../src/app/api/habits/[id]/archive/route"),
     import("../../src/app/api/habits/[id]/check-in/route"),
+    import("../../src/app/api/habits/history/route"),
     import("../../src/lib/prisma")
   ]);
   const prisma = getPrisma();
@@ -73,7 +76,9 @@ async function withRoutes(
       reorderHabits: habits.PATCH,
       patchHabit: habitById.PATCH,
       archiveHabit: archive.POST,
-      recordCheckIn: checkIn.PUT
+      recordCheckIn: checkIn.PUT,
+      readHistory: history.GET,
+      readCheckIn: checkIn.GET
     }
   });
 }
@@ -783,6 +788,132 @@ test("Habit routes", async (context) => {
       );
       assert.equal(crossEndpointConflict.status, 409);
       assert.equal((await crossEndpointConflict.json()).code, "MUTATION_ID_CONFLICT");
+    });
+
+    await context.test("history lists every definition and eight-day check-ins without writing", async () => {
+      await prisma.habitCheckIn.deleteMany();
+      await prisma.habit.deleteMany();
+      await prisma.mutationReceipt.deleteMany();
+
+      const active = await (await routes.createHabit(jsonRequest("/api/habits", "POST", { name: "Active now" }))).json();
+      const archived = await (await routes.createHabit(jsonRequest("/api/habits", "POST", { name: "Long archived" }))).json();
+      const recent = await (await routes.createHabit(jsonRequest("/api/habits", "POST", { name: "Archived this window" }))).json();
+      await routes.archiveHabit(
+        jsonRequest(`/api/habits/${archived.id}/archive`, "POST"),
+        params(archived.id)
+      );
+      await routes.archiveHabit(
+        jsonRequest(`/api/habits/${recent.id}/archive`, "POST"),
+        params(recent.id)
+      );
+      await prisma.habit.update({
+        where: { id: archived.id },
+        data: { archivedAt: new Date("2020-01-15T12:00:00Z"), createdAt: new Date("2019-06-01T12:00:00Z") }
+      });
+      const { calendar } = await import("../../src/lib/time");
+      const todayKey = calendar.dayOf(new Date());
+      const oldest = calendar.addDays(todayKey, -7);
+      const expired = calendar.addDays(todayKey, -30);
+      const missingDay = calendar.addDays(todayKey, -3);
+      const tomorrow = calendar.addDays(todayKey, 1);
+      const oldestInstant = calendar.startOf(oldest);
+      const expiredInstant = calendar.startOf(expired);
+      await prisma.habit.update({
+        where: { id: active.id },
+        data: { createdAt: calendar.startOf(todayKey) }
+      });
+      await prisma.habitCheckIn.create({
+        data: { habitId: active.id, date: oldestInstant, done: false, amount: 0, note: "kept verbatim" }
+      });
+      await prisma.habitCheckIn.create({
+        data: { habitId: archived.id, date: expiredInstant, done: true, amount: 0, note: "aged note" }
+      });
+
+      const receiptsBefore = await prisma.mutationReceipt.count();
+      const habitsBefore = await prisma.habit.count();
+      const checkInsBefore = await prisma.habitCheckIn.count();
+      const historyResponse = await routes.readHistory(
+        new NextRequest("http://localhost/api/habits/history")
+      );
+      assert.equal(historyResponse.status, 200);
+      assert.equal(historyResponse.headers.get("cache-control"), "no-store");
+      const history = await historyResponse.json();
+      assert.equal(history.latestDate, history.todayKey);
+      assert.equal(history.earliestDate, oldest, "eight-day window includes today-7");
+      const habitIds = history.habits.map((habit: { id: string }) => habit.id);
+      assert.ok(habitIds.includes(recent.id), "archived overlapping the window is listed");
+      assert.ok(habitIds.includes(archived.id), "archived with no overlap or in-window evidence is listed");
+      assert.deepEqual(habitIds, [active.id, recent.id, archived.id]);
+      assert.equal(history.habits.find((habit: { id: string }) => habit.id === active.id).createdDay, todayKey);
+      assert.equal(history.checkIns.length, 1, "pre-creation evidence stays in the window");
+      assert.ok(history.checkIns[0].day < history.habits.find((habit: { id: string }) => habit.id === active.id).createdDay);
+      assert.equal(history.checkIns[0].day, oldest);
+      assert.equal(history.checkIns[0].amount, 0, "history keeps amount zero");
+      assert.equal(history.checkIns[0].note, "kept verbatim", "history keeps the stored note");
+      assert.equal(history.checkIns[0].done, false);
+      assert.equal(await prisma.mutationReceipt.count(), receiptsBefore);
+      assert.equal(await prisma.habit.count(), habitsBefore);
+      assert.equal(await prisma.habitCheckIn.count(), checkInsBefore);
+
+      const listed = await (await routes.listHabits()).json();
+      assert.deepEqual(listed.map((habit: { id: string }) => habit.id), [active.id]);
+
+      const widened = await routes.readHistory(
+        new NextRequest(
+          `http://localhost/api/habits/history?earliest=${expired}&latest=${tomorrow}`
+        )
+      );
+      const widenedBody = await widened.json();
+      assert.equal(
+        widenedBody.checkIns.some((row: { day: string }) => row.day === expired),
+        false,
+        "expanded date query must not include an older day"
+      );
+
+      const expiredRead = await routes.readCheckIn(
+        new NextRequest(`http://localhost/api/habits/${archived.id}/check-in?date=${expired}`),
+        params(archived.id)
+      );
+      assert.equal(expiredRead.status, 200, "expired reconciliation date stays readable");
+      assert.equal(expiredRead.headers.get("cache-control"), "no-store");
+      const expiredBody = await expiredRead.json();
+      assert.equal(expiredBody.date, expired);
+      assert.equal(expiredBody.checkIn.note, "aged note");
+      assert.equal(expiredBody.checkIn.amount, 0);
+      assert.notEqual(expiredBody.checkIn, null);
+
+      const missing = await routes.readCheckIn(
+        new NextRequest(`http://localhost/api/habits/${active.id}/check-in?date=${missingDay}`),
+        params(active.id)
+      );
+      assert.equal(missing.status, 200);
+      const missingBody = await missing.json();
+      assert.equal(missingBody.checkIn, null);
+      assert.equal(missingBody.habitId, active.id);
+      assert.equal(missingBody.date, missingDay);
+
+      const unknown = await routes.readCheckIn(
+        new NextRequest(`http://localhost/api/habits/missing-habit/check-in?date=${oldest}`),
+        params("missing-habit")
+      );
+      assert.equal(unknown.status, 404);
+      assert.equal((await unknown.json()).code, "HABIT_NOT_FOUND");
+
+      for (const path of [
+        `/api/habits/${active.id}/check-in`,
+        `/api/habits/${active.id}/check-in?date=`,
+        `/api/habits/${active.id}/check-in?date=yesterday`,
+        `/api/habits/${active.id}/check-in?date=${oldest}&date=${todayKey}`,
+        `/api/habits/${active.id}/check-in?date=${tomorrow}`
+      ]) {
+        const refused = await routes.readCheckIn(new NextRequest(`http://localhost${path}`), params(active.id));
+        assert.equal(refused.status, 400, path);
+        const error = await refused.json();
+        assert.equal(error.code, "VALIDATION_ERROR", path);
+        assert.equal(error.field, "date", path);
+        assert.equal("checkIn" in error, false, path);
+      }
+      assert.equal(await prisma.mutationReceipt.count(), receiptsBefore);
     });
   });
 });

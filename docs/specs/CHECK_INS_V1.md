@@ -337,6 +337,19 @@ The Today page renders a dedicated Habits card (`HabitsCard`), supporting direct
 - **Confirmed-Write & Read-Refresh Feedback**: A confirmed write updates local UI state immediately, but the action stays pending while `useHabitActions` awaits a trailing read-refresh (`refreshAfterConfirmedMutation`). If the trailing refresh fails, the confirmed write is preserved in the card and an announcement or retry toast is presented.
 - **Cross-Midnight Protection**: `HabitsCard` and its rows require a `todayKey: string` property and key each row item by `${habit.id}:${todayKey}`. Day-scoped drafts, errors, and touched flags reset across calendar boundaries, ensuring uncommitted drafts from yesterday cannot leak into the new day's editor.
 
+## Habit History & 8-Day Backfill Dialog (Stage 3 Implementation)
+
+A separate responsive dialog (`HabitHistoryDialog`) provides historical inspection and backfill across the full eight-day backfill window (`today - 7` through `today`):
+
+- **Header Entry Point**: A "History" action button in the `HabitsCard` header launches the dialog. The entry point remains accessible even when the active habit list is empty, allowing historical review and backfill for previously archived commitments.
+- **Date-First 8-Date Bar**: Eight clearly labelled calendar-date buttons spanning the server-authoritative backfill window (`earliestDate` through `latestDate`), with Today selected by default. Switching dates immediately updates the active habit list and evidence for that day.
+- **Active & Archived Discovery**: Active habits appear first (sorted by `sortOrder`, `createdAt`, `id`). A "Show archived" toggle discloses all archived habit definitions (sorted by `archivedAt desc`, `createdAt desc`, `id asc`). An out-of-scope status outside lifetime does not prevent recording explicit evidence within the writable window.
+- **Four Distinct States**: Each habit row indicates its day status: `done` (●), `notDone` (×), `unrecorded` (·), and `outOfScope` (outside lifetime). Existing amounts and notes are displayed as badges/summaries when present.
+- **Inline Editor with Explicit State Choice**: Clicking "Record" or "Edit" opens an inline editor for that habit and date. The user must explicitly select "Done" or "Not done" before saving (Save button disabled while state is unselected). Optional amount (`0..1,000,000`) and note (up to 2,000 characters) inputs are provided. Zero amounts (`amount: 0`) are preserved honestly and not coerced to null.
+- **Keyed Draft Isolation**: Drafts, input touched states, and field validation errors are keyed strictly by `${habitId}:${date}`. Switching dates preserves uncommitted drafts on their originating date without leaking text into another day.
+- **Discard Confirmation & Focus Trap**: The dialog uses `useModalFocusTrap` to trap focus, handles Escape, and restores focus to the History opener button upon exit. If uncommitted drafts exist, closing attempts trigger an accessible discard confirmation (`<section role="alertdialog">`) with "Discard and close" and "Keep editing" choices.
+- **Uncertain Save & Reconcile Protocol**: Network-pending saves are serialized per habit and date. If a save attempt remains uncertain due to connection drop, a stable mutation ID is retained for retry, and a "Check status" action allows reconciling against `GET /api/habits/[id]/check-in?date=YYYY-MM-DD`. Confirmed saves update local history state, trigger shell refresh, and report refresh errors without falsifying write status.
+
 ## Resolved Policy Decisions and Scope
 
 - **v1 Scope Boundaries**: Habit reordering (`sortOrder` manipulation) is implemented atomically via `PATCH /api/habits`. Historical backfill beyond the Today card (e.g. multi-day retro-logging) remains part of the intended v1 feature scope, to be delivered incrementally.

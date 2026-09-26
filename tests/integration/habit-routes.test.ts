@@ -694,6 +694,21 @@ test("Habit routes", async (context) => {
         afterAppendList.map((h: { id: string }) => h.id),
         [expectedSecondId, expectedFirstId, hC.id]
       );
+
+      // Archive gaps: archive first two habits; only hC (sortOrder 2) remains active
+      await prisma.habit.update({ where: { id: expectedSecondId }, data: { status: "ARCHIVED", archivedAt: new Date() } });
+      await prisma.habit.update({ where: { id: expectedFirstId }, data: { status: "ARCHIVED", archivedAt: new Date() } });
+      const hD = await (await routes.createHabit(jsonRequest("/api/habits", "POST", { name: "Appended after archive" }))).json();
+      assert.equal(hD.sortOrder, 3);
+      const afterArchiveList = await (await routes.listHabits()).json();
+      assert.deepEqual(afterArchiveList.map((h: { id: string }) => h.id), [hC.id, hD.id]);
+
+      // Sparse active maximum: update hD to sortOrder 20
+      await prisma.habit.update({ where: { id: hD.id }, data: { sortOrder: 20 } });
+      const hE = await (await routes.createHabit(jsonRequest("/api/habits", "POST", { name: "Appended after sparse" }))).json();
+      assert.equal(hE.sortOrder, 21);
+      const afterSparseList = await (await routes.listHabits()).json();
+      assert.deepEqual(afterSparseList.map((h: { id: string }) => h.id), [hC.id, hD.id, hE.id]);
     });
 
     await context.test("lost response to operation A, intervening operation B, replay A's receipt leaves DB in state B; changed payload yields MUTATION_ID_CONFLICT", async () => {

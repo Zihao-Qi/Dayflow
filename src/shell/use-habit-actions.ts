@@ -306,6 +306,8 @@ export function useHabitActions({
     const capturedTodayKey = data.todayKey;
 
     const payload = { ids: targetIds, expectedIds };
+    const fingerprint = JSON.stringify(payload);
+    const isRetry = reorderMutation.current?.fingerprint === fingerprint;
     const mutationId = mutationIdFor(reorderMutation, payload);
     setReorderPending(true);
 
@@ -313,30 +315,41 @@ export function useHabitActions({
       await reorderHabitsRequest(targetIds, expectedIds, mutationId);
       reorderMutation.current = null;
 
-      setData((current) => {
-        if (!current) return current;
-        if (current.todayKey !== capturedTodayKey) return current;
-        if (current.habits !== capturedHabits) return current;
+      if (!isRetry) {
+        setData((current) => {
+          if (!current) return current;
+          if (current.todayKey !== capturedTodayKey) return current;
+          if (current.habits !== capturedHabits) return current;
 
-        const habitMap = new Map(current.habits.map((h) => [h.id, h]));
-        const updatedHabits = targetIds.map((id, index) => {
-          const item = habitMap.get(id);
-          return item ? { ...item, sortOrder: index } : null;
+          const habitMap = new Map(current.habits.map((h) => [h.id, h]));
+          const updatedHabits = targetIds.map((id, index) => {
+            const item = habitMap.get(id);
+            return item ? { ...item, sortOrder: index } : null;
+          });
+          if (updatedHabits.some((h) => h === null)) return current;
+
+          return {
+            ...current,
+            habits: updatedHabits as HabitSummaryRecord[]
+          };
         });
-        if (updatedHabits.some((h) => h === null)) return current;
 
-        return {
-          ...current,
-          habits: updatedHabits as HabitSummaryRecord[]
-        };
-      });
-
-      setAppError("");
-      setAppAnnouncement(
-        describeHabitMove(moved.name, targetIndex, currentHabits.length)
-      );
-      await refreshAfterConfirmedMutation();
-      return true;
+        setAppError("");
+        setAppAnnouncement(
+          describeHabitMove(moved.name, targetIndex, currentHabits.length)
+        );
+        await refreshAfterConfirmedMutation();
+        return true;
+      } else {
+        // Uncertain retry: a replayed receipt or retried write must not project
+        // historical target order or announce an old position as current. Reconcile via server read.
+        const refreshed = await refreshAfterConfirmedMutation();
+        if (refreshed) {
+          setAppError("");
+          setAppAnnouncement("Saved.");
+        }
+        return refreshed;
+      }
     } catch (error) {
       const message =
         error instanceof ApiError && error.status === 409

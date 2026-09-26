@@ -361,7 +361,7 @@ The Today page renders a dedicated Habits card (`HabitsCard`), supporting direct
 | Historical service retrieval | Habit created after historical Review Window end carrying pre-creation Check-in in window | `readHabitsActiveDuring` selects by lifetime overlap OR Check-in Evidence (either `done` value) dated in `[period.start, period.end)`. |
 | Atomic Habit reorder | `PATCH /api/habits` with `{ ids, expectedIds }` matching active habits | Persists contiguous `sortOrder` 0..N-1 in one transaction; returns `{ ids }`. |
 | Stale reorder conflict | `expectedIds` does not match active list in canonical order (`sortOrder, createdAt, id`) | Refused with status 409 and code `CONFLICT`; zero writes performed. |
-| Append new Habit | Create new Habit when active habits exist | Automatically assigned `sortOrder = count(ACTIVE)` to append after current active list. |
+| Append new Habit | Create new Habit when active habits exist | Automatically assigned sortOrder after maximum active position (`max(sortOrder) + 1`, or `0` if empty) to append after current active list across archive gaps and sparse positions. |
 | Mutation receipt replay | Replay previously committed reorder mutation ID | Replays original response without modifying database; changed payload yields 409 `MUTATION_ID_CONFLICT`. |
 
 ## Non-Goals

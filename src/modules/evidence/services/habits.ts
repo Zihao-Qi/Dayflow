@@ -35,11 +35,16 @@ export async function createHabit(
   tx: Prisma.TransactionClient,
   input: HabitCreateMutation
 ) {
-  const count = await tx.habit.count({ where: { status: "ACTIVE" } });
+  const highest = await tx.habit.findFirst({
+    where: { status: "ACTIVE" },
+    orderBy: { sortOrder: "desc" },
+    select: { sortOrder: true }
+  });
+  const sortOrder = highest !== null ? highest.sortOrder + 1 : 0;
   return tx.habit.create({
     data: {
       ...input,
-      sortOrder: count
+      sortOrder
     }
   });
 }

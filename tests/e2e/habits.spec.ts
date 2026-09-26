@@ -1564,3 +1564,126 @@ test("delayed stale bootstrap arriving after confirmed reorder and check-in cann
   await expect(rows.nth(1)).toHaveAttribute("data-habit", habitA.id);
   await expect(toggleB).toContainText("done today");
 });
+
+test("uncertain reorder retry replaying historical receipt does not project stale order or old announcement", async ({ page }) => {
+  const habitA = await createHabit(page, "Retry A");
+  const habitB = await createHabit(page, "Retry B");
+  const habitC = await createHabit(page, "Retry C");
+
+  await openToday(page);
+  const card = habitsCard(page);
+  const rows = card.locator(".habit-row-item");
+
+  // Step 1: Start at visible O = [A, B, C]
+  await expect(rows.nth(0)).toHaveAttribute("data-habit", habitA.id);
+  await expect(rows.nth(1)).toHaveAttribute("data-habit", habitB.id);
+  await expect(rows.nth(2)).toHaveAttribute("data-habit", habitC.id);
+
+  let patchCount = 0;
+  let firstPatchMutationId = "";
+  let secondPatchMutationId = "";
+  let failTrailingRefresh = false;
+
+  await page.route("**/api/habits", async (route) => {
+    if (route.request().method() === "PATCH") {
+      patchCount++;
+      const mutId = (route.request().headers()["x-dayflow-mutation-id"] as string) ?? "";
+      if (patchCount === 1) {
+        firstPatchMutationId = mutId;
+        // Allow server commit & receipt creation via route.fetch(), then drop the response
+        const serverResp = await route.fetch();
+        expect(serverResp.status()).toBe(200);
+        await route.abort();
+        return;
+      }
+      if (patchCount === 2) {
+        secondPatchMutationId = mutId;
+        // Deliver server response (receipt replay)
+        const serverResp = await route.fetch();
+        await route.fulfill({ response: serverResp });
+        return;
+      }
+    }
+    await route.continue();
+  });
+
+  await page.route("**/api/bootstrap", async (route) => {
+    if (failTrailingRefresh) {
+      await route.fulfill({
+        status: 503,
+        json: { error: "Simulated trailing read failure", code: "INTERNAL_ERROR" }
+      });
+      return;
+    }
+    await route.continue();
+  });
+
+  // Move A down (op X): request commits on server, response is lost
+  const rowA = card.locator(`[data-habit="${habitA.id}"]`);
+  await rowA.getByRole("button", { name: "Move Retry A down" }).click();
+
+  // Verify UI remains O = [A, B, C]
+  await expect(rows.nth(0)).toHaveAttribute("data-habit", habitA.id);
+  await expect(rows.nth(1)).toHaveAttribute("data-habit", habitB.id);
+  await expect(rows.nth(2)).toHaveAttribute("data-habit", habitC.id);
+  expect(firstPatchMutationId).toBeTruthy();
+
+  // Step 2: Through real API make a DIFFERENT reorder Y on server without delivering to page
+  // Server is currently [B, A, C]. Make reorder Y = [C, B, A]
+  const patchY = await page.request.patch("/api/habits", {
+    data: {
+      ids: [habitC.id, habitB.id, habitA.id],
+      expectedIds: [habitB.id, habitA.id, habitC.id]
+    },
+    headers: {
+      "X-Dayflow-Mutation-Id": "server-op-Y-mut"
+    }
+  });
+  expect(patchY.ok()).toBe(true);
+  const listAfterY = await (await page.request.get("/api/habits")).json();
+  expect(listAfterY.map((h: { id: string }) => h.id)).toEqual([habitC.id, habitB.id, habitA.id]);
+
+  // Step 3: Repeat the same UI move, verify it reuses X's mutation ID and receives X's original receipt. Fail trailing read.
+  failTrailingRefresh = true;
+  await rowA.getByRole("button", { name: "Move Retry A down" }).click();
+
+  expect(patchCount).toBe(2);
+  expect(secondPatchMutationId).toBe(firstPatchMutationId);
+
+  // Step 4: DB must still be Y.
+  const dbCheck = await (await page.request.get("/api/habits")).json();
+  expect(dbCheck.map((h: { id: string }) => h.id)).toEqual([habitC.id, habitB.id, habitA.id]);
+
+  // UI must NOT publish X's historical order [B, A, C] or announce its old position as current.
+  // It must retain O with latest-state-unavailable / read-retry feedback.
+  const announcer = page.locator('[aria-live="polite"]');
+  await expect(announcer).not.toHaveText(/Moved "Retry A" to position 2 of 3/);
+  await expect(rows.nth(0)).toHaveAttribute("data-habit", habitA.id);
+  await expect(rows.nth(1)).toHaveAttribute("data-habit", habitB.id);
+  await expect(rows.nth(2)).toHaveAttribute("data-habit", habitC.id);
+
+  const toast = page.locator(".app-error-toast");
+  await expect(toast).toBeVisible();
+  await expect(toast).toContainText("Your change was saved, but Dayflow could not refresh the latest view");
+  const retryBtn = toast.getByRole("button", { name: "Retry refresh" });
+  await expect(retryBtn).toBeVisible();
+
+  // Step 5: Allow READ-only Retry refresh; UI must then show Y, with zero reorder requests from retry button.
+  failTrailingRefresh = false;
+  const retryMethods: string[] = [];
+  page.on("request", (req) => {
+    retryMethods.push(req.method());
+  });
+
+  await retryBtn.click();
+  await expect(toast).toHaveCount(0);
+
+  // UI now shows Y
+  await expect(rows.nth(0)).toHaveAttribute("data-habit", habitC.id);
+  await expect(rows.nth(1)).toHaveAttribute("data-habit", habitB.id);
+  await expect(rows.nth(2)).toHaveAttribute("data-habit", habitA.id);
+
+  // Ensure zero PATCH requests from retry button
+  expect(retryMethods.filter((m) => m === "PATCH").length).toBe(0);
+  expect(retryMethods.includes("GET")).toBe(true);
+});

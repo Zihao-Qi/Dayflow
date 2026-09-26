@@ -1,7 +1,8 @@
 "use client";
 
 import { request } from "@/shared/client/api-client";
-import type { HabitCadenceValue } from "@/modules/evidence/domain/habit";
+import { CHECK_IN_BACKFILL_DAYS, type HabitCadenceValue } from "@/modules/evidence/domain/habit";
+import { addDays, localDateKey, parseLocalDate } from "@/shared/kernel/calendar";
 
 export type HabitHistoryDefinition = {
   id: string;
@@ -50,7 +51,24 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isValidDayKey(value: unknown): value is string {
-  return typeof value === "string" && ISO_DATE_REGEX.test(value);
+  if (typeof value !== "string" || !ISO_DATE_REGEX.test(value)) return false;
+  const parsed = parseLocalDate(value);
+  return parsed !== null && localDateKey(parsed) === value;
+}
+
+/** The history read is exactly today-7..today. A shifted or partial span is not that window. */
+export function isEightDayHistoryWindow(
+  todayKey: string,
+  earliestDate: string,
+  latestDate: string
+): boolean {
+  if (!isValidDayKey(todayKey) || !isValidDayKey(earliestDate) || !isValidDayKey(latestDate)) {
+    return false;
+  }
+  if (latestDate !== todayKey) return false;
+  const earliest = parseLocalDate(earliestDate);
+  if (!earliest) return false;
+  return localDateKey(addDays(earliest, CHECK_IN_BACKFILL_DAYS)) === latestDate;
 }
 
 export function isHabitHistoryDefinition(value: unknown): value is HabitHistoryDefinition {
@@ -86,11 +104,28 @@ export function isHabitHistoryCheckIn(value: unknown): value is HabitHistoryChec
 
 export function isHabitHistoryPayload(value: unknown): value is HabitHistoryPayload {
   if (!isRecord(value)) return false;
-  if (!isValidDayKey(value.todayKey)) return false;
-  if (!isValidDayKey(value.earliestDate)) return false;
-  if (!isValidDayKey(value.latestDate)) return false;
+  const todayKey = value.todayKey;
+  const earliestDate = value.earliestDate;
+  const latestDate = value.latestDate;
+  if (typeof todayKey !== "string" || typeof earliestDate !== "string" || typeof latestDate !== "string") {
+    return false;
+  }
+  if (!isEightDayHistoryWindow(todayKey, earliestDate, latestDate)) return false;
   if (!Array.isArray(value.habits) || !value.habits.every(isHabitHistoryDefinition)) return false;
   if (!Array.isArray(value.checkIns) || !value.checkIns.every(isHabitHistoryCheckIn)) return false;
+  const habitIds = new Set<string>();
+  for (const habit of value.habits) {
+    if (habitIds.has(habit.id)) return false;
+    habitIds.add(habit.id);
+  }
+  const seenRows = new Set<string>();
+  for (const checkIn of value.checkIns) {
+    if (!habitIds.has(checkIn.habitId)) return false;
+    if (checkIn.day < earliestDate || checkIn.day > latestDate) return false;
+    const rowKey = `${checkIn.habitId}:${checkIn.day}`;
+    if (seenRows.has(rowKey)) return false;
+    seenRows.add(rowKey);
+  }
   return true;
 }
 
@@ -99,10 +134,18 @@ export function isHabitCheckInReconciliation(value: unknown): value is HabitChec
   if (!isValidDayKey(value.todayKey)) return false;
   if (!isValidDayKey(value.earliestDate)) return false;
   if (!isValidDayKey(value.latestDate)) return false;
+  const todayKey = value.todayKey;
+  const earliestDate = value.earliestDate;
+  const latestDate = value.latestDate;
+  if (typeof todayKey !== "string" || typeof earliestDate !== "string" || typeof latestDate !== "string") {
+    return false;
+  }
+  if (!isEightDayHistoryWindow(todayKey, earliestDate, latestDate)) return false;
   if (typeof value.habitId !== "string" || !value.habitId) return false;
   if (!isValidDayKey(value.date)) return false;
-  if (value.checkIn !== null && !isHabitHistoryCheckIn(value.checkIn)) return false;
-  return true;
+  if (value.checkIn === null) return true;
+  if (!isHabitHistoryCheckIn(value.checkIn)) return false;
+  return value.checkIn.habitId === value.habitId && value.checkIn.day === value.date;
 }
 
 export function fetchHabitHistory(signal?: AbortSignal): Promise<HabitHistoryPayload> {
@@ -124,7 +167,10 @@ export function fetchHabitCheckInDate(
     {
       method: "GET",
       signal,
-      decode: isHabitCheckInReconciliation,
+      decode: (value): value is HabitCheckInReconciliation =>
+        isHabitCheckInReconciliation(value) &&
+        value.habitId === habitId &&
+        value.date === date,
       fallback: "Check-in could not be retrieved."
     }
   );

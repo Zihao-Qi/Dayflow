@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   fetchHabitCheckInDate,
   fetchHabitHistory,
-  type HabitCheckInReconciliation,
   type HabitHistoryCheckIn,
   type HabitHistoryDefinition,
   type HabitHistoryPayload
@@ -12,23 +11,31 @@ import {
 import { recordCheckIn } from "./api";
 import { addDays, localDateKey, parseLocalDate } from "@/shared/kernel/calendar";
 import { ApiError } from "@/shared/client/api-client";
+import {
+  beginCheckInSave,
+  beginHistoryLoad,
+  beginReconcile,
+  clearHistoryDraft,
+  createHistorySession,
+  discardUnsentHistoryEdits,
+  hasDiscardableDrafts,
+  historyDayRefresh,
+  historyForegroundRefresh,
+  materializeDraft,
+  selectHistoryDate,
+  setHistoryEditor,
+  settleCheckInSave,
+  settleHistoryLoad,
+  settleReconcile,
+  updateHistoryDraft,
+  type HabitHistoryDraft,
+  type HistorySession,
+  type PendingIntention
+} from "./habit-history-controller";
+
+export type { HabitHistoryDraft, PendingIntention };
 
 export type HabitHistoryDayState = "done" | "notDone" | "unrecorded" | "outOfScope";
-
-export type HabitHistoryDraft = {
-  done: boolean | null;
-  amount: string;
-  note: string;
-  touchedAmount: boolean;
-  touchedNote: boolean;
-};
-
-export type PendingIntention = {
-  mutationId: string;
-  fingerprint: string;
-  isUncertain: boolean;
-  isSaving: boolean;
-};
 
 export type UseHabitHistoryOptions = {
   initialTodayKey?: string;
@@ -70,367 +77,209 @@ export function generateDateRange(earliestDate: string, latestDate: string): str
 export function useHabitHistory({
   initialTodayKey,
   refreshAfterConfirmedMutation,
-  setAppAnnouncement,
-  setAppError
+  setAppAnnouncement
 }: UseHabitHistoryOptions = {}) {
+  const sessionRef = useRef<HistorySession>(createHistorySession(initialTodayKey ?? ""));
+  const [session, setSession] = useState(sessionRef.current);
   const [isOpen, setIsOpen] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
-  const [selectedDate, setSelectedDate] = useState<string>(() => initialTodayKey ?? "");
-  const [historyData, setHistoryData] = useState<HabitHistoryPayload | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [refreshError, setRefreshError] = useState<string | null>(null);
-
-  // Keyed drafts and errors: key is `${habitId}:${date}`
-  const [drafts, setDrafts] = useState<Map<string, HabitHistoryDraft>>(() => new Map());
-  const [errors, setErrors] = useState<Map<string, { message: string; field?: string }>>(() => new Map());
-  const [editingHabitId, setEditingHabitId] = useState<string | null>(null);
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
+  const commit = useCallback((next: HistorySession) => {
+    sessionRef.current = next;
+    setSession(next);
+  }, []);
 
-  // Pending intentions: key is `${habitId}:${date}`
-  const pendingMutations = useRef<Map<string, PendingIntention>>(new Map());
-  const readGenerationRef = useRef(0);
-
-  // Sync selectedDate with initialTodayKey if not yet set
-  useEffect(() => {
-    if (!selectedDate && initialTodayKey) {
-      setSelectedDate(initialTodayKey);
-    }
-  }, [initialTodayKey, selectedDate]);
-
-  const loadHistory = useCallback(async (isInitial = false) => {
-    const generation = ++readGenerationRef.current;
-    if (isInitial) setLoading(true);
-    setLoadError(null);
-    setRefreshError(null);
+  const runLoad = useCallback(async () => {
+    const started = beginHistoryLoad(sessionRef.current);
+    commit(started.session);
     try {
       const data = await fetchHabitHistory();
-      if (generation !== readGenerationRef.current) return false;
-      setHistoryData(data);
-      if (!selectedDate || selectedDate > data.latestDate || selectedDate < data.earliestDate) {
-        setSelectedDate(data.todayKey);
-      }
-      return true;
+      const settled = settleHistoryLoad(sessionRef.current, started.generation, started.startedAt, {
+        ok: true,
+        data
+      });
+      commit(settled.session);
+      return settled.applied && settled.session.loadError === null && settled.session.refreshError === null;
     } catch (error) {
-      if (generation !== readGenerationRef.current) return false;
       const message = error instanceof Error ? error.message : "Habit history could not be loaded.";
-      if (isInitial) {
-        setLoadError(message);
-      } else {
-        setRefreshError(message);
-      }
+      const settled = settleHistoryLoad(sessionRef.current, started.generation, started.startedAt, {
+        ok: false,
+        message
+      });
+      commit(settled.session);
       return false;
-    } finally {
-      if (isInitial && generation === readGenerationRef.current) {
-        setLoading(false);
-      }
     }
-  }, [selectedDate]);
+  }, [commit]);
 
   const openHistory = useCallback(() => {
     setIsOpen(true);
     setShowDiscardConfirm(false);
-    void loadHistory(true);
-  }, [loadHistory]);
+    void runLoad();
+  }, [runLoad]);
+
+  const todaySeen = useRef(initialTodayKey);
+  useEffect(() => {
+    const previous = todaySeen.current;
+    todaySeen.current = initialTodayKey;
+    if (!sessionRef.current.selectedDate && initialTodayKey) {
+      commit(selectHistoryDate(sessionRef.current, initialTodayKey));
+    }
+    if (historyDayRefresh(previous, initialTodayKey) && isOpen) void runLoad();
+  }, [initialTodayKey, isOpen, commit, runLoad]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const onForeground = () => {
+      if (historyForegroundRefresh(true, document.visibilityState)) void runLoad();
+    };
+    document.addEventListener("visibilitychange", onForeground);
+    return () => document.removeEventListener("visibilitychange", onForeground);
+  }, [isOpen, runLoad]);
 
   const dates = useMemo(() => {
-    if (historyData) {
-      return generateDateRange(historyData.earliestDate, historyData.latestDate);
+    if (session.history) {
+      return generateDateRange(session.history.earliestDate, session.history.latestDate);
     }
     if (initialTodayKey) {
       const today = parseLocalDate(initialTodayKey);
-      if (today) {
-        return generateDateRange(localDateKey(addDays(today, -7)), initialTodayKey);
-      }
+      if (today) return generateDateRange(localDateKey(addDays(today, -7)), initialTodayKey);
     }
     return [];
-  }, [historyData, initialTodayKey]);
-
-  // Check whether any draft is dirty compared to current evidence
-  const isDraftDirty = useCallback((habitId: string, date: string, draft: HabitHistoryDraft): boolean => {
-    const existingCheckIn = historyData?.checkIns.find(
-      (c) => c.habitId === habitId && c.day === date
-    );
-    if (draft.touchedAmount || draft.touchedNote) return true;
-    if (draft.done !== null) {
-      if (!existingCheckIn) return true;
-      if (existingCheckIn.done !== draft.done) return true;
-    }
-    return false;
-  }, [historyData]);
-
-  const hasDirtyDrafts = useMemo(() => {
-    for (const [key, draft] of drafts.entries()) {
-      const [habitId, date] = key.split(":");
-      if (isDraftDirty(habitId, date, draft)) return true;
-    }
-    return false;
-  }, [drafts, isDraftDirty]);
+  }, [session.history, initialTodayKey]);
 
   const requestClose = useCallback(() => {
-    if (hasDirtyDrafts) {
-      setShowDiscardConfirm(true);
-    } else {
+    if (hasDiscardableDrafts(sessionRef.current)) setShowDiscardConfirm(true);
+    else {
       setIsOpen(false);
-      setEditingHabitId(null);
+      commit(setHistoryEditor(sessionRef.current, null));
     }
-  }, [hasDirtyDrafts]);
+  }, [commit]);
 
   const forceCloseAndDiscard = useCallback(() => {
-    setDrafts(new Map());
-    setErrors(new Map());
+    commit(discardUnsentHistoryEdits(sessionRef.current));
     setShowDiscardConfirm(false);
     setIsOpen(false);
-    setEditingHabitId(null);
-  }, []);
+  }, [commit]);
 
   const cancelDiscard = useCallback(() => {
     setShowDiscardConfirm(false);
   }, []);
 
-  const getDraft = useCallback((habitId: string, date: string): HabitHistoryDraft => {
-    const key = `${habitId}:${date}`;
-    const existing = drafts.get(key);
-    if (existing) return existing;
-
-    const checkIn = historyData?.checkIns.find(
-      (c) => c.habitId === habitId && c.day === date
-    );
-    return {
-      done: checkIn ? checkIn.done : null,
-      amount: checkIn?.amount !== null && checkIn?.amount !== undefined ? String(checkIn.amount) : "",
-      note: checkIn?.note ?? "",
-      touchedAmount: false,
-      touchedNote: false
-    };
-  }, [drafts, historyData]);
+  const getDraft = useCallback(
+    (habitId: string, date: string) => materializeDraft(session, habitId, date),
+    [session]
+  );
 
   const setDraft = useCallback((
     habitId: string,
     date: string,
     updater: Partial<HabitHistoryDraft> | ((prev: HabitHistoryDraft) => HabitHistoryDraft)
   ) => {
-    const key = `${habitId}:${date}`;
-    setDrafts((prev) => {
-      const next = new Map(prev);
-      const current = getDraft(habitId, date);
-      const updated = typeof updater === "function" ? updater(current) : { ...current, ...updater };
-      next.set(key, updated);
-      return next;
-    });
-  }, [getDraft]);
+    commit(updateHistoryDraft(sessionRef.current, habitId, date, updater));
+  }, [commit]);
 
   const clearDraft = useCallback((habitId: string, date: string) => {
-    const key = `${habitId}:${date}`;
-    setDrafts((prev) => {
-      const next = new Map(prev);
-      next.delete(key);
-      return next;
-    });
-    setErrors((prev) => {
-      const next = new Map(prev);
-      next.delete(key);
-      return next;
-    });
-  }, []);
+    commit(clearHistoryDraft(sessionRef.current, habitId, date));
+  }, [commit]);
 
-  const saveCheckIn = useCallback(async (
-    habitId: string,
-    date: string
-  ): Promise<{ ok: boolean; error?: string }> => {
-    const key = `${habitId}:${date}`;
-    const draft = getDraft(habitId, date);
-
-    if (draft.done === null) {
-      const errorMsg = "Please mark Done or Not done before saving.";
-      setErrors((prev) => new Map(prev).set(key, { message: errorMsg }));
-      return { ok: false, error: errorMsg };
-    }
-
-    // Server backfill window guard: never retarget
-    if (historyData) {
-      if (date < historyData.earliestDate || date > historyData.latestDate) {
-        const errorMsg = "Check-in date is outside the backfill window. This day has closed.";
-        setErrors((prev) => new Map(prev).set(key, { message: errorMsg, field: "date" }));
-        return { ok: false, error: errorMsg };
-      }
-    }
-
-    const currentPending = pendingMutations.current.get(key);
-    if (currentPending?.isSaving) {
-      return { ok: false, error: "Save already in flight for this habit and date." };
-    }
-
-    let parsedAmount: number | null | undefined = undefined;
-    if (draft.touchedAmount) {
-      const trimmed = draft.amount.trim();
-      if (trimmed === "") {
-        parsedAmount = null;
-      } else {
-        const num = Number(trimmed);
-        if (!Number.isInteger(num) || num < 0 || num > 1_000_000) {
-          const errorMsg = "Check-in amount must be a whole number between 0 and 1,000,000.";
-          setErrors((prev) => new Map(prev).set(key, { message: errorMsg, field: "amount" }));
-          return { ok: false, error: errorMsg };
-        }
-        parsedAmount = num;
-      }
-    }
-
-    let parsedNote: string | null | undefined = undefined;
-    if (draft.touchedNote) {
-      parsedNote = draft.note === "" ? null : draft.note;
-      if (parsedNote && parsedNote.length > 2_000) {
-        const errorMsg = "Check-in note must be 2,000 characters or fewer.";
-        setErrors((prev) => new Map(prev).set(key, { message: errorMsg, field: "note" }));
-        return { ok: false, error: errorMsg };
-      }
-    }
-
-    const payload: {
-      date: string;
-      done: boolean;
-      amount?: number | null;
-      note?: string | null;
-    } = {
+  const saveCheckIn = useCallback(async (habitId: string, date: string) => {
+    const draft = materializeDraft(sessionRef.current, habitId, date);
+    const begun = beginCheckInSave(sessionRef.current, {
+      habitId,
       date,
-      done: draft.done,
-      ...(parsedAmount !== undefined ? { amount: parsedAmount } : {}),
-      ...(parsedNote !== undefined ? { note: parsedNote } : {})
-    };
-
-    const fingerprint = JSON.stringify(payload);
-    let mutationId: string;
-    if (currentPending && currentPending.fingerprint === fingerprint) {
-      mutationId = currentPending.mutationId;
-    } else {
-      mutationId = crypto.randomUUID();
-    }
-
-    pendingMutations.current.set(key, {
-      mutationId,
-      fingerprint,
-      isUncertain: false,
-      isSaving: true
+      draft,
+      createId: () => crypto.randomUUID()
     });
-
+    commit(begun.session);
+    if (!begun.ok) return { ok: false as const, error: begun.error };
     try {
-      const confirmed = await recordCheckIn(habitId, payload, mutationId);
-
-      // Confirmed write success
-      pendingMutations.current.delete(key);
-      clearDraft(habitId, date);
-      setEditingHabitId((cur) => (cur === habitId ? null : cur));
-
-      // Update local history checkIns state immediately
-      setHistoryData((prev) => {
-        if (!prev) return prev;
-        const filtered = prev.checkIns.filter(
-          (c) => !(c.habitId === habitId && c.day === date)
-        );
-        const newRecord: HabitHistoryCheckIn = {
-          id: confirmed.id,
-          habitId: confirmed.habitId,
-          date: confirmed.date,
-          day: date,
-          done: confirmed.done,
-          amount: confirmed.amount,
-          note: confirmed.note
-        };
-        return {
-          ...prev,
-          checkIns: [...filtered, newRecord]
-        };
+      const confirmed = await recordCheckIn(habitId, begun.body, begun.mutationId);
+      const checkIn: HabitHistoryCheckIn = {
+        id: confirmed.id,
+        habitId,
+        date: confirmed.date,
+        day: date,
+        done: confirmed.done,
+        amount: confirmed.amount,
+        note: confirmed.note
+      };
+      const settled = settleCheckInSave(sessionRef.current, {
+        habitId,
+        date,
+        mutationId: begun.mutationId,
+        startedAt: begun.startedAt,
+        outcome: { type: "success", checkIn }
       });
-
-      setAppAnnouncement?.("Saved check-in.");
-
-      // Refresh shell bootstrap read-model
-      if (refreshAfterConfirmedMutation) {
-        void refreshAfterConfirmedMutation().catch(() => {});
-      }
-
-      // Refresh history in background
-      void loadHistory(false).catch(() => {
-        setRefreshError("Saved, but history refresh failed. Try Refreshing.");
-      });
-
-      return { ok: true };
+      commit(settled.session);
+      if (settled.announcement) setAppAnnouncement?.(settled.announcement);
+      if (settled.shellRefresh) void refreshAfterConfirmedMutation?.().catch(() => {});
+      if (settled.refreshHistory) void runLoad();
+      return settled.result;
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Check-in could not be saved.";
-      const field = error instanceof ApiError ? error.field : undefined;
-
-      const isValidationError = error instanceof ApiError && error.status === 400;
-      pendingMutations.current.set(key, {
-        mutationId,
-        fingerprint,
-        isUncertain: !isValidationError,
-        isSaving: false
+      const settled = settleCheckInSave(sessionRef.current, {
+        habitId,
+        date,
+        mutationId: begun.mutationId,
+        startedAt: begun.startedAt,
+        outcome: {
+          type: "failure",
+          status: error instanceof ApiError ? error.status : undefined,
+          message: error instanceof Error ? error.message : "Check-in could not be saved.",
+          field: error instanceof ApiError ? error.field : undefined
+        }
       });
-
-      setErrors((prev) => new Map(prev).set(key, { message, field }));
-      return { ok: false, error: message };
+      commit(settled.session);
+      return settled.result;
     }
-  }, [
-    getDraft,
-    historyData,
-    clearDraft,
-    setAppAnnouncement,
-    refreshAfterConfirmedMutation,
-    loadHistory
-  ]);
+  }, [commit, refreshAfterConfirmedMutation, runLoad, setAppAnnouncement]);
 
-  const reconcileRecord = useCallback(async (
-    habitId: string,
-    date: string
-  ): Promise<HabitCheckInReconciliation | null> => {
-    const key = `${habitId}:${date}`;
+  const reconcileRecord = useCallback(async (habitId: string, date: string) => {
+    const started = beginReconcile(sessionRef.current);
+    commit(started.session);
     try {
       const result = await fetchHabitCheckInDate(habitId, date);
-      pendingMutations.current.delete(key);
-      clearDraft(habitId, date);
-
-      setHistoryData((prev) => {
-        if (!prev) return prev;
-        const filtered = prev.checkIns.filter(
-          (c) => !(c.habitId === habitId && c.day === date)
-        );
-        return {
-          ...prev,
-          checkIns: result.checkIn ? [...filtered, result.checkIn] : filtered
-        };
+      const settled = settleReconcile(sessionRef.current, {
+        habitId,
+        date,
+        startedAt: started.startedAt,
+        outcome: { ok: true, result }
       });
-      setErrors((prev) => {
-        const next = new Map(prev);
-        next.delete(key);
-        return next;
-      });
-      setAppAnnouncement?.("Reconciled record with server.");
+      commit(settled.session);
+      if (settled.announcement) setAppAnnouncement?.(settled.announcement);
+      if (settled.shellRefresh) void refreshAfterConfirmedMutation?.().catch(() => {});
       return result;
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Reconciliation failed.";
-      setErrors((prev) => new Map(prev).set(key, { message }));
+      const settled = settleReconcile(sessionRef.current, {
+        habitId,
+        date,
+        startedAt: started.startedAt,
+        outcome: {
+          ok: false,
+          message: error instanceof Error ? error.message : "Reconciliation failed."
+        }
+      });
+      commit(settled.session);
       return null;
     }
-  }, [clearDraft, setAppAnnouncement]);
+  }, [commit, refreshAfterConfirmedMutation, setAppAnnouncement]);
 
   const activeHabits = useMemo(() => {
-    if (!historyData) return [];
-    return historyData.habits
-      .filter((h) => h.status === "ACTIVE")
+    if (!session.history) return [];
+    return session.history.habits
+      .filter((habit) => habit.status === "ACTIVE")
       .sort((a, b) => a.sortOrder - b.sortOrder || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
-  }, [historyData]);
+  }, [session.history]);
 
   const archivedHabits = useMemo(() => {
-    if (!historyData) return [];
-    return historyData.habits
-      .filter((h) => h.status === "ARCHIVED")
+    if (!session.history) return [];
+    return session.history.habits
+      .filter((habit) => habit.status === "ARCHIVED")
       .sort((a, b) => {
         const aArch = a.archivedAt ?? "";
         const bArch = b.archivedAt ?? "";
         return bArch.localeCompare(aArch) || b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id);
       });
-  }, [historyData]);
+  }, [session.history]);
 
   return {
     isOpen,
@@ -439,27 +288,27 @@ export function useHabitHistory({
     forceCloseAndDiscard,
     cancelDiscard,
     showDiscardConfirm,
-    hasDirtyDrafts,
+    hasDirtyDrafts: hasDiscardableDrafts(session),
     showArchived,
     setShowArchived,
-    selectedDate,
-    setSelectedDate,
+    selectedDate: session.selectedDate,
+    setSelectedDate: (date: string) => commit(selectHistoryDate(sessionRef.current, date)),
     dates,
-    historyData,
+    historyData: session.history,
     activeHabits,
     archivedHabits,
-    loading,
-    loadError,
-    refreshError,
-    refreshHistory: () => loadHistory(false),
-    editingHabitId,
-    setEditingHabitId,
+    loading: session.loading,
+    loadError: session.loadError,
+    refreshError: session.refreshError,
+    refreshHistory: () => runLoad(),
+    editingHabitId: session.editingHabitId,
+    setEditingHabitId: (habitId: string | null) => commit(setHistoryEditor(sessionRef.current, habitId)),
     getDraft,
     setDraft,
     clearDraft,
     saveCheckIn,
     reconcileRecord,
-    errors,
-    pendingMutations: pendingMutations.current
+    errors: session.errors,
+    pendingMutations: session.pending
   };
 }

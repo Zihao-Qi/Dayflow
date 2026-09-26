@@ -347,77 +347,25 @@ test.describe("Habit History & Backfill (Real Routes)", () => {
     const dateButtons = dialog.locator("button.habit-history-date-btn");
     await expect(dateButtons).toHaveCount(8);
 
-    // 1. Tab / Shift-Tab containment: focus remains inside dialog
-    await page.keyboard.press("Tab");
-    await page.keyboard.press("Tab");
-    let insideDialog = await page.evaluate(() => document.activeElement?.closest('[role="dialog"]') !== null);
-    expect(insideDialog).toBe(true);
+    // 1. Tab / Shift-Tab boundary trap: focus wraps at first and last elements
+    const focusableSelector =
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+    const firstFocusable = dialog.locator(focusableSelector).first();
+    const lastFocusable = dialog.locator(focusableSelector).last();
 
-    await page.keyboard.down("Shift");
-    await page.keyboard.press("Tab");
-    await page.keyboard.up("Shift");
-    insideDialog = await page.evaluate(() => document.activeElement?.closest('[role="dialog"]') !== null);
-    expect(insideDialog).toBe(true);
+    await firstFocusable.focus();
+    await expect(firstFocusable).toBeFocused();
 
-    // 2. Open editor, edit, switch dates and return preserving keyed draft
+    // Shift+Tab on first element wraps to last element
+    await page.keyboard.press("Shift+Tab");
+    await expect(lastFocusable).toBeFocused();
+
+    // Tab on last element wraps to first element
+    await page.keyboard.press("Tab");
+    await expect(firstFocusable).toBeFocused();
+
+    // 2. In-flight save date navigation: hold Date 1 response, navigate to Date 2, assert Date 2 editor and draft not closed/cleared when old response settles
     const habitRow = dialog.locator(`[data-habit="${habit.id}"]`);
-    await habitRow.getByRole("button", { name: /Record Keyboard Habit/ }).click();
-    const editor = habitRow.locator(".habit-history-editor");
-    await expect(editor).toBeVisible();
-
-    await editor.getByLabel(/^Amount/).fill("42");
-    await editor.getByLabel(/^Note/).fill("Keyed draft Date 1");
-
-    // Switch to another date (yesterday)
-    await dateButtons.nth(6).click();
-    await expect(dateButtons.nth(6)).toHaveAttribute("aria-pressed", "true");
-
-    // Switch back to Date 1 (today)
-    await dateButtons.last().click();
-    await expect(dateButtons.last()).toHaveAttribute("aria-pressed", "true");
-
-    // Preserves keyed draft
-    await expect(editor).toBeVisible();
-    await expect(editor.getByLabel(/^Amount/)).toHaveValue("42");
-    await expect(editor.getByLabel(/^Note/)).toHaveValue("Keyed draft Date 1");
-
-    // 3. Escape with dirty unsent draft prompts discard warning
-    await page.keyboard.press("Escape");
-    const discardDialog = page.getByRole("alertdialog", { name: "Discard unsaved edits?" });
-    await expect(discardDialog).toBeVisible();
-
-    // 4. "Keep editing" retains draft and focus
-    const keepBtn = discardDialog.getByRole("button", { name: "Keep editing" });
-    await expect(keepBtn).toBeVisible();
-    await keepBtn.click();
-
-    await expect(discardDialog).not.toBeVisible();
-    await expect(dialog).toBeVisible();
-    await expect(editor).toBeVisible();
-    await expect(editor.getByLabel(/^Amount/)).toHaveValue("42");
-    await expect(editor.getByLabel(/^Note/)).toHaveValue("Keyed draft Date 1");
-
-    // 5. Escape again and click "Discard and close": closes dialog and restores History opener focus
-    await page.keyboard.press("Escape");
-    await expect(discardDialog).toBeVisible();
-
-    const discardBtn = discardDialog.getByRole("button", { name: "Discard and close" });
-    await discardBtn.click();
-
-    await expect(discardDialog).not.toBeVisible();
-    await expect(dialog).not.toBeVisible();
-
-    // Reopen dialog without dirty draft and dismiss with Escape: focus restores to historyBtn
-    await historyBtn.click();
-    await expect(dialog).toBeVisible();
-    await page.keyboard.press("Escape");
-    await expect(dialog).not.toBeVisible();
-    await expect(historyBtn).toBeFocused();
-
-    // 6. In-flight save date navigation: hold Date 1 response, navigate to Date 2, assert Date 2 editor and draft not closed/cleared when old response settles
-    await historyBtn.click();
-    await expect(dialog).toBeVisible();
-
     let resolvePut: (() => void) | null = null;
     await page.route("**/api/habits/*/check-in", async (route) => {
       if (route.request().method() === "PUT") {
@@ -431,7 +379,11 @@ test.describe("Habit History & Backfill (Real Routes)", () => {
     });
 
     // Start save on Date 1 (today)
+    const todayBtn = dateButtons.last();
+    await todayBtn.click();
     await habitRow.getByRole("button", { name: /Record Keyboard Habit/ }).click();
+    const editor = habitRow.locator(".habit-history-editor");
+    await expect(editor).toBeVisible();
     await editor.getByRole("button", { name: "Done", exact: true }).click();
     await editor.getByLabel(/^Amount/).fill("15");
     await editor.getByLabel(/^Note/).fill("Date 1 save in flight");
@@ -449,17 +401,58 @@ test.describe("Habit History & Backfill (Real Routes)", () => {
     await editorDate2.getByLabel(/^Amount/).fill("99");
     await editorDate2.getByLabel(/^Note/).fill("Date 2 draft in progress");
 
-    // Settle Date 1 save
+    // Settle Date 1 save and await owned response + UI settlement
     expect(resolvePut).not.toBeNull();
+    const date1PutResponsePromise = page.waitForResponse(
+      (r) => r.url().includes("/check-in") && r.request().method() === "PUT" && r.status() === 200
+    );
     resolvePut!();
+    await date1PutResponsePromise;
 
-    // Wait briefly for network and state resolution
-    await page.waitForTimeout(300);
+    // Await post-save settled barrier: header buttons re-enable and busy indicators clear
+    await expect(dialog.getByRole("button", { name: "Refresh habit history" })).toBeEnabled();
+    await expect(editorDate2.locator(".habit-history-busy-note")).not.toBeVisible();
 
     // On Date 2, editor is STILL OPEN with intact draft
     await expect(editorDate2).toBeVisible();
     await expect(editorDate2.getByLabel(/^Amount/)).toHaveValue("99");
     await expect(editorDate2.getByLabel(/^Note/)).toHaveValue("Date 2 draft in progress");
+
+    // 3. Switch dates and return preserving keyed draft
+    await todayBtn.click();
+    await expect(todayBtn).toHaveAttribute("aria-pressed", "true");
+    await dateButtons.nth(6).click();
+    await expect(dateButtons.nth(6)).toHaveAttribute("aria-pressed", "true");
+    await expect(editorDate2).toBeVisible();
+    await expect(editorDate2.getByLabel(/^Amount/)).toHaveValue("99");
+    await expect(editorDate2.getByLabel(/^Note/)).toHaveValue("Date 2 draft in progress");
+
+    // 4. Escape with dirty unsent draft prompts discard warning
+    await page.keyboard.press("Escape");
+    const discardDialog = page.getByRole("alertdialog", { name: "Discard unsaved edits?" });
+    await expect(discardDialog).toBeVisible();
+
+    // 5. "Keep editing" retains draft and focus
+    const keepBtn = discardDialog.getByRole("button", { name: "Keep editing" });
+    await expect(keepBtn).toBeVisible();
+    await keepBtn.click();
+
+    await expect(discardDialog).not.toBeVisible();
+    await expect(dialog).toBeVisible();
+    await expect(editorDate2).toBeVisible();
+    await expect(editorDate2.getByLabel(/^Amount/)).toHaveValue("99");
+    await expect(editorDate2.getByLabel(/^Note/)).toHaveValue("Date 2 draft in progress");
+
+    // 6. Escape again and click "Discard and close": closes dialog and restores History opener focus immediately
+    await page.keyboard.press("Escape");
+    await expect(discardDialog).toBeVisible();
+
+    const discardBtn = discardDialog.getByRole("button", { name: "Discard and close" });
+    await discardBtn.click();
+
+    await expect(discardDialog).not.toBeVisible();
+    await expect(dialog).not.toBeVisible();
+    await expect(historyBtn).toBeFocused();
   });
 });
 
@@ -687,10 +680,11 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
     await page.route("**/api/habits/*/check-in", async (route) => {
       if (route.request().method() === "PUT") {
         retryPutReqCount++;
+        const headers = route.request().headers();
         if (!firstPutCommitted) {
           firstPutCommitted = true;
           firstPayload = route.request().postDataJSON();
-          firstMutationId = route.request().headers()["x-mutation-id"] ?? firstPayload?.mutationId;
+          firstMutationId = headers["x-dayflow-mutation-id"] ?? null;
           // Execute mutation on real server (first mutation committed)
           const response = await route.fetch();
           expect(response.ok()).toBe(true);
@@ -700,7 +694,7 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
         }
         // Capture retry details
         retryPayload = route.request().postDataJSON();
-        retryMutationId = route.request().headers()["x-mutation-id"] ?? retryPayload?.mutationId;
+        retryMutationId = headers["x-dayflow-mutation-id"] ?? null;
         await route.continue();
         return;
       }
@@ -774,9 +768,15 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
     retryPutReqCount = 0;
     historyGetReqCount = 0;
 
-    await retryBtn.click();
+    const [retryResponse] = await Promise.all([
+      page.waitForResponse((r) => r.url().includes("/check-in") && r.request().method() === "PUT"),
+      retryBtn.click()
+    ]);
+    expect(retryResponse.ok()).toBe(true);
 
-    // Assert same mutation ID and payload were sent on retry
+    // Assert real nonempty UUID header was captured and matches on retry
+    expect(typeof firstMutationId).toBe("string");
+    expect(firstMutationId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
     expect(retryMutationId).toBe(firstMutationId);
     expect(retryPayload).toEqual(firstPayload);
 
@@ -851,9 +851,9 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
             status: 400,
             contentType: "application/json",
             body: JSON.stringify({
-              error: "VALIDATION_ERROR",
-              field: "date",
-              message: "2026-09-19 is outside the 8-day writable window."
+              error: "2026-09-19 is outside the 8-day writable window.",
+              code: "VALIDATION_ERROR",
+              field: "date"
             })
           });
           return;
@@ -893,7 +893,18 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
     await expect(checkStatusBtn).toBeVisible();
 
     // 3. Before loaded window advances, same-ID retry gets server 400 VALIDATION_ERROR field date
-    await retryBtn.click();
+    const [put400Response] = await Promise.all([
+      page.waitForResponse(
+        (r) => r.url().includes("/check-in") && r.request().method() === "PUT" && r.status() === 400
+      ),
+      retryBtn.click()
+    ]);
+    expect(put400Response.status()).toBe(400);
+
+    // Assert UI date validation error appears
+    await expect(editor.locator(".form-error")).toContainText(
+      "2026-09-19 is outside the 8-day writable window."
+    );
 
     // Check status must remain available (not falsely considered definitely failed)
     await expect(checkStatusBtn).toBeVisible();

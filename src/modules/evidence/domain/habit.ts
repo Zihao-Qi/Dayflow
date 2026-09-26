@@ -2,7 +2,8 @@ import {
   addDays,
   localDateKey,
   parseLocalDate,
-  startOfLocalDay
+  startOfLocalDay,
+  type Calendar
 } from "@/shared/kernel/calendar";
 import { AppError, validation } from "@/shared/kernel/errors";
 import { requestErrors } from "@/shared/kernel/request-errors";
@@ -79,6 +80,48 @@ export function targetForCadence(
 export function checkInWindow(now: Date) {
   const latest = startOfLocalDay(now);
   return { earliest: addDays(latest, -CHECK_IN_BACKFILL_DAYS), latest };
+}
+
+/**
+ * The history read is eight server-local dates, today-7 through today, as a
+ * half-open range [start, end). Calendar addition, not a 24-hour duration, so
+ * a DST shift cannot drop or duplicate a date.
+ */
+export function habitHistoryBounds(calendar: Calendar, now: Date) {
+  const todayKey = calendar.dayOf(now);
+  const earliestDate = calendar.addDays(todayKey, -CHECK_IN_BACKFILL_DAYS);
+  const endDay = calendar.addDays(todayKey, 1);
+  return {
+    todayKey,
+    earliestDate,
+    latestDate: todayKey,
+    start: calendar.startOf(earliestDate),
+    end: calendar.startOf(endDay)
+  };
+}
+
+/**
+ * Reconciliation reads require one explicit local date. A missing or duplicated
+ * query must not fall back to today, and a past date stays readable after it
+ * leaves the writable window. Future dates stay refused.
+ */
+export function parseHistoryCheckInDate(searchParams: URLSearchParams, now: Date) {
+  const values = searchParams.getAll("date");
+  if (values.length !== 1) {
+    throw validation("Provide exactly one check-in date.", "date");
+  }
+  const raw = values[0].trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    throw new AppError(evidenceErrors.checkInDateMustBeAValidCalendarDate);
+  }
+  const date = parseLocalDate(raw);
+  if (!date || localDateKey(date) !== raw) {
+    throw new AppError(evidenceErrors.checkInDateMustBeAValidCalendarDate);
+  }
+  if (date.getTime() > startOfLocalDay(now).getTime()) {
+    throw new AppError(evidenceErrors.checkInDateCannotBeInTheFuture);
+  }
+  return date;
 }
 
 export type HabitDefinition = {

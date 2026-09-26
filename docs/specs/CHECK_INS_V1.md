@@ -201,12 +201,8 @@ whose Habit Lifetime overlaps the evaluated seven-day interval OR which carry
 any Check-in Evidence dated within that interval.
 
 *Implementation Invariant*: This is a required implementation and acceptance
-invariant. The current production query in `readHabitsActiveDuring` filters
-purely by lifecycle (`createdAt < period.end` and `archivedAt >= period.start`),
-which omits Habits created after `period.end` that carry valid pre-creation
-Check-in Evidence within the window. Resolving this query gap is an explicit code
-defect fix scheduled for the subsequent PR; this specification pins the invariant
-without claiming current code is already compliant.
+invariant. `readHabitsActiveDuring` selects by lifetime overlap OR Check-in
+Evidence (either `done` value) dated in `[period.start, period.end)`.
 
 ### Unclamped Done Count
 
@@ -356,7 +352,7 @@ The Today page renders a dedicated Habits card (`HabitsCard`), supporting direct
 | Future request rejected | Check-in request with date after today (`date > today`) | Refused with status 400 and code `VALIDATION_ERROR` on field `date`. |
 | Writable date window boundary | Check-in window spans today plus seven preceding local days | Exactly 8 writable local calendar dates: `today - 7` accepted; `today - 8` refused with `VALIDATION_ERROR`. |
 | Zero capacity emission | Habit with no lifetime overlap and no Check-in rows in the evaluated interval | Capacity is 0; Habit is omitted from summary selection; displayed `0/0` is an invalid production state. |
-| Historical service retrieval | Habit created after historical Review Window end carrying pre-creation Check-in in window | Retrieval service must select the Habit by evidence union; required implementation invariant for subsequent PR. |
+| Historical service retrieval | Habit created after historical Review Window end carrying pre-creation Check-in in window | `readHabitsActiveDuring` selects by lifetime overlap OR Check-in Evidence (either `done` value) dated in `[period.start, period.end)`. |
 
 ## Non-Goals
 

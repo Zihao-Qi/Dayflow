@@ -7,6 +7,8 @@ import type {
   HabitSummary
 } from "@/modules/evidence/domain/habit";
 import { useModalFocusTrap } from "@/components/use-modal-focus-trap";
+import type { useHabitHistory } from "./use-habit-history";
+import { HabitHistoryDialog } from "./habit-history-dialog";
 
 /**
  * Built from the classes Today already uses, so a restyle of the page carries
@@ -40,7 +42,8 @@ export function HabitsCard({
   onReorder,
   busyHabitIds,
   createPending,
-  reorderPending
+  reorderPending,
+  habitHistory
 }: {
   habits: HabitSummary[];
   todayKey: string;
@@ -63,7 +66,10 @@ export function HabitsCard({
   busyHabitIds: ReadonlySet<string>;
   createPending: boolean;
   reorderPending?: boolean;
+  habitHistory: ReturnType<typeof useHabitHistory>;
 }) {
+  const history = habitHistory;
+
   const [draft, setDraft] = useState("");
   const [cadence, setCadence] = useState<HabitCadenceValue>("DAILY");
   const [targetPerWeek, setTargetPerWeek] = useState(3);
@@ -83,6 +89,7 @@ export function HabitsCard({
   const archiveDialogRef = useRef<HTMLElement | null>(null);
   const keepHabitRef = useRef<HTMLButtonElement | null>(null);
   const createInputRef = useRef<HTMLInputElement | null>(null);
+  const historyButtonRef = useRef<HTMLButtonElement | null>(null);
 
   const returnFocusHabitIdRef = useRef<string | null>(null);
   const renameButtonRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
@@ -232,10 +239,23 @@ export function HabitsCard({
   // first one, so hiding it when empty made the feature unreachable.
   return (
     <section className="rail-card captured-card habits-card" aria-labelledby="habits-heading">
-      <p className="eyebrow">Check-ins</p>
-      <h2 className="captured-heading" id="habits-heading">
-        Habits
-      </h2>
+      <div className="habits-card-header">
+        <div>
+          <p className="eyebrow">Check-ins</p>
+          <h2 className="captured-heading" id="habits-heading">
+            Habits
+          </h2>
+        </div>
+        <button
+          ref={historyButtonRef}
+          type="button"
+          className="text-button habit-history-btn"
+          onClick={history.openHistory}
+          aria-haspopup="dialog"
+        >
+          History
+        </button>
+      </div>
 
       {habits.length === 0 ? (
         <p className="quiet-empty">No habits yet. Add one to start recording.</p>
@@ -405,6 +425,8 @@ export function HabitsCard({
           </section>
         </div>
       )}
+
+      <HabitHistoryDialog history={history} openerRef={historyButtonRef} />
     </section>
   );
 }

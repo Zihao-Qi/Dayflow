@@ -128,7 +128,8 @@ export function WorkspaceShell() {
     recordHabitCheckIn,
     reorderHabits,
     readRefreshFailed,
-    clearReadRefreshFailed
+    clearReadRefreshFailed,
+    habitHistory
   } = model;
   if (!data && bootstrapFailure) {
     const migrationRequired =
@@ -255,6 +256,7 @@ export function WorkspaceShell() {
                 busyHabitIds={busyHabitIds}
                 createPending={habitCreatePending}
                 reorderPending={habitReorderPending}
+                habitHistory={habitHistory}
               />
             }
             onFocusTransition={focus.transition}

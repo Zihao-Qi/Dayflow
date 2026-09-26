@@ -17,6 +17,7 @@ import { useQueueActions } from "./use-queue-actions";
 import { useReviewActions } from "./use-review-actions";
 import { useShellState, type TimeBlock } from "./use-shell-state";
 import { useHabitActions } from "./use-habit-actions";
+import { useHabitHistory } from "@/modules/evidence/ui/use-habit-history";
 import { useTaskActions } from "./use-task-actions";
 import { useTimeBlockActions } from "./use-time-block-actions";
 
@@ -301,8 +302,16 @@ export function useShellModel() {
     refreshAfterConfirmedMutation
   });
 
+  const habitHistory = useHabitHistory({
+    initialTodayKey: data?.todayKey,
+    refreshAfterConfirmedMutation,
+    setAppAnnouncement,
+    setAppError: state.setAppError
+  });
+
   return {
     ...state,
+    habitHistory,
     busyHabitIds,
     habitCreatePending,
     habitReorderPending,

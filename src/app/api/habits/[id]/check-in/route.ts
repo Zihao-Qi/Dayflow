@@ -1,13 +1,38 @@
-import { clock } from "@/lib/time";
+import { calendar, clock } from "@/lib/time";
 import { NextRequest, NextResponse } from "next/server";
 import { evidenceErrors, readEvidenceMutationBody } from "@/modules/evidence/domain/activity";
-import { parseCheckInMutation } from "@/modules/evidence/domain/habit";
+import { parseCheckInMutation, parseHistoryCheckInDate } from "@/modules/evidence/domain/habit";
 import { parseWorkflowId } from "@/lib/workflow-mutations";
 import { parseMutationId, runOnce } from "@/server/prisma/run-once";
-import { readHabit, upsertCheckIn, habitErrorResponse } from "@/server/habits";
+import { readHabit, readHabitCheckInOnDate, upsertCheckIn, habitErrorResponse } from "@/server/habits";
+import { runInTransaction } from "@/server/prisma/client";
 import { AppError } from "@/shared/kernel/errors";
 
 type Params = { params: Promise<{ id: string }> };
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+const noStore = { headers: { "Cache-Control": "no-store" } };
+
+export async function GET(request: NextRequest, { params }: Params) {
+  const now = clock.now();
+  try {
+    const id = parseWorkflowId(
+      (await params).id,
+      "id",
+      evidenceErrors.habitIdentifierIsInvalid.message
+    );
+    // Date shape is refused before storage opens, and never replaced with today.
+    const date = parseHistoryCheckInDate(request.nextUrl.searchParams, now);
+    const body = await runInTransaction((tx) =>
+      readHabitCheckInOnDate(tx, id, date, now, calendar)
+    );
+    return NextResponse.json(body, noStore);
+  } catch (error) {
+    return habitErrorResponse(error, "load");
+  }
+}
 
 /**
  * Storage is an upsert keyed by (habitId, date), but check-in writes follow

@@ -15,7 +15,9 @@ export {
   archiveHabit,
   upsertCheckIn,
   readCheckIns,
-  readHabitCheckIns
+  readHabitCheckIns,
+  readHabitHistory,
+  readHabitCheckInOnDate
 } from "@/modules/evidence/services/habits";
 
 export function habitErrorResponse(error: unknown, action: HabitMutationAction) {

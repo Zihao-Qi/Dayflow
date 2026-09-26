@@ -5,7 +5,9 @@ import {
   CHECK_IN_BACKFILL_DAYS,
   checkInWindow,
   describeHabitMove,
+  habitHistoryBounds,
   parseCheckInMutation,
+  parseHistoryCheckInDate,
   parseHabitCreateMutation,
   parseHabitIdArray,
   parseHabitPatchMutation,
@@ -16,7 +18,7 @@ import {
   type CheckInRecord,
   type HabitDefinition
 } from "../../src/modules/evidence/domain/habit";
-import { addDays, localDateKey, startOfLocalDay } from "../../src/shared/kernel/calendar";
+import { addDays, calendarFor, localDateKey, startOfLocalDay } from "../../src/shared/kernel/calendar";
 import { AppError } from "../../src/shared/kernel/errors";
 import { isHabitSummaryRecord, type HabitSummaryRecord } from "../../src/shared/client/decoders";
 
@@ -459,6 +461,67 @@ test("assertHabitReorder verifies CAS match, membership permutation, and empty a
   }) as AppError;
   assert.equal(foreignId.status, 409);
   assert.equal(foreignId.code, "CONFLICT");
+});
+
+test("history bounds stay eight local dates across DST", () => {
+  assert.equal(Intl.DateTimeFormat().resolvedOptions().timeZone, "America/Chicago");
+  const calendar = calendarFor("America/Chicago");
+  const spring = habitHistoryBounds(calendar, new Date("2026-03-08T15:00:00Z"));
+  assert.equal(spring.todayKey, "2026-03-08");
+  assert.equal(spring.latestDate, spring.todayKey);
+  assert.equal(spring.earliestDate, "2026-03-01", "eight-day window includes today-7");
+  assert.deepEqual(
+    Array.from({ length: 8 }, (_, index) => calendar.addDays(spring.earliestDate, index)),
+    ["2026-03-01", "2026-03-02", "2026-03-03", "2026-03-04", "2026-03-05", "2026-03-06", "2026-03-07", "2026-03-08"]
+  );
+  assert.equal(spring.end.getTime() - spring.start.getTime(), 191 * 60 * 60 * 1000);
+
+  const fall = habitHistoryBounds(calendar, new Date("2026-11-01T15:00:00Z"));
+  assert.equal(fall.todayKey, "2026-11-01");
+  assert.equal(fall.earliestDate, "2026-10-25", "eight-day window includes today-7");
+  assert.equal(fall.end.getTime() - fall.start.getTime(), 193 * 60 * 60 * 1000);
+});
+
+test("history date parsing requires one explicit past-or-present local date", () => {
+  const missing = new URLSearchParams();
+  let missingDate: Date | undefined;
+  let missingError: AppError | undefined;
+  try {
+    missingDate = parseHistoryCheckInDate(missing, now);
+  } catch (error) {
+    missingError = error as AppError;
+  }
+  assert.equal(missingDate, undefined, "missing date must not fall back to today");
+  assert.equal(missingError?.status, 400);
+  assert.equal(missingError?.field, "date");
+
+  for (const query of ["date=", "date=yesterday", "date=2026-02-31", `date=${dayKey(0)}&date=${dayKey(-1)}`]) {
+    const params = new URLSearchParams(query);
+    let parsed: Date | undefined;
+    let error: AppError | undefined;
+    try {
+      parsed = parseHistoryCheckInDate(params, now);
+    } catch (caught) {
+      error = caught as AppError;
+    }
+    assert.equal(parsed, undefined, query);
+    assert.equal(error?.status, 400, query);
+    assert.equal(error?.field, "date", query);
+  }
+
+  const future = rejection(() => parseHistoryCheckInDate(new URLSearchParams({ date: dayKey(1) }), now)) as AppError;
+  assert.equal(future.status, 400);
+  assert.equal(future.field, "date");
+
+  let expired: Date | undefined;
+  let expiredRejected = false;
+  try {
+    expired = parseHistoryCheckInDate(new URLSearchParams({ date: "2020-01-15" }), now);
+  } catch {
+    expiredRejected = true;
+  }
+  assert.equal(expiredRejected, false, "expired reconciliation date stays readable");
+  assert.equal(expired && localDateKey(expired), "2020-01-15");
 });
 
 test("describeHabitMove formats position announcements and detects boundaries", () => {

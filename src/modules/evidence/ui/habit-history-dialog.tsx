@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useModalFocusTrap } from "@/components/use-modal-focus-trap";
 import {
   computeDayState,
@@ -64,6 +64,31 @@ export function HabitHistoryDialog({ history }: HabitHistoryDialogProps) {
   const discardDialogRef = useRef<HTMLElement | null>(null);
   const discardKeepBtnRef = useRef<HTMLButtonElement | null>(null);
 
+  const editButtonRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const prevEditingHabitIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (prevEditingHabitIdRef.current && editingHabitId === null) {
+      const habitId = prevEditingHabitIdRef.current;
+      const btn = editButtonRefs.current.get(habitId);
+      btn?.focus();
+    }
+    prevEditingHabitIdRef.current = editingHabitId;
+  }, [editingHabitId]);
+
+  const isAnySaving = useMemo(() => {
+    if (!pendingMutations) return false;
+    for (const pending of pendingMutations.values()) {
+      if (pending.isSaving) return true;
+    }
+    return false;
+  }, [pendingMutations]);
+
+  const isDateWritable = useMemo(() => {
+    if (!historyData || !selectedDate) return true;
+    return selectedDate >= historyData.earliestDate && selectedDate <= historyData.latestDate;
+  }, [historyData, selectedDate]);
+
   useModalFocusTrap(dialogRef, requestClose, {
     active: isOpen && !showDiscardConfirm
   });
@@ -120,7 +145,7 @@ export function HabitHistoryDialog({ history }: HabitHistoryDialogProps) {
               className="text-button"
               aria-label="Refresh habit history"
               onClick={() => void refreshHistory()}
-              disabled={loading}
+              disabled={loading || isAnySaving}
             >
               Refresh
             </button>
@@ -129,6 +154,7 @@ export function HabitHistoryDialog({ history }: HabitHistoryDialogProps) {
               className="text-button habit-history-close-btn"
               aria-label="Close habit history"
               onClick={requestClose}
+              disabled={isAnySaving}
             >
               Close
             </button>
@@ -158,6 +184,18 @@ export function HabitHistoryDialog({ history }: HabitHistoryDialogProps) {
             >
               Retry
             </button>
+          </div>
+        )}
+
+        {!isDateWritable && (
+          <div className="habit-history-banner habit-history-banner--info" role="status" aria-label="Expired date notice">
+            <span>
+              {selectedDate} is outside the 8-day writable window
+              {historyData
+                ? ` (${historyData.earliestDate} through ${historyData.latestDate})`
+                : ""}
+              . Records for this date are read-only.
+            </span>
           </div>
         )}
 
@@ -202,6 +240,7 @@ export function HabitHistoryDialog({ history }: HabitHistoryDialogProps) {
           <span className="habit-history-selected-notice">
             Viewing {selectedDate === historyData?.todayKey ? "Today, " : ""}
             {selectedDate}
+            {!isDateWritable ? " (Read-only)" : ""}
           </span>
         </div>
 
@@ -219,6 +258,11 @@ export function HabitHistoryDialog({ history }: HabitHistoryDialogProps) {
                   selectedDate={selectedDate}
                   checkIn={checkInsByHabitAndDay.get(`${habit.id}:${selectedDate}`)}
                   isEditing={editingHabitId === habit.id}
+                  isDateWritable={isDateWritable}
+                  editButtonRef={(el) => {
+                    if (el) editButtonRefs.current.set(habit.id, el);
+                    else editButtonRefs.current.delete(habit.id);
+                  }}
                   onStartEdit={() => setEditingHabitId(habit.id)}
                   onCancelEdit={() => {
                     clearDraft(habit.id, selectedDate);
@@ -243,6 +287,11 @@ export function HabitHistoryDialog({ history }: HabitHistoryDialogProps) {
                       selectedDate={selectedDate}
                       checkIn={checkInsByHabitAndDay.get(`${habit.id}:${selectedDate}`)}
                       isEditing={editingHabitId === habit.id}
+                      isDateWritable={isDateWritable}
+                      editButtonRef={(el) => {
+                        if (el) editButtonRefs.current.set(habit.id, el);
+                        else editButtonRefs.current.delete(habit.id);
+                      }}
                       onStartEdit={() => setEditingHabitId(habit.id)}
                       onCancelEdit={() => {
                         clearDraft(habit.id, selectedDate);
@@ -314,6 +363,8 @@ function HabitHistoryRow({
   selectedDate,
   checkIn,
   isEditing,
+  isDateWritable,
+  editButtonRef,
   onStartEdit,
   onCancelEdit,
   draft,
@@ -327,6 +378,8 @@ function HabitHistoryRow({
   selectedDate: string;
   checkIn?: HabitHistoryCheckIn;
   isEditing: boolean;
+  isDateWritable: boolean;
+  editButtonRef: (el: HTMLButtonElement | null) => void;
   onStartEdit: () => void;
   onCancelEdit: () => void;
   draft: ReturnType<ReturnType<typeof useHabitHistory>["getDraft"]>;
@@ -342,6 +395,15 @@ function HabitHistoryRow({
   const isArchived = habit.status === "ARCHIVED";
   const isSaving = Boolean(pending?.isSaving);
   const isUncertain = Boolean(pending?.isUncertain);
+  const inputsDisabled = isSaving || isUncertain || !isDateWritable;
+  const canSave = draft.done !== null && !isSaving && isDateWritable;
+
+  const firstActionRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    if (isEditing) {
+      firstActionRef.current?.focus();
+    }
+  }, [isEditing]);
 
   return (
     <div
@@ -354,6 +416,11 @@ function HabitHistoryRow({
           <span className="habit-history-habit-name">
             {habit.name}
             {isArchived && <span className="habit-history-badge">Archived</span>}
+            {isUncertain && (
+              <span className="habit-history-badge habit-history-badge--warning">
+                Save uncertain
+              </span>
+            )}
           </span>
           <span className="habit-history-cadence-label">
             {habit.cadence === "DAILY" ? "Daily" : `${habit.targetPerWeek}× per week`}
@@ -380,14 +447,32 @@ function HabitHistoryRow({
           )}
 
           {!isEditing && (
-            <button
-              type="button"
-              className="text-button"
-              aria-label={`Record or edit ${habit.name} on ${selectedDate}`}
-              onClick={onStartEdit}
-            >
-              {checkIn ? "Edit" : "Record"}
-            </button>
+            <>
+              {isUncertain && (
+                <button
+                  type="button"
+                  className="secondary-button"
+                  aria-label={`Check server status for ${habit.name} on ${selectedDate}`}
+                  onClick={onReconcile}
+                  disabled={isSaving}
+                >
+                  Check status
+                </button>
+              )}
+              {isDateWritable ? (
+                <button
+                  ref={editButtonRef}
+                  type="button"
+                  className="text-button"
+                  aria-label={checkIn ? `Edit ${habit.name} on ${selectedDate}` : `Record ${habit.name} on ${selectedDate}`}
+                  onClick={onStartEdit}
+                >
+                  {checkIn ? "Edit" : "Record"}
+                </button>
+              ) : !isUncertain ? (
+                <span className="habit-history-readonly-label">Read-only</span>
+              ) : null}
+            </>
           )}
         </div>
       </div>
@@ -396,13 +481,14 @@ function HabitHistoryRow({
         <div className="habit-history-editor">
           <div className="habit-history-choice-group" role="group" aria-label={`Status for ${habit.name}`}>
             <button
+              ref={firstActionRef}
               type="button"
               className={`secondary-button habit-choice-btn ${
                 draft.done === true ? "habit-choice-btn--selected" : ""
               }`}
               aria-pressed={draft.done === true}
               onClick={() => setDraft({ done: true })}
-              disabled={isSaving}
+              disabled={inputsDisabled}
             >
               Done
             </button>
@@ -413,34 +499,44 @@ function HabitHistoryRow({
               }`}
               aria-pressed={draft.done === false}
               onClick={() => setDraft({ done: false })}
-              disabled={isSaving}
+              disabled={inputsDisabled}
             >
               Not done
             </button>
           </div>
 
           <div className="habit-history-fields-row">
-            <div className="habit-history-input-wrapper">
+            <div className="habit-history-field">
+              <label
+                htmlFor={`habit-amount-${habit.id}-${selectedDate}`}
+                className="habit-history-field-label"
+              >
+                Amount <span className="habit-history-field-optional">(optional)</span>
+              </label>
               <input
+                id={`habit-amount-${habit.id}-${selectedDate}`}
                 type="number"
                 min={0}
                 max={1000000}
                 value={draft.amount}
                 onChange={(e) => setDraft({ amount: e.target.value, touchedAmount: true })}
-                placeholder="Amount (optional)"
-                aria-label={`Amount for ${habit.name}`}
-                disabled={isSaving}
+                disabled={inputsDisabled}
               />
             </div>
-            <div className="habit-history-input-wrapper">
+            <div className="habit-history-field">
+              <label
+                htmlFor={`habit-note-${habit.id}-${selectedDate}`}
+                className="habit-history-field-label"
+              >
+                Note <span className="habit-history-field-optional">(optional)</span>
+              </label>
               <textarea
+                id={`habit-note-${habit.id}-${selectedDate}`}
                 rows={2}
                 maxLength={2000}
                 value={draft.note}
                 onChange={(e) => setDraft({ note: e.target.value, touchedNote: true })}
-                placeholder="Note (optional)"
-                aria-label={`Note for ${habit.name}`}
-                disabled={isSaving}
+                disabled={inputsDisabled}
               />
             </div>
           </div>
@@ -455,10 +551,10 @@ function HabitHistoryRow({
             <button
               type="button"
               className="primary-button"
-              disabled={draft.done === null || isSaving}
+              disabled={!canSave}
               onClick={onSave}
             >
-              {isSaving ? "Saving…" : "Save"}
+              {isSaving ? "Saving…" : isUncertain ? "Retry save" : "Save"}
             </button>
             <button
               type="button"
@@ -466,14 +562,15 @@ function HabitHistoryRow({
               disabled={isSaving}
               onClick={onCancelEdit}
             >
-              Cancel
+              {isUncertain ? "Close editor" : "Cancel"}
             </button>
             {isUncertain && (
               <button
                 type="button"
-                className="text-button"
+                className="secondary-button"
                 onClick={onReconcile}
                 disabled={isSaving}
+                aria-label={`Check server status for ${habit.name} on ${selectedDate}`}
               >
                 Check status
               </button>

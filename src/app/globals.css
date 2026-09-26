@@ -5985,6 +5985,12 @@ html[data-layout-mode="phone"] .habits-card {
   color: var(--danger, #b91c1c);
 }
 
+.habit-history-banner--info {
+  background: rgba(59, 130, 246, 0.1);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  color: var(--info, #2563eb);
+}
+
 .habit-history-date-bar {
   display: flex;
   gap: 6px;
@@ -6209,14 +6215,44 @@ html[data-layout-mode="phone"] .habits-card {
   flex-wrap: wrap;
 }
 
-.habit-history-input-wrapper:first-child {
-  width: 120px;
+.habit-history-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.habit-history-field:first-child {
+  width: 130px;
   flex-shrink: 0;
 }
 
-.habit-history-input-wrapper:last-child {
+.habit-history-field:last-child {
   flex: 1;
   min-width: 180px;
+}
+
+.habit-history-field-label {
+  font-size: var(--text-2xs);
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.habit-history-field-optional {
+  font-weight: 400;
+  opacity: 0.8;
+}
+
+.habit-history-badge--warning {
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--warning, #b45309);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.habit-history-readonly-label {
+  font-size: var(--text-xs);
+  color: var(--muted);
+  font-style: italic;
+  padding: 4px 6px;
 }
 
 .habit-history-fields-row input,
@@ -6255,7 +6291,7 @@ html[data-layout-mode="phone"] .habits-card {
   .habit-history-fields-row {
     flex-direction: column;
   }
-  .habit-history-input-wrapper:first-child {
+  .habit-history-field:first-child {
     width: 100%;
   }
 }

@@ -7,7 +7,7 @@ import type {
   HabitSummary
 } from "@/modules/evidence/domain/habit";
 import { useModalFocusTrap } from "@/components/use-modal-focus-trap";
-import { useHabitHistory } from "./use-habit-history";
+import type { useHabitHistory } from "./use-habit-history";
 import { HabitHistoryDialog } from "./habit-history-dialog";
 
 /**
@@ -43,8 +43,7 @@ export function HabitsCard({
   busyHabitIds,
   createPending,
   reorderPending,
-  habitHistory,
-  refreshAfterConfirmedMutation
+  habitHistory
 }: {
   habits: HabitSummary[];
   todayKey: string;
@@ -67,14 +66,9 @@ export function HabitsCard({
   busyHabitIds: ReadonlySet<string>;
   createPending: boolean;
   reorderPending?: boolean;
-  habitHistory?: ReturnType<typeof useHabitHistory>;
-  refreshAfterConfirmedMutation?: () => Promise<boolean>;
+  habitHistory: ReturnType<typeof useHabitHistory>;
 }) {
-  const internalHistory = useHabitHistory({
-    initialTodayKey: todayKey,
-    refreshAfterConfirmedMutation
-  });
-  const history = habitHistory ?? internalHistory;
+  const history = habitHistory;
 
   const [draft, setDraft] = useState("");
   const [cadence, setCadence] = useState<HabitCadenceValue>("DAILY");

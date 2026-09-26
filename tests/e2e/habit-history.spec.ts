@@ -433,7 +433,7 @@ test.describe("Habit History & Backfill (Real Routes)", () => {
     const discardDialog = page.getByRole("alertdialog", { name: "Discard unsaved edits?" });
     await expect(discardDialog).toBeVisible();
 
-    // 5. "Keep editing" retains draft and focus
+    // 5. "Keep editing" retains draft and focus inside dialog
     const keepBtn = discardDialog.getByRole("button", { name: "Keep editing" });
     await expect(keepBtn).toBeVisible();
     await keepBtn.click();
@@ -444,6 +444,14 @@ test.describe("Habit History & Backfill (Real Routes)", () => {
     await expect(editorDate2.getByLabel(/^Amount/)).toHaveValue("99");
     await expect(editorDate2.getByLabel(/^Note/)).toHaveValue("Date 2 draft in progress");
 
+    await expect.poll(async () => {
+      return page.evaluate(() => {
+        const active = document.activeElement;
+        const modal = document.querySelector(".habit-history-dialog");
+        return Boolean(active && active !== document.body && modal?.contains(active));
+      });
+    }).toBe(true);
+
     // 6. Escape again and click "Discard and close": closes dialog and restores History opener focus immediately
     await page.keyboard.press("Escape");
     await expect(discardDialog).toBeVisible();
@@ -452,6 +460,79 @@ test.describe("Habit History & Backfill (Real Routes)", () => {
     await discardBtn.click();
 
     await expect(discardDialog).not.toBeVisible();
+    await expect(dialog).not.toBeVisible();
+    await expect(historyBtn).toBeFocused();
+  });
+
+  test("Confirmation focus lifecycle: Keep editing and confirmation Escape return inside dialog, clean close returns to History opener", async ({ page }) => {
+    const habit = await createHabit(page, "Focus Cycle Habit");
+
+    await openToday(page);
+    const historyBtn = page.getByRole("button", { name: "History" });
+    await historyBtn.click();
+
+    const dialog = page.getByRole("dialog", { name: "Habit history" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Refresh habit history" })).toBeEnabled();
+
+    // 1. Clean close from freshly opened dialog returns focus to History opener
+    await page.keyboard.press("Escape");
+    await expect(dialog).not.toBeVisible();
+    await expect(historyBtn).toBeFocused();
+
+    // Reopen dialog and enter dirty draft
+    await historyBtn.click();
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Refresh habit history" })).toBeEnabled();
+
+    const habitRow = dialog.locator(`[data-habit="${habit.id}"]`);
+    await habitRow.getByRole("button", { name: /Record Focus Cycle Habit/ }).click();
+    const editor = habitRow.locator(".habit-history-editor");
+    await expect(editor).toBeVisible();
+    await editor.getByLabel(/^Note/).fill("Unsaved draft for focus cycle");
+
+    // 2. Escape triggers confirmation; Keep editing returns focus inside main dialog with draft intact
+    await page.keyboard.press("Escape");
+    const discardDialog = page.getByRole("alertdialog", { name: "Discard unsaved edits?" });
+    await expect(discardDialog).toBeVisible();
+
+    const keepBtn = discardDialog.getByRole("button", { name: "Keep editing" });
+    await keepBtn.click();
+
+    await expect(discardDialog).not.toBeVisible();
+    await expect(dialog).toBeVisible();
+    await expect(editor.getByLabel(/^Note/)).toHaveValue("Unsaved draft for focus cycle");
+
+    await expect.poll(async () => {
+      return page.evaluate(() => {
+        const active = document.activeElement;
+        const modal = document.querySelector(".habit-history-dialog");
+        return Boolean(active && active !== document.body && modal?.contains(active));
+      });
+    }).toBe(true);
+
+    // 3. Escape triggers confirmation again; pressing Escape on confirmation dismisses it without closing History
+    await page.keyboard.press("Escape");
+    await expect(discardDialog).toBeVisible();
+
+    await page.keyboard.press("Escape");
+    await expect(discardDialog).not.toBeVisible();
+    await expect(dialog).toBeVisible();
+    await expect(editor.getByLabel(/^Note/)).toHaveValue("Unsaved draft for focus cycle");
+
+    await expect.poll(async () => {
+      return page.evaluate(() => {
+        const active = document.activeElement;
+        const modal = document.querySelector(".habit-history-dialog");
+        return Boolean(active && active !== document.body && modal?.contains(active));
+      });
+    }).toBe(true);
+
+    // 4. Cancel editing (clearing dirty state) and clean close via Close button returns focus to History opener
+    await editor.getByRole("button", { name: "Cancel" }).click();
+    await expect(editor).not.toBeVisible();
+
+    await dialog.getByRole("button", { name: "Close habit history" }).click();
     await expect(dialog).not.toBeVisible();
     await expect(historyBtn).toBeFocused();
   });

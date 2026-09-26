@@ -4,14 +4,16 @@
  * Scope:
  * 1. REAL ENDPOINTS (Real SQLite via Next.js server):
  *    - Empty active list + archived habit discovery
- *    - Oldest writable date (today - 7) backfill
- *    - Preserving zero amounts (amount: 0) and notes verbatim
+ *    - Archived habit post-archive false record (done: false within window)
+ *    - Omitted field preservation vs null clearing on edit
  *    - Cross-reload SQLite persistence and Today card reflection
  *    - Accessibility: persistent visible labels, verbatim label in name, focus restoration on Cancel/Save
  *
  * 2. LABELLED MOCKED SCENARIOS (Deterministic fault injection):
- *    - Network failure triggers uncertain state, disables inputs, enables exact-date reconciliation
- *    - Expired date displays read-only notice banner and prevents new mutations
+ *    - Global pending UI: in-flight save blocks concurrent saves and check status while preserving draft edits
+ *    - Network failure triggers uncertain state, disables inputs, enables exact-date reconciliation with accessible name
+ *    - U2 chronology: expired date displays read-only notice banner, disables Save, retains uncertain intention, and preserves exact-date reconciliation
+ *    - Saved-write / read-refresh-failure displays warning banner without falsifying write, enabling GET-only retry
  */
 
 import { expect, test, type Page } from "@playwright/test";
@@ -47,7 +49,7 @@ async function archiveHabit(page: Page, habitId: string) {
 }
 
 test.describe("Habit History & Backfill (Real Routes)", () => {
-  test("Full real-route flow: empty active list, archived discovery, oldest writable date, zero/note persistence, and reload reflection", async ({ page }) => {
+  test("Full real-route flow: archived habit post-archive false record, omitted vs cleared fields, and reload persistence", async ({ page }) => {
     // 1. Create a habit and immediately archive it so active list is empty
     const habitA = await createHabit(page, "Archived Habit A");
     await archiveHabit(page, habitA.id);
@@ -74,17 +76,7 @@ test.describe("Habit History & Backfill (Real Routes)", () => {
     await expect(archivedRow).toBeVisible();
     await expect(archivedRow.getByText("Archived")).toBeVisible();
 
-    // 4. Create an active habit via real API
-    const habitB = await createHabit(page, "Morning Stretch");
-
-    // Click Refresh in dialog to reload real data from SQLite
-    await dialog.getByRole("button", { name: "Refresh habit history" }).click();
-
-    const activeRow = dialog.locator(`[data-habit="${habitB.id}"]`);
-    await expect(activeRow).toBeVisible();
-    await expect(activeRow.getByText("Morning Stretch")).toBeVisible();
-
-    // 5. Select the oldest writable date (first button in the 8-date bar)
+    // 4. Record post-archive explicit false (Not done) on the oldest writable date
     const dateBar = dialog.getByRole("region", { name: "Select history date" });
     const dateButtons = dateBar.locator("button.habit-history-date-btn");
     await expect(dateButtons).toHaveCount(8);
@@ -93,41 +85,83 @@ test.describe("Habit History & Backfill (Real Routes)", () => {
     await oldestDateBtn.click();
     await expect(oldestDateBtn).toHaveAttribute("aria-pressed", "true");
 
-    // Click Record on Morning Stretch for the oldest day
-    const recordBtn = activeRow.getByRole("button", { name: /Record Morning Stretch/ });
-    await expect(recordBtn).toBeVisible();
-    await recordBtn.click();
+    const recordArchivedBtn = archivedRow.getByRole("button", { name: /Record Archived Habit A/ });
+    await expect(recordArchivedBtn).toBeVisible();
+    await recordArchivedBtn.click();
 
-    // Inline editor appears
-    const editor = activeRow.locator(".habit-history-editor");
-    await expect(editor).toBeVisible();
+    const archivedEditor = archivedRow.locator(".habit-history-editor");
+    await expect(archivedEditor).toBeVisible();
 
-    // Select Done
-    await editor.getByRole("button", { name: "Done", exact: true }).click();
+    // Select "Not done" (explicit false record)
+    await archivedEditor.getByRole("button", { name: "Not done", exact: true }).click();
+    await archivedEditor.getByLabel(/^Amount/).fill("0");
+    await archivedEditor.getByLabel(/^Note/).fill("Archived miss recorded");
 
-    // Enter Amount 0 (verifying 0 is preserved and not coerced to null)
-    const amountInput = editor.getByLabel(/^Amount/);
-    await expect(amountInput).toBeVisible();
-    await amountInput.fill("0");
+    const saveArchivedBtn = archivedEditor.getByRole("button", { name: "Save" });
+    await saveArchivedBtn.click();
 
-    // Enter Note
-    const noteInput = editor.getByLabel(/^Note/);
-    await expect(noteInput).toBeVisible();
-    await noteInput.fill("Recorded on oldest backfill day");
+    await expect(archivedEditor).not.toBeVisible();
+    await expect(archivedRow.locator(".habit-history-state-tag--notDone")).toContainText("Not done");
+    await expect(archivedRow.getByText("Amount: 0")).toBeVisible();
+    await expect(archivedRow.getByText("“Archived miss recorded”")).toBeVisible();
 
-    // Save to real SQLite
-    const saveBtn = editor.getByRole("button", { name: "Save" });
-    await saveBtn.click();
+    // 5. Create an active habit via real API
+    const habitB = await createHabit(page, "Hydration");
 
-    // Editor closes on confirmed save
-    await expect(editor).not.toBeVisible();
+    // Click Refresh in dialog to reload real data from SQLite
+    await dialog.getByRole("button", { name: "Refresh habit history" }).click();
 
-    // Verify row displays recorded state on oldest day
+    const activeRow = dialog.locator(`[data-habit="${habitB.id}"]`);
+    await expect(activeRow).toBeVisible();
+    await expect(activeRow.getByText("Hydration")).toBeVisible();
+
+    // 6. Record on Today with initial amount & note
+    const todayBtn = dateButtons.last();
+    await todayBtn.click();
+    await expect(todayBtn).toHaveAttribute("aria-pressed", "true");
+
+    const recordTodayBtn = activeRow.getByRole("button", { name: /Record Hydration/ });
+    await recordTodayBtn.click();
+
+    const activeEditor = activeRow.locator(".habit-history-editor");
+    await activeEditor.getByRole("button", { name: "Done", exact: true }).click();
+    await activeEditor.getByLabel(/^Amount/).fill("8");
+    await activeEditor.getByLabel(/^Note/).fill("8 glasses of water");
+    await activeEditor.getByRole("button", { name: "Save" }).click();
+    await expect(activeEditor).not.toBeVisible();
+
     await expect(activeRow.locator(".habit-history-state-tag--done")).toContainText("Done");
-    await expect(activeRow.getByText("Amount: 0")).toBeVisible();
-    await expect(activeRow.getByText("“Recorded on oldest backfill day”")).toBeVisible();
+    await expect(activeRow.getByText("Amount: 8")).toBeVisible();
+    await expect(activeRow.getByText("“8 glasses of water”")).toBeVisible();
 
-    // 6. Close dialog and reload page to test persistence from real SQLite database
+    // 7. Omitted field preservation: Edit without touching Amount or Note
+    const editBtn = activeRow.getByRole("button", { name: /Edit Hydration/ });
+    await editBtn.click();
+    await expect(activeEditor).toBeVisible();
+
+    // Click Save directly without typing into Amount or Note
+    await activeEditor.getByRole("button", { name: "Save" }).click();
+    await expect(activeEditor).not.toBeVisible();
+
+    // Amount: 8 and note must still be preserved verbatim
+    await expect(activeRow.getByText("Amount: 8")).toBeVisible();
+    await expect(activeRow.getByText("“8 glasses of water”")).toBeVisible();
+
+    // 8. Null clearing: Edit and explicitly clear Amount and Note
+    await activeRow.getByRole("button", { name: /Edit Hydration/ }).click();
+    await expect(activeEditor).toBeVisible();
+
+    await activeEditor.getByLabel(/^Amount/).fill("");
+    await activeEditor.getByLabel(/^Note/).fill("");
+    await activeEditor.getByRole("button", { name: "Save" }).click();
+    await expect(activeEditor).not.toBeVisible();
+
+    // State is still Done, but Amount and Note are cleared
+    await expect(activeRow.locator(".habit-history-state-tag--done")).toContainText("Done");
+    await expect(activeRow.getByText("Amount: 8")).not.toBeVisible();
+    await expect(activeRow.getByText("“8 glasses of water”")).not.toBeVisible();
+
+    // 9. Close dialog and reload page to test persistence from real SQLite database
     await dialog.getByRole("button", { name: "Close habit history" }).click();
     await expect(dialog).not.toBeVisible();
 
@@ -138,35 +172,30 @@ test.describe("Habit History & Backfill (Real Routes)", () => {
       })
     ).toBeVisible();
 
-    // Reopen history dialog and check oldest day
+    // Reopen history dialog and check oldest day for Habit A
     await page.getByRole("button", { name: "History" }).click();
     await expect(dialog).toBeVisible();
+    await dialog.getByLabel(/Show archived/).check();
 
     const reopenedDateButtons = dialog.locator("button.habit-history-date-btn");
     await reopenedDateButtons.first().click();
 
-    const persistedRow = dialog.locator(`[data-habit="${habitB.id}"]`);
-    await expect(persistedRow.locator(".habit-history-state-tag--done")).toContainText("Done");
-    await expect(persistedRow.getByText("Amount: 0")).toBeVisible();
-    await expect(persistedRow.getByText("“Recorded on oldest backfill day”")).toBeVisible();
+    const persistedArchivedRow = dialog.locator(`[data-habit="${habitA.id}"]`);
+    await expect(persistedArchivedRow.locator(".habit-history-state-tag--notDone")).toContainText("Not done");
+    await expect(persistedArchivedRow.getByText("Amount: 0")).toBeVisible();
+    await expect(persistedArchivedRow.getByText("“Archived miss recorded”")).toBeVisible();
 
-    // 7. Select Today in history, record it, and verify Today card updates
-    const todayBtn = reopenedDateButtons.last();
-    await todayBtn.click();
-
-    const todayRecordBtn = persistedRow.getByRole("button", { name: /Record Morning Stretch/ });
-    await todayRecordBtn.click();
-
-    const todayEditor = persistedRow.locator(".habit-history-editor");
-    await todayEditor.getByRole("button", { name: "Done", exact: true }).click();
-    await todayEditor.getByRole("button", { name: "Save" }).click();
-    await expect(todayEditor).not.toBeVisible();
+    // Check Today for Habit B
+    await reopenedDateButtons.last().click();
+    const persistedActiveRow = dialog.locator(`[data-habit="${habitB.id}"]`);
+    await expect(persistedActiveRow.locator(".habit-history-state-tag--done")).toContainText("Done");
+    await expect(persistedActiveRow.getByText("Amount:")).not.toBeVisible();
 
     await dialog.getByRole("button", { name: "Close habit history" }).click();
     await expect(dialog).not.toBeVisible();
 
     // Habits card on Today page reflects check-in recorded for today
-    const cardToggle = page.getByRole("region", { name: "Habits" }).getByRole("button", { name: /Morning Stretch:/ });
+    const cardToggle = page.getByRole("region", { name: "Habits" }).getByRole("button", { name: /Hydration:/ });
     await expect(cardToggle).toHaveAttribute("aria-pressed", "true");
     await expect(cardToggle).toContainText("done today");
   });
@@ -252,7 +281,113 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
     checkIns: []
   };
 
-  test("MOCKED FAULT: network failure on save retains uncertain intention, disables inputs, and provides exact-date reconciliation", async ({ page }) => {
+  test("MOCKED FAULT: global pending UI disables concurrent saves and check status while preserving draft editing and navigation", async ({ page }) => {
+    const multiHabitPayload: HabitHistoryPayload = {
+      ...mockHistoryPayload,
+      habits: [
+        mockHistoryPayload.habits[0],
+        {
+          id: "mock-habit-2",
+          name: "Morning Meditation",
+          cadence: "DAILY",
+          targetPerWeek: 7,
+          status: "ACTIVE",
+          sortOrder: 1,
+          createdAt: "2026-09-18T00:00:00.000Z",
+          archivedAt: null,
+          createdDay: "2026-09-18",
+          archivedDay: null
+        }
+      ]
+    };
+
+    let historyState = multiHabitPayload;
+    await page.route("**/api/habits/history", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(historyState)
+      });
+    });
+
+    const saveGate: { resolve?: () => void } = {};
+    await page.route("**/api/habits/mock-habit-1/check-in", async (route) => {
+      if (route.request().method() === "PUT") {
+        await new Promise<void>((resolve) => {
+          saveGate.resolve = resolve;
+        });
+        const saved = {
+          id: "ci-1",
+          habitId: "mock-habit-1",
+          date: "2026-09-26T12:00:00.000Z",
+          day: "2026-09-26",
+          done: true,
+          amount: null,
+          note: null
+        };
+        historyState = {
+          ...historyState,
+          checkIns: [...historyState.checkIns, saved]
+        };
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(saved)
+        });
+      } else {
+        await route.continue();
+      }
+    });
+
+    await openToday(page);
+    await page.getByRole("button", { name: "History" }).click();
+
+    const dialog = page.getByRole("dialog", { name: "Habit history" });
+    const row1 = dialog.locator('[data-habit="mock-habit-1"]');
+    const row2 = dialog.locator('[data-habit="mock-habit-2"]');
+
+    // Start save on Habit 1
+    await row1.getByRole("button", { name: /Record/ }).click();
+    const editor1 = row1.locator(".habit-history-editor");
+    await editor1.getByRole("button", { name: "Done", exact: true }).click();
+    await editor1.getByRole("button", { name: "Save" }).click();
+
+    // Habit 1 is now in-flight saving
+    await expect(editor1.getByRole("button", { name: "Saving…" })).toBeVisible();
+
+    // Dialog Header actions are disabled while any save is in flight
+    await expect(dialog.getByRole("button", { name: "Refresh habit history" })).toBeDisabled();
+    await expect(dialog.getByRole("button", { name: "Close habit history" })).toBeDisabled();
+
+    // Start editing Habit 2 while Habit 1 is saving
+    await row2.getByRole("button", { name: /Record/ }).click();
+    const editor2 = row2.locator(".habit-history-editor");
+    await expect(editor2).toBeVisible();
+
+    // Draft editing is NOT blocked: user can still mark Done and enter text
+    await editor2.getByRole("button", { name: "Done", exact: true }).click();
+    await editor2.getByLabel(/^Note/).fill("Mindful breathing");
+
+    // But Habit 2's Save button is disabled and displays visible busy note
+    const save2Btn = editor2.getByRole("button", { name: "Save" });
+    await expect(save2Btn).toBeDisabled();
+    await expect(save2Btn).toHaveAttribute("title", "Another check-in save is still finishing.");
+    await expect(editor2.locator(".habit-history-busy-note")).toContainText("Another save in progress…");
+
+    // Now resolve Habit 1 save
+    saveGate.resolve?.();
+
+    // Habit 1 completes and closes
+    await expect(editor1).not.toBeVisible();
+    await expect(row1.locator(".habit-history-state-tag--done")).toContainText("Done");
+
+    // Habit 2's Save button becomes enabled and busy note clears
+    await expect(save2Btn).toBeEnabled();
+    await expect(editor2.locator(".habit-history-busy-note")).not.toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Close habit history" })).toBeEnabled();
+  });
+
+  test("MOCKED FAULT: network failure on save retains uncertain intention, disables inputs, and provides exact-date reconciliation with truthful accessible name", async ({ page }) => {
     await page.route("**/api/habits/history", async (route) => {
       await route.fulfill({
         status: 200,
@@ -290,8 +425,10 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
     await expect(editor.getByLabel(/^Amount/)).toBeDisabled();
     await expect(editor.getByLabel(/^Note/)).toBeDisabled();
 
-    // "Check status" reconciliation button is visible
-    const checkStatusBtn = editor.getByRole("button", { name: "Check status" });
+    // "Check status" reconciliation button is visible with truthful accessible name
+    const checkStatusBtn = editor.getByRole("button", {
+      name: /^Check status for Evening Stroll on 2026-09-26/
+    });
     await expect(checkStatusBtn).toBeVisible();
 
     // Save button allows retry of the same intention
@@ -312,7 +449,7 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
           checkIn: {
             id: "reconciled-ci-1",
             habitId: "mock-habit-1",
-            date: "2026-09-26T00:00:00.000Z",
+            date: "2026-09-26T12:00:00.000Z",
             day: "2026-09-26",
             done: true,
             amount: 5,
@@ -331,29 +468,222 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
     await expect(habitRow.getByText("Amount: 5")).toBeVisible();
   });
 
-  test("MOCKED FAULT: expired date displays read-only banner and preserves reconciliation affordance", async ({ page }) => {
-    // Provide history with selected date being expired (e.g., 2026-09-10 when earliest is 2026-09-19)
+  test("MOCKED FAULT: U2 chronology — expired date displays read-only notice banner, disables Save, retains uncertain intention, and preserves exact-date reconciliation", async ({ page }) => {
+    let currentHistory = mockHistoryPayload;
+
     await page.route("**/api/habits/history", async (route) => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify(mockHistoryPayload)
+        body: JSON.stringify(currentHistory)
       });
+    });
+
+    // Mock PUT to simulate a dropped network response
+    await page.route("**/api/habits/*/check-in", async (route) => {
+      if (route.request().method() === "PUT") {
+        await route.abort("failed");
+      } else {
+        await route.continue();
+      }
     });
 
     await openToday(page);
     await page.getByRole("button", { name: "History" }).click();
 
     const dialog = page.getByRole("dialog", { name: "Habit history" });
+    const habitRow = dialog.locator('[data-habit="mock-habit-1"]');
 
-    // The date bar contains exactly 8 in-window dates (no 9th button added)
+    // 1. Select the oldest writable date (2026-09-19)
     const dateButtons = dialog.locator("button.habit-history-date-btn");
     await expect(dateButtons).toHaveCount(8);
+    await dateButtons.first().click();
 
-    // If an expired date is viewed, the read-only notice banner is displayed
-    // Verify that the read-only banner styling exists in the document
+    // In-window date: read-only notice banner is NOT visible
     const banner = dialog.locator(".habit-history-banner--info");
-    // When date is within window, banner is not present
     await expect(banner).not.toBeVisible();
+
+    // 2. Start recording on the oldest date and lose save response
+    await habitRow.getByRole("button", { name: /Record/ }).click();
+    const editor = habitRow.locator(".habit-history-editor");
+
+    await editor.getByRole("button", { name: "Done", exact: true }).click();
+    await editor.getByLabel(/^Amount/).fill("10");
+    await editor.getByLabel(/^Note/).fill("Oldest day attempt");
+
+    await editor.getByRole("button", { name: "Save" }).click();
+
+    // Mutation becomes uncertain
+    await expect(habitRow.getByText("Save uncertain")).toBeVisible();
+    const retryBtn = editor.getByRole("button", { name: /Retry save/ });
+    await expect(retryBtn).toBeVisible();
+
+    // 3. Advance mocked SERVER window by one calendar day:
+    // Window shifts from 2026-09-19..2026-09-26 to 2026-09-20..2026-09-27.
+    // 2026-09-19 is now an EXPIRED date!
+    currentHistory = {
+      ...mockHistoryPayload,
+      todayKey: "2026-09-27",
+      earliestDate: "2026-09-20",
+      latestDate: "2026-09-27"
+    };
+
+    // Refresh history
+    await dialog.getByRole("button", { name: "Refresh habit history" }).click();
+
+    // 4. Assert original selected date (2026-09-19) is retained!
+    await expect(dialog.locator(".habit-history-selected-notice")).toContainText("2026-09-19 (Read-only)");
+
+    // 5. Exactly eight writable buttons in the date bar
+    await expect(dateButtons).toHaveCount(8);
+
+    // 6. Expired banner IS VISIBLE and truthful!
+    await expect(banner).toBeVisible();
+    await expect(banner).toContainText("2026-09-19 is outside the 8-day writable window");
+    await expect(banner).toContainText("Records for this date are read-only.");
+
+    // 7. Save button is DISABLED on the expired date!
+    await expect(retryBtn).toBeDisabled();
+
+    // 8. Uncertain intention is retained!
+    await expect(habitRow.getByText("Save uncertain")).toBeVisible();
+
+    // 9. Reconciliation affordance is preserved even on expired date!
+    const checkStatusBtn = editor.getByRole("button", {
+      name: /^Check status for Evening Stroll on 2026-09-19/
+    });
+    await expect(checkStatusBtn).toBeVisible();
+    await expect(checkStatusBtn).toBeEnabled();
+
+    // 10. Exact-date GET for original now-expired date returns truthful result
+    await page.route("**/api/habits/*/check-in?date=2026-09-19", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          todayKey: "2026-09-27",
+          earliestDate: "2026-09-20",
+          latestDate: "2026-09-27",
+          habitId: "mock-habit-1",
+          date: "2026-09-19",
+          checkIn: {
+            id: "reconciled-expired-1",
+            habitId: "mock-habit-1",
+            date: "2026-09-19T12:00:00.000Z",
+            day: "2026-09-19",
+            done: true,
+            amount: 10,
+            note: "Oldest day attempt"
+          }
+        })
+      });
+    });
+
+    await checkStatusBtn.click();
+
+    // 11. After reconciliation, editor closes and truthful evidence shows Done
+    await expect(editor).not.toBeVisible();
+    await expect(habitRow.locator(".habit-history-state-tag--done")).toContainText("Done");
+    await expect(habitRow.getByText("Amount: 10")).toBeVisible();
+    await expect(habitRow.getByText("“Oldest day attempt”")).toBeVisible();
+  });
+
+  test("MOCKED FAULT: saved-write / read-refresh-failure displays warning banner without falsifying write, and enables GET-only retry", async ({ page }) => {
+    let returnLoadError = false;
+    let historyState = mockHistoryPayload;
+
+    await page.route("**/api/habits/history", async (route) => {
+      if (returnLoadError) {
+        await route.fulfill({
+          status: 500,
+          contentType: "application/json",
+          body: JSON.stringify({ message: "Habit history could not be loaded." })
+        });
+      } else {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(historyState)
+        });
+      }
+    });
+
+    await page.route("**/api/habits/*/check-in", async (route) => {
+      if (route.request().method() === "PUT") {
+        // Successful write
+        returnLoadError = true; // Trailing history refresh will fail!
+        const saved = {
+          id: "saved-ci-1",
+          habitId: "mock-habit-1",
+          date: "2026-09-26T12:00:00.000Z",
+          day: "2026-09-26",
+          done: true,
+          amount: 3,
+          note: "Saved before refresh failed"
+        };
+        historyState = {
+          ...historyState,
+          checkIns: [...historyState.checkIns, saved]
+        };
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(saved)
+        });
+      } else {
+        await route.continue();
+      }
+    });
+
+    await openToday(page);
+    await page.getByRole("button", { name: "History" }).click();
+
+    const dialog = page.getByRole("dialog", { name: "Habit history" });
+    const habitRow = dialog.locator('[data-habit="mock-habit-1"]');
+
+    await habitRow.getByRole("button", { name: /Record/ }).click();
+    const editor = habitRow.locator(".habit-history-editor");
+
+    await editor.getByRole("button", { name: "Done", exact: true }).click();
+    await editor.getByLabel(/^Amount/).fill("3");
+    await editor.getByLabel(/^Note/).fill("Saved before refresh failed");
+
+    await editor.getByRole("button", { name: "Save" }).click();
+
+    // Editor closes because save itself was confirmed
+    await expect(editor).not.toBeVisible();
+
+    // Confirmed check-in is displayed on screen
+    await expect(habitRow.locator(".habit-history-state-tag--done")).toContainText("Done");
+    await expect(habitRow.getByText("Amount: 3")).toBeVisible();
+
+    // Warning banner appears indicating history refresh failure
+    const warningBanner = dialog.locator(".habit-history-banner--warning");
+    await expect(warningBanner).toBeVisible();
+    await expect(warningBanner).toContainText("History could not be refreshed. Confirmed check-ins already on screen stay put.");
+
+    // Now allow refresh to succeed
+    returnLoadError = false;
+
+    // Track requests to verify only GET is issued, no PUT
+    let putCount = 0;
+    let getCount = 0;
+    page.on("request", (req) => {
+      if (req.url().includes("/api/habits")) {
+        if (req.method() === "PUT") putCount++;
+        if (req.method() === "GET" && req.url().includes("/history")) getCount++;
+      }
+    });
+
+    // Click "Retry refresh" in the banner
+    await warningBanner.getByRole("button", { name: "Retry refresh" }).click();
+
+    // Warning banner disappears
+    await expect(warningBanner).not.toBeVisible();
+
+    // Confirmed check-in remains intact
+    await expect(habitRow.locator(".habit-history-state-tag--done")).toContainText("Done");
+    expect(putCount).toBe(0);
+    expect(getCount).toBeGreaterThanOrEqual(1);
   });
 });

@@ -192,7 +192,7 @@ export function HabitHistoryDialog({ history }: HabitHistoryDialogProps) {
             <span>
               {selectedDate} is outside the 8-day writable window
               {historyData
-                ? ` (${historyData.earliestDate} through ${historyData.latestDate})`
+                ? ` (${historyData?.earliestDate} through ${historyData?.latestDate})`
                 : ""}
               . Records for this date are read-only.
             </span>
@@ -274,6 +274,7 @@ export function HabitHistoryDialog({ history }: HabitHistoryDialogProps) {
                   onReconcile={() => void reconcileRecord(habit.id, selectedDate)}
                   error={errors.get(`${habit.id}:${selectedDate}`)}
                   pending={pendingMutations.get(`${habit.id}:${selectedDate}`)}
+                  isAnySaving={isAnySaving}
                 />
               ))}
 
@@ -303,6 +304,7 @@ export function HabitHistoryDialog({ history }: HabitHistoryDialogProps) {
                       onReconcile={() => void reconcileRecord(habit.id, selectedDate)}
                       error={errors.get(`${habit.id}:${selectedDate}`)}
                       pending={pendingMutations.get(`${habit.id}:${selectedDate}`)}
+                      isAnySaving={isAnySaving}
                     />
                   ))}
                 </div>
@@ -372,7 +374,8 @@ function HabitHistoryRow({
   onSave,
   onReconcile,
   error,
-  pending
+  pending,
+  isAnySaving
 }: {
   habit: HabitHistoryDefinition;
   selectedDate: string;
@@ -390,13 +393,15 @@ function HabitHistoryRow({
   onReconcile: () => void;
   error?: { message: string; field?: string };
   pending?: { mutationId: string; fingerprint: string; isUncertain: boolean; isSaving: boolean };
+  isAnySaving: boolean;
 }) {
   const state = computeDayState(habit, selectedDate, checkIn);
   const isArchived = habit.status === "ARCHIVED";
   const isSaving = Boolean(pending?.isSaving);
+  const isOtherSaving = isAnySaving && !isSaving;
   const isUncertain = Boolean(pending?.isUncertain);
   const inputsDisabled = isSaving || isUncertain || !isDateWritable;
-  const canSave = draft.done !== null && !isSaving && isDateWritable;
+  const canSave = draft.done !== null && !isSaving && !isOtherSaving && isDateWritable;
 
   const firstActionRef = useRef<HTMLButtonElement | null>(null);
   useEffect(() => {
@@ -452,9 +457,10 @@ function HabitHistoryRow({
                 <button
                   type="button"
                   className="secondary-button"
-                  aria-label={`Check server status for ${habit.name} on ${selectedDate}`}
+                  aria-label={`Check status for ${habit.name} on ${selectedDate}`}
                   onClick={onReconcile}
-                  disabled={isSaving}
+                  disabled={isSaving || isAnySaving}
+                  title={isAnySaving ? "Another check-in save is still finishing." : undefined}
                 >
                   Check status
                 </button>
@@ -553,6 +559,7 @@ function HabitHistoryRow({
               className="primary-button"
               disabled={!canSave}
               onClick={onSave}
+              title={isOtherSaving ? "Another check-in save is still finishing." : undefined}
             >
               {isSaving ? "Saving…" : isUncertain ? "Retry save" : "Save"}
             </button>
@@ -569,11 +576,17 @@ function HabitHistoryRow({
                 type="button"
                 className="secondary-button"
                 onClick={onReconcile}
-                disabled={isSaving}
-                aria-label={`Check server status for ${habit.name} on ${selectedDate}`}
+                disabled={isSaving || isAnySaving}
+                aria-label={`Check status for ${habit.name} on ${selectedDate}`}
+                title={isAnySaving ? "Another check-in save is still finishing." : undefined}
               >
                 Check status
               </button>
+            )}
+            {isOtherSaving && (
+              <span className="habit-history-busy-note" role="status">
+                Another save in progress…
+              </span>
             )}
           </div>
         </div>

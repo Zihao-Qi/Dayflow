@@ -6255,6 +6255,12 @@ html[data-layout-mode="phone"] .habits-card {
   padding: 4px 6px;
 }
 
+.habit-history-busy-note {
+  font-size: var(--text-xs);
+  color: var(--muted);
+  font-style: italic;
+}
+
 .habit-history-fields-row input,
 .habit-history-fields-row textarea {
   width: 100%;

@@ -121,10 +121,12 @@ export function WorkspaceShell() {
     deleteTimeBlock,
     busyHabitIds,
     habitCreatePending,
+    habitReorderPending,
     createHabitFromDraft,
     renameHabit,
     archiveHabit,
     recordHabitCheckIn,
+    reorderHabits,
     readRefreshFailed,
     clearReadRefreshFailed
   } = model;
@@ -249,8 +251,10 @@ export function WorkspaceShell() {
                 onCreate={createHabitFromDraft}
                 onRename={renameHabit}
                 onArchive={archiveHabit}
+                onReorder={reorderHabits}
                 busyHabitIds={busyHabitIds}
                 createPending={habitCreatePending}
+                reorderPending={habitReorderPending}
               />
             }
             onFocusTransition={focus.transition}

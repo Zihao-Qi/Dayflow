@@ -647,6 +647,7 @@ export type HabitRecord = {
   cadence: "DAILY" | "TIMES_PER_WEEK";
   targetPerWeek: number;
   status: "ACTIVE" | "ARCHIVED";
+  sortOrder?: number;
 };
 
 export function isHabitResponse(value: unknown): value is HabitRecord {
@@ -657,6 +658,23 @@ export function isHabitResponse(value: unknown): value is HabitRecord {
     typeof habit.name === "string" &&
     ["DAILY", "TIMES_PER_WEEK"].includes(String(habit.cadence)) &&
     Number.isInteger(habit.targetPerWeek) &&
-    ["ACTIVE", "ARCHIVED"].includes(String(habit.status))
+    ["ACTIVE", "ARCHIVED"].includes(String(habit.status)) &&
+    (habit.sortOrder === undefined || Number.isInteger(habit.sortOrder))
   );
 }
+
+export type HabitReorderRecord = {
+  ids: string[];
+};
+
+export function isHabitReorderResponse(
+  value: unknown
+): value is HabitReorderRecord {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Partial<HabitReorderRecord>;
+  return (
+    Array.isArray(record.ids) &&
+    record.ids.every((id) => typeof id === "string")
+  );
+}
+

@@ -11,6 +11,7 @@ import {
   readActiveHabits,
   readCheckIns,
   readHabitCheckIns,
+  reorderHabits,
   updateHabit,
   upsertCheckIn
 } from "../../src/modules/evidence/services/habits";
@@ -219,6 +220,29 @@ test("habit services run headlessly on SQLite", async (context) => {
       const ordered = [...rows].sort((left, right) => left.date.getTime() - right.date.getTime());
       assert.deepEqual(rows.map((row) => row.id), ordered.map((row) => row.id));
       assert.ok(rows.length >= 2);
+    });
+
+    await context.test("reordering updates sortOrder and subsequent creates append", async () => {
+      const h1 = await createHabit(tx, { name: "First", cadence: "DAILY", targetPerWeek: 7 });
+      const h2 = await createHabit(tx, { name: "Second", cadence: "DAILY", targetPerWeek: 7 });
+      const h3 = await createHabit(tx, { name: "Third", cadence: "DAILY", targetPerWeek: 7 });
+
+      const initial = await readActiveHabits(tx);
+      const currentIds = initial.map((h) => h.id);
+      const targetIds = [
+        ...currentIds.filter((id) => id !== h1.id && id !== h2.id && id !== h3.id),
+        h3.id,
+        h1.id,
+        h2.id
+      ];
+      await reorderHabits(tx, targetIds, currentIds);
+
+      const afterReorder = await readActiveHabits(tx);
+      assert.deepEqual(afterReorder.slice(-3).map((h) => h.id), [h3.id, h1.id, h2.id]);
+
+      const h4 = await createHabit(tx, { name: "Fourth", cadence: "DAILY", targetPerWeek: 7 });
+      const afterAppend = await readActiveHabits(tx);
+      assert.equal(afterAppend[afterAppend.length - 1].id, h4.id);
     });
   });
 });

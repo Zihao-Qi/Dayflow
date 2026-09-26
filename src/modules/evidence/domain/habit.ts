@@ -4,7 +4,7 @@ import {
   parseLocalDate,
   startOfLocalDay
 } from "@/shared/kernel/calendar";
-import { validation } from "@/shared/kernel/errors";
+import { AppError, validation } from "@/shared/kernel/errors";
 import { requestErrors } from "@/shared/kernel/request-errors";
 import {
   has,
@@ -12,11 +12,14 @@ import {
   parseBoundedInteger as kernelParseBoundedInteger,
   parseBoundedString,
   parseEnum,
-  parseNullableLocalDate
+  parseNullableLocalDate,
+  parseRecordId
 } from "@/shared/kernel/parsing";
 import { evidenceErrors } from "./activity";
 
 export const HABIT_NAME_MAX_LENGTH = 120;
+export const HABIT_ID_MAX_LENGTH = 191;
+export const HABIT_REORDER_MAX_ITEMS = 1_000;
 export const CHECK_IN_NOTE_MAX_LENGTH = 2_000;
 export const CHECK_IN_AMOUNT_MAXIMUM = 1_000_000;
 /** How far back a Check-in may be recorded. See docs/specs/CHECK_INS_V1.md. */
@@ -38,6 +41,11 @@ export type HabitPatchMutation = {
   cadence?: HabitCadenceValue;
   targetPerWeek?: number;
   sortOrder?: number;
+};
+
+export type HabitReorderMutation = {
+  ids: string[];
+  expectedIds: string[];
 };
 
 export type CheckInMutation = {
@@ -372,4 +380,83 @@ function parseBoundedInteger(
 
 function validationError(message: string, field: string) {
   return validation(message, field);
+}
+
+export function sameOrder(
+  left: readonly string[],
+  right: readonly string[]
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every((id, index) => id === right[index])
+  );
+}
+
+export function parseHabitIdArray(
+  value: unknown,
+  field: "ids" | "expectedIds"
+): string[] {
+  if (!Array.isArray(value)) {
+    throw validation(
+      `${field === "ids" ? "Habit identifiers" : "Expected habit identifiers"} must be an array.`,
+      field
+    );
+  }
+  if (value.length > HABIT_REORDER_MAX_ITEMS) {
+    throw validation(
+      `No more than ${HABIT_REORDER_MAX_ITEMS.toLocaleString("en-US")} habit identifiers can be reordered at once.`,
+      field
+    );
+  }
+  const ids = value.map((id) =>
+    parseRecordId(
+      id,
+      field,
+      evidenceErrors.habitIdentifierIsInvalid.message,
+      validationError,
+      { maximumLength: HABIT_ID_MAX_LENGTH, rejectControlCharacters: true }
+    )
+  );
+  if (new Set(ids).size !== ids.length) {
+    throw validation(
+      `${field === "ids" ? "Habit identifiers" : "Expected habit identifiers"} must not contain duplicates.`,
+      field
+    );
+  }
+  return ids;
+}
+
+export function parseHabitReorderMutation(
+  value: unknown
+): HabitReorderMutation {
+  const body = requireObject(value);
+  return {
+    ids: parseHabitIdArray(body.ids, "ids"),
+    expectedIds: parseHabitIdArray(body.expectedIds, "expectedIds")
+  };
+}
+
+export function assertHabitReorder(
+  currentIds: readonly string[],
+  ids: readonly string[],
+  expectedIds: readonly string[]
+): void {
+  if (
+    !sameOrder(currentIds, expectedIds) ||
+    ids.length !== currentIds.length ||
+    new Set(ids).size !== ids.length ||
+    currentIds.some((id) => !ids.includes(id))
+  ) {
+    throw new AppError(evidenceErrors.habitOrderIsOutOfDateRefreshAndTryAgain);
+  }
+}
+
+export function describeHabitMove(
+  name: string,
+  position: number,
+  total: number
+): string {
+  const edge =
+    position === 0 ? " Now first." : position === total - 1 ? " Now last." : "";
+  return `Moved "${name}" to position ${position + 1} of ${total}.${edge}`;
 }

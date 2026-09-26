@@ -8,6 +8,7 @@ import { request } from "@/shared/client/api-client";
 import {
   isActivityResponse,
   isCheckInResponse,
+  isHabitReorderResponse,
   isHabitResponse,
   type CheckInRecord,
   type HabitRecord
@@ -34,6 +35,23 @@ export function createHabit(
       result.cadence === expectedCadence &&
       result.targetPerWeek === expectedTarget,
     fallback: "Habit could not be saved. Your draft is still here."
+  });
+}
+
+export function reorderHabits(
+  ids: string[],
+  expectedIds: string[],
+  mutationId: string | null
+) {
+  return request("/api/habits", {
+    method: "PATCH",
+    body: { ids, expectedIds },
+    mutationId,
+    decode: (result): result is { ids: string[] } =>
+      isHabitReorderResponse(result) &&
+      result.ids.length === ids.length &&
+      result.ids.every((id, index) => id === ids[index]),
+    fallback: "Habit order could not be saved."
   });
 }
 

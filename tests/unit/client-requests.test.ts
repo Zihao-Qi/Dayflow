@@ -7,7 +7,13 @@ import { createTask, deleteTask, reorderTasks, saveTimeBlock } from "../../src/m
 import { createBackup, downloadCsv, stageRestore } from "../../src/modules/data-ops/ui/api";
 import { loadProjectDetail } from "../../src/modules/projects/ui/api";
 import { startFocus } from "../../src/modules/focus/ui/api";
-import { createHabit, recordCheckIn, renameHabit, archiveHabit } from "../../src/modules/evidence/ui/api";
+import {
+  createHabit,
+  recordCheckIn,
+  renameHabit,
+  archiveHabit,
+  reorderHabits
+} from "../../src/modules/evidence/ui/api";
 import type { Task } from "../../src/modules/planning/ui/backlog-model";
 
 const task: Task = {
@@ -364,3 +370,48 @@ test("createHabit rejects a structurally valid ACTIVE response with mismatched c
   assert.equal(ok.cadence, "TIMES_PER_WEEK");
   assert.equal(ok.targetPerWeek, 4);
 });
+
+test("reorderHabits transport preserves mutation header, PATCH method, and decodes matching ids", async (t) => {
+  const calls: Array<{ path: unknown; init: RequestInit | undefined }> = [];
+  let response = Response.json({ ids: ["h2", "h1"] }, { status: 200 });
+
+  t.mock.method(globalThis, "fetch", async (path: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ path, init });
+    return response;
+  });
+
+  const res = await reorderHabits(["h2", "h1"], ["h1", "h2"], "reorder-mut-1");
+  assert.deepEqual(res, { ids: ["h2", "h1"] });
+  assert.deepEqual(calls[0], {
+    path: "/api/habits",
+    init: {
+      method: "PATCH",
+      body: JSON.stringify({ ids: ["h2", "h1"], expectedIds: ["h1", "h2"] }),
+      headers: {
+        "Content-Type": "application/json",
+        "X-Dayflow-Mutation-Id": "reorder-mut-1"
+      }
+    }
+  });
+
+  // Mismatched ids returned by server is rejected by decoder
+  response = Response.json({ ids: ["h1", "h2"] }, { status: 200 });
+  await assert.rejects(
+    () => reorderHabits(["h2", "h1"], ["h1", "h2"], "reorder-mut-2"),
+    (err: Error) => {
+      assert.match(err.message, /Habit order could not be saved/);
+      return true;
+    }
+  );
+
+  // Missing or non-array ids is rejected by decoder
+  response = Response.json({ ids: "not-an-array" }, { status: 200 });
+  await assert.rejects(
+    () => reorderHabits(["h2", "h1"], ["h1", "h2"], "reorder-mut-3"),
+    (err: Error) => {
+      assert.match(err.message, /Habit order could not be saved/);
+      return true;
+    }
+  );
+});
+

@@ -435,6 +435,16 @@ export const evidenceErrors = {
     message: "Habit could not be saved.",
     code: "INTERNAL_ERROR"
   },
+  habitOrderCouldNotBeSaved: {
+    status: 500,
+    message: "Habit order could not be saved.",
+    code: "INTERNAL_ERROR"
+  },
+  habitOrderIsOutOfDateRefreshAndTryAgain: {
+    status: 409,
+    message: "Habit order is out of date. Refresh and try again.",
+    code: "CONFLICT"
+  },
   checkInCouldNotBeSaved: {
     status: 500,
     message: "Check-in could not be saved.",

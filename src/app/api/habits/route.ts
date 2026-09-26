@@ -1,9 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readEvidenceMutationBody } from "@/modules/evidence/domain/activity";
-import { parseHabitCreateMutation } from "@/modules/evidence/domain/habit";
+import {
+  parseHabitCreateMutation,
+  parseHabitReorderMutation
+} from "@/modules/evidence/domain/habit";
 import { runInTransaction } from "@/server/prisma/client";
 import { parseMutationId, runOnce } from "@/server/prisma/run-once";
-import { createHabit, readActiveHabits, habitErrorResponse } from "@/server/habits";
+import {
+  createHabit,
+  habitErrorResponse,
+  readActiveHabits,
+  reorderHabits
+} from "@/server/habits";
 
 export async function GET() {
   try {
@@ -29,5 +37,24 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(habit, { status: 201 });
   } catch (error) {
     return habitErrorResponse(error, "save");
+  }
+}
+
+export async function PATCH(request: NextRequest) {
+  try {
+    const mutationId = parseMutationId(request.headers.get("X-Dayflow-Mutation-Id"));
+    const body = await readEvidenceMutationBody(request);
+    // Validate before storage is opened, so an invalid request is refused even
+    // when the database is unavailable.
+    const input = parseHabitReorderMutation(body);
+    const result = await runOnce({
+      mutationId,
+      kind: "habit.reorder",
+      payload: body,
+      create: (tx) => reorderHabits(tx, input.ids, input.expectedIds)
+    });
+    return NextResponse.json(result);
+  } catch (error) {
+    return habitErrorResponse(error, "reorder");
   }
 }

@@ -2,13 +2,14 @@ import type { Prisma } from "@prisma/client";
 import { AppError } from "@/shared/kernel/errors";
 import { evidenceErrors } from "../domain/activity";
 import {
+  assertHabitReorder,
   targetForCadence,
   type CheckInMutation,
   type HabitCreateMutation,
   type HabitPatchMutation
 } from "../domain/habit";
 
-export type HabitMutationAction = "load" | "save" | "check-in";
+export type HabitMutationAction = "load" | "save" | "reorder" | "check-in";
 
 /**
  * Recognised by shape rather than by importing Prisma as a value, which
@@ -30,11 +31,17 @@ export function translateHabitPersistenceError(error: unknown): unknown {
   return error;
 }
 
-export function createHabit(
+export async function createHabit(
   tx: Prisma.TransactionClient,
   input: HabitCreateMutation
 ) {
-  return tx.habit.create({ data: input });
+  const count = await tx.habit.count({ where: { status: "ACTIVE" } });
+  return tx.habit.create({
+    data: {
+      ...input,
+      sortOrder: count
+    }
+  });
 }
 
 export function readHabit(tx: Prisma.TransactionClient, id: string) {
@@ -44,8 +51,25 @@ export function readHabit(tx: Prisma.TransactionClient, id: string) {
 export function readActiveHabits(tx: Prisma.TransactionClient) {
   return tx.habit.findMany({
     where: { status: "ACTIVE" },
-    orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }]
+    orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }]
   });
+}
+
+export async function reorderHabits(
+  tx: Prisma.TransactionClient,
+  ids: string[],
+  expectedIds: string[]
+): Promise<{ ids: string[] }> {
+  const currentHabits = await readActiveHabits(tx);
+  const currentIds = currentHabits.map((habit) => habit.id);
+  assertHabitReorder(currentIds, ids, expectedIds);
+  for (let sortOrder = 0; sortOrder < ids.length; sortOrder++) {
+    await tx.habit.update({
+      where: { id: ids[sortOrder] },
+      data: { sortOrder }
+    });
+  }
+  return { ids };
 }
 
 /**
@@ -75,7 +99,7 @@ export function readHabitsActiveDuring(
         }
       ]
     },
-    orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }]
+    orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }]
   });
 }
 

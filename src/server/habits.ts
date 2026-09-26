@@ -10,6 +10,7 @@ export {
   createHabit,
   readHabit,
   readActiveHabits,
+  reorderHabits,
   updateHabit,
   archiveHabit,
   upsertCheckIn,
@@ -24,6 +25,7 @@ export function habitErrorResponse(error: unknown, action: HabitMutationAction) 
   const fallback = {
     load: evidenceErrors.habitsCouldNotBeLoaded,
     save: evidenceErrors.habitCouldNotBeSaved,
+    reorder: evidenceErrors.habitOrderCouldNotBeSaved,
     "check-in": evidenceErrors.checkInCouldNotBeSaved
   };
   console.error(`Habit ${action} failed.`, error);

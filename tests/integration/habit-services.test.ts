@@ -11,6 +11,7 @@ import {
   readActiveHabits,
   readCheckIns,
   readHabitCheckIns,
+  reorderHabits,
   updateHabit,
   upsertCheckIn
 } from "../../src/modules/evidence/services/habits";
@@ -219,6 +220,83 @@ test("habit services run headlessly on SQLite", async (context) => {
       const ordered = [...rows].sort((left, right) => left.date.getTime() - right.date.getTime());
       assert.deepEqual(rows.map((row) => row.id), ordered.map((row) => row.id));
       assert.ok(rows.length >= 2);
+    });
+
+    await context.test("reordering updates sortOrder and subsequent creates append", async () => {
+      const h1 = await createHabit(tx, { name: "First", cadence: "DAILY", targetPerWeek: 7 });
+      const h2 = await createHabit(tx, { name: "Second", cadence: "DAILY", targetPerWeek: 7 });
+      const h3 = await createHabit(tx, { name: "Third", cadence: "DAILY", targetPerWeek: 7 });
+
+      const initial = await readActiveHabits(tx);
+      const currentIds = initial.map((h) => h.id);
+      const targetIds = [
+        ...currentIds.filter((id) => id !== h1.id && id !== h2.id && id !== h3.id),
+        h3.id,
+        h1.id,
+        h2.id
+      ];
+      await reorderHabits(tx, targetIds, currentIds);
+
+      const afterReorder = await readActiveHabits(tx);
+      assert.deepEqual(afterReorder.slice(-3).map((h) => h.id), [h3.id, h1.id, h2.id]);
+
+      const h4 = await createHabit(tx, { name: "Fourth", cadence: "DAILY", targetPerWeek: 7 });
+      const afterAppend = await readActiveHabits(tx);
+      assert.equal(afterAppend[afterAppend.length - 1].id, h4.id);
+    });
+
+    await context.test("new habit sorts after max active position surviving archive gaps and sparse sortOrder", async () => {
+      // Clear any prior active habits in this subtest to test exact bounds
+      await tx.habit.deleteMany({});
+
+      // 1. Contiguous creation
+      const a = await createHabit(tx, { name: "A", cadence: "DAILY", targetPerWeek: 7 });
+      const b = await createHabit(tx, { name: "B", cadence: "DAILY", targetPerWeek: 7 });
+      const c = await createHabit(tx, { name: "C", cadence: "DAILY", targetPerWeek: 7 });
+      assert.equal(a.sortOrder, 0);
+      assert.equal(b.sortOrder, 1);
+      assert.equal(c.sortOrder, 2);
+      assert.deepEqual((await readActiveHabits(tx)).map((h) => h.id), [a.id, b.id, c.id]);
+
+      // 2. Archive gaps: archive A and B; only C (sortOrder 2) remains active
+      await archiveHabit(tx, a.id, now);
+      await archiveHabit(tx, b.id, now);
+      const surviving = await readActiveHabits(tx);
+      assert.deepEqual(surviving.map((h) => h.id), [c.id]);
+
+      // Create D: with COUNT, count=1 so D gets 1 (sorting before C at 2 - DEFECT!)
+      // With MAX+1, max=2 so D gets 3 (sorting after C at 2)
+      const d = await createHabit(tx, { name: "D", cadence: "DAILY", targetPerWeek: 7 });
+      assert.equal(d.sortOrder, 3);
+      const afterD = await readActiveHabits(tx);
+      assert.deepEqual(afterD.map((h) => h.id), [c.id, d.id]);
+
+      // 3. Sparse positions: update D to sortOrder 10
+      await tx.habit.update({ where: { id: d.id }, data: { sortOrder: 10 } });
+      const e = await createHabit(tx, { name: "E", cadence: "DAILY", targetPerWeek: 7 });
+      assert.equal(e.sortOrder, 11);
+      const afterE = await readActiveHabits(tx);
+      assert.deepEqual(afterE.map((h) => h.id), [c.id, d.id, e.id]);
+
+      // 4. Empty list case: archive remaining active habits
+      await archiveHabit(tx, c.id, now);
+      await archiveHabit(tx, d.id, now);
+      await archiveHabit(tx, e.id, now);
+      assert.equal((await readActiveHabits(tx)).length, 0);
+
+      const f = await createHabit(tx, { name: "F", cadence: "DAILY", targetPerWeek: 7 });
+      assert.equal(f.sortOrder, 0);
+      assert.deepEqual((await readActiveHabits(tx)).map((h) => h.id), [f.id]);
+
+      // 5. Tied positions case: update F to sortOrder 5, manually insert G with sortOrder 5
+      await tx.habit.update({ where: { id: f.id }, data: { sortOrder: 5 } });
+      const g = await tx.habit.create({
+        data: { name: "G", cadence: "DAILY", targetPerWeek: 7, sortOrder: 5 }
+      });
+      const h = await createHabit(tx, { name: "H", cadence: "DAILY", targetPerWeek: 7 });
+      assert.equal(h.sortOrder, 6);
+      const afterH = await readActiveHabits(tx);
+      assert.deepEqual(afterH.map((item) => item.id), [f.id, g.id, h.id]);
     });
   });
 });

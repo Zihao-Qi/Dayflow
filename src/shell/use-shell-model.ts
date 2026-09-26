@@ -290,10 +290,12 @@ export function useShellModel() {
   const {
     busyHabitIds,
     habitCreatePending,
+    reorderPending: habitReorderPending,
     createHabitFromDraft,
     renameHabit,
     archiveHabit,
-    recordHabitCheckIn
+    recordHabitCheckIn,
+    reorderHabits
   } = useHabitActions({
     ...state,
     refreshAfterConfirmedMutation
@@ -303,10 +305,12 @@ export function useShellModel() {
     ...state,
     busyHabitIds,
     habitCreatePending,
+    habitReorderPending,
     createHabitFromDraft,
     renameHabit,
     archiveHabit,
     recordHabitCheckIn,
+    reorderHabits,
     registerReviewRefresh,
     focus,
     compactLayout,

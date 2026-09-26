@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  assertHabitReorder,
   CHECK_IN_BACKFILL_DAYS,
   checkInWindow,
+  describeHabitMove,
   parseCheckInMutation,
   parseHabitCreateMutation,
+  parseHabitIdArray,
   parseHabitPatchMutation,
+  parseHabitReorderMutation,
+  sameOrder,
   summarizeHabits,
   targetForCadence,
   type CheckInRecord,
@@ -342,3 +347,124 @@ test("isHabitSummaryRecord validates complete declared DTO fields and rejects ma
   assert.equal(isHabitSummaryRecord({ ...valid, days: [{ day: "2026-09-14", state: "done", amount: 1.5 }] }), false);
   assert.equal(isHabitSummaryRecord({ ...valid, days: [{ day: "2026-09-14", state: "unknown" as unknown as "done", amount: null }] }), false);
 });
+
+test("parseHabitIdArray rejects non-arrays, duplicates, bounds violations, and invalid IDs", () => {
+  // Non-array
+  const nonArrayIds = rejection(() => parseHabitIdArray("habit-1", "ids")) as AppError;
+  assert.equal(nonArrayIds.status, 400);
+  assert.equal(nonArrayIds.field, "ids");
+  assert.match(nonArrayIds.message, /must be an array/);
+
+  const nonArrayExpected = rejection(() => parseHabitIdArray(null, "expectedIds")) as AppError;
+  assert.equal(nonArrayExpected.status, 400);
+  assert.equal(nonArrayExpected.field, "expectedIds");
+  assert.match(nonArrayExpected.message, /must be an array/);
+
+  // Duplicates
+  const duplicateIds = rejection(() => parseHabitIdArray(["h1", "h2", "h1"], "ids")) as AppError;
+  assert.equal(duplicateIds.status, 400);
+  assert.equal(duplicateIds.field, "ids");
+  assert.match(duplicateIds.message, /must not contain duplicates/);
+
+  // Over max bounds (> 1,000 items)
+  const hugeArray = Array.from({ length: 1_001 }, (_, i) => `h-${i}`);
+  const overMax = rejection(() => parseHabitIdArray(hugeArray, "ids")) as AppError;
+  assert.equal(overMax.status, 400);
+  assert.equal(overMax.field, "ids");
+  assert.match(overMax.message, /No more than 1,000/);
+
+  // Invalid ID string (empty or control chars)
+  const emptyId = rejection(() => parseHabitIdArray(["h1", "   "], "ids")) as AppError;
+  assert.equal(emptyId.status, 400);
+  assert.equal(emptyId.field, "ids");
+  assert.match(emptyId.message, /identifier is invalid/);
+
+  const controlCharId = rejection(() => parseHabitIdArray(["h1", "h2\u0000"], "ids")) as AppError;
+  assert.equal(controlCharId.status, 400);
+  assert.equal(controlCharId.field, "ids");
+
+  // Valid array
+  assert.deepEqual(parseHabitIdArray(["h1", "h2"], "ids"), ["h1", "h2"]);
+  assert.deepEqual(parseHabitIdArray([], "ids"), []);
+});
+
+test("parseHabitReorderMutation validates body object and required array fields", () => {
+  const notObject = rejection(() => parseHabitReorderMutation("not an object")) as AppError;
+  assert.equal(notObject.status, 400);
+  assert.equal(notObject.field, "body");
+
+  const missingIds = rejection(() => parseHabitReorderMutation({ expectedIds: ["h1"] })) as AppError;
+  assert.equal(missingIds.status, 400);
+  assert.equal(missingIds.field, "ids");
+
+  const missingExpectedIds = rejection(() => parseHabitReorderMutation({ ids: ["h1"] })) as AppError;
+  assert.equal(missingExpectedIds.status, 400);
+  assert.equal(missingExpectedIds.field, "expectedIds");
+
+  const valid = parseHabitReorderMutation({ ids: ["h2", "h1"], expectedIds: ["h1", "h2"] });
+  assert.deepEqual(valid, { ids: ["h2", "h1"], expectedIds: ["h1", "h2"] });
+});
+
+test("sameOrder checks positional equality of ID arrays", () => {
+  assert.equal(sameOrder(["a", "b", "c"], ["a", "b", "c"]), true);
+  assert.equal(sameOrder(["a", "b", "c"], ["b", "a", "c"]), false);
+  assert.equal(sameOrder(["a", "b"], ["a", "b", "c"]), false);
+  assert.equal(sameOrder([], []), true);
+});
+
+test("assertHabitReorder verifies CAS match, membership permutation, and empty active list", () => {
+  // Matching permutation succeeds
+  assert.doesNotThrow(() => {
+    assertHabitReorder(["h1", "h2", "h3"], ["h3", "h1", "h2"], ["h1", "h2", "h3"]);
+  });
+
+  // Empty arrays are a no-op only for an empty active list
+  assert.doesNotThrow(() => {
+    assertHabitReorder([], [], []);
+  });
+
+  // Empty requested array when active habits exist throws 409
+  const emptyWhenActive = rejection(() => {
+    assertHabitReorder(["h1"], [], ["h1"]);
+  }) as AppError;
+  assert.equal(emptyWhenActive.status, 409);
+  assert.equal(emptyWhenActive.code, "CONFLICT");
+  assert.match(emptyWhenActive.message, /out of date/);
+
+  // Set equality alone fails when expectedIds has stale/wrong order
+  // currentIds and expectedIds have identical set {h1, h2, h3}, but different order
+  const staleExpectedOrder = rejection(() => {
+    assertHabitReorder(["h1", "h2", "h3"], ["h2", "h1", "h3"], ["h2", "h1", "h3"]);
+  }) as AppError;
+  assert.equal(staleExpectedOrder.status, 409);
+  assert.equal(staleExpectedOrder.code, "CONFLICT");
+
+  // Intervening create: currentIds has 3 items, expectedIds only knows 2
+  const interveningCreate = rejection(() => {
+    assertHabitReorder(["h1", "h2", "h3"], ["h2", "h1"], ["h1", "h2"]);
+  }) as AppError;
+  assert.equal(interveningCreate.status, 409);
+  assert.equal(interveningCreate.code, "CONFLICT");
+
+  // Intervening archive: currentIds has 2 items, expectedIds has 3
+  const interveningArchive = rejection(() => {
+    assertHabitReorder(["h1", "h2"], ["h2", "h1", "h3"], ["h1", "h2", "h3"]);
+  }) as AppError;
+  assert.equal(interveningArchive.status, 409);
+  assert.equal(interveningArchive.code, "CONFLICT");
+
+  // Foreign or missing ID in requested ids
+  const foreignId = rejection(() => {
+    assertHabitReorder(["h1", "h2"], ["h1", "h_foreign"], ["h1", "h2"]);
+  }) as AppError;
+  assert.equal(foreignId.status, 409);
+  assert.equal(foreignId.code, "CONFLICT");
+});
+
+test("describeHabitMove formats position announcements and detects boundaries", () => {
+  assert.equal(describeHabitMove("Reading", 1, 3), 'Moved "Reading" to position 2 of 3.');
+  assert.equal(describeHabitMove("Reading", 0, 3), 'Moved "Reading" to position 1 of 3. Now first.');
+  assert.equal(describeHabitMove("Reading", 2, 3), 'Moved "Reading" to position 3 of 3. Now last.');
+  assert.equal(describeHabitMove("Reading", 0, 1), 'Moved "Reading" to position 1 of 1. Now first.');
+});
+

@@ -1309,3 +1309,418 @@ test("habits card maintains at least 16px side gutter in phone mode", async ({ p
   expect(leftGutter).toBeGreaterThanOrEqual(16);
   expect(rightGutter).toBeGreaterThanOrEqual(16);
 });
+
+test("habits can be reordered via keyboard with edge disabling, focus retention, live announcement, and persistence across reload", async ({ page }) => {
+  const habitA = await createHabit(page, "Habit A");
+  const habitB = await createHabit(page, "Habit B");
+  const habitC = await createHabit(page, "Habit C");
+
+  await openToday(page);
+  const card = habitsCard(page);
+
+  const rowA = card.locator(`[data-habit="${habitA.id}"]`);
+  const rowB = card.locator(`[data-habit="${habitB.id}"]`);
+  const rowC = card.locator(`[data-habit="${habitC.id}"]`);
+
+  const moveUpA = rowA.getByRole("button", { name: "Move Habit A up" });
+  const moveDownA = rowA.getByRole("button", { name: "Move Habit A down" });
+  const moveUpB = rowB.getByRole("button", { name: "Move Habit B up" });
+  const moveDownB = rowB.getByRole("button", { name: "Move Habit B down" });
+  const moveUpC = rowC.getByRole("button", { name: "Move Habit C up" });
+  const moveDownC = rowC.getByRole("button", { name: "Move Habit C down" });
+
+  // Initial boundary conditions
+  await expect(moveUpA).toBeDisabled();
+  await expect(moveDownA).toBeEnabled();
+  await expect(moveUpB).toBeEnabled();
+  await expect(moveDownB).toBeEnabled();
+  await expect(moveUpC).toBeEnabled();
+  await expect(moveDownC).toBeDisabled();
+
+  // Focus Move down on Habit A and press Enter
+  await moveDownA.focus();
+  await expect(moveDownA).toBeFocused();
+  await page.keyboard.press("Enter");
+
+  // Live announcement for moving to position 2 of 3
+  const announcer = page.locator(".sr-only[role='status']");
+  await expect(announcer).toHaveText('Moved "Habit A" to position 2 of 3.');
+
+  // Order is now: B, A, C
+  const rows = card.locator(".habit-row-item");
+  await expect(rows.nth(0)).toHaveAttribute("data-habit", habitB.id);
+  await expect(rows.nth(1)).toHaveAttribute("data-habit", habitA.id);
+  await expect(rows.nth(2)).toHaveAttribute("data-habit", habitC.id);
+
+  // Focus is retained on Move Habit A down
+  await expect(moveDownA).toBeFocused();
+
+  // Move Habit A down again to bottom edge (position 3 of 3)
+  await page.keyboard.press("Enter");
+  await expect(announcer).toHaveText('Moved "Habit A" to position 3 of 3. Now last.');
+
+  // Order is now: B, C, A
+  await expect(rows.nth(0)).toHaveAttribute("data-habit", habitB.id);
+  await expect(rows.nth(1)).toHaveAttribute("data-habit", habitC.id);
+  await expect(rows.nth(2)).toHaveAttribute("data-habit", habitA.id);
+
+  // Since Move down on Habit A is now disabled at the bottom edge,
+  // focus shifted to Move Habit A up!
+  await expect(moveDownA).toBeDisabled();
+  await expect(moveUpA).toBeFocused();
+
+  // Move Habit A up to position 2
+  await page.keyboard.press("Enter");
+  await expect(announcer).toHaveText('Moved "Habit A" to position 2 of 3.');
+  await expect(rows.nth(1)).toHaveAttribute("data-habit", habitA.id);
+  await expect(moveUpA).toBeFocused();
+
+  // Move Habit A up to top edge (position 1 of 3)
+  await page.keyboard.press("Enter");
+  await expect(announcer).toHaveText('Moved "Habit A" to position 1 of 3. Now first.');
+  await expect(rows.nth(0)).toHaveAttribute("data-habit", habitA.id);
+
+  // Since Move up on Habit A is now disabled at top edge, focus shifted to Move Habit A down!
+  await expect(moveUpA).toBeDisabled();
+  await expect(moveDownA).toBeFocused();
+
+  // Reload page to verify persistence from storage
+  await page.reload();
+  const reloadedCard = habitsCard(page);
+  const reloadedRows = reloadedCard.locator(".habit-row-item");
+  await expect(reloadedRows.nth(0)).toHaveAttribute("data-habit", habitA.id);
+  await expect(reloadedRows.nth(1)).toHaveAttribute("data-habit", habitB.id);
+  await expect(reloadedRows.nth(2)).toHaveAttribute("data-habit", habitC.id);
+});
+
+test("rapid duplicate reorder attempts are locked while request is in flight", async ({ page }) => {
+  const habitA = await createHabit(page, "Rapid A");
+  const habitB = await createHabit(page, "Rapid B");
+
+  await openToday(page);
+  const card = habitsCard(page);
+  const rowA = card.locator(`[data-habit="${habitA.id}"]`);
+  const moveDownA = rowA.getByRole("button", { name: "Move Rapid A down" });
+
+  let patchCount = 0;
+  await page.route("**/api/habits", async (route) => {
+    if (route.request().method() === "PATCH") {
+      patchCount++;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    await route.continue();
+  });
+
+  // Click Move down twice in rapid succession
+  await Promise.all([
+    moveDownA.click({ force: true }),
+    moveDownA.click({ force: true })
+  ]);
+
+  const rows = card.locator(".habit-row-item");
+  await expect(rows.nth(0)).toHaveAttribute("data-habit", habitB.id);
+  await expect(rows.nth(1)).toHaveAttribute("data-habit", habitA.id);
+
+  expect(patchCount).toBe(1);
+});
+
+test("confirmed order survives a failed trailing read with read-only retry and uncertain write handling", async ({ page }) => {
+  const habitA = await createHabit(page, "Read A");
+  const habitB = await createHabit(page, "Read B");
+
+  await openToday(page);
+  const card = habitsCard(page);
+  const rowA = card.locator(`[data-habit="${habitA.id}"]`);
+
+  let patchCompleted = false;
+  let refreshFails = true;
+  const retryMethods: string[] = [];
+
+  await page.route("**/api/bootstrap", async (route) => {
+    if (patchCompleted && refreshFails) {
+      await route.fulfill({
+        status: 503,
+        json: { error: "Failed to refresh bootstrap", code: "INTERNAL_ERROR" }
+      });
+      return;
+    }
+    if (patchCompleted && !refreshFails) {
+      retryMethods.push(route.request().method());
+    }
+    await route.continue();
+  });
+
+  page.on("request", (req) => {
+    if (patchCompleted && !refreshFails) {
+      retryMethods.push(req.method());
+    }
+  });
+
+  const patchPromise = page.waitForResponse(
+    (resp) => resp.url().includes("/api/habits") && resp.request().method() === "PATCH"
+  );
+
+  await rowA.getByRole("button", { name: "Move Read A down" }).click();
+  const patchResp = await patchPromise;
+  expect(patchResp.ok()).toBe(true);
+  patchCompleted = true;
+
+  // Confirmed order is retained in UI
+  const rows = card.locator(".habit-row-item");
+  await expect(rows.nth(0)).toHaveAttribute("data-habit", habitB.id);
+  await expect(rows.nth(1)).toHaveAttribute("data-habit", habitA.id);
+
+  // Saved-but-refresh-failed toast appears
+  const toast = page.locator(".app-error-toast");
+  await expect(toast).toBeVisible();
+  await expect(toast).toContainText("Your change was saved, but Dayflow could not refresh the latest view");
+
+  // Read-only retry button is present
+  const retryBtn = toast.getByRole("button", { name: "Retry refresh" });
+  await expect(retryBtn).toBeVisible();
+
+  // Clicking Retry refresh performs read-only GET requests, zero write requests
+  refreshFails = false;
+  retryMethods.length = 0;
+  await retryBtn.click();
+  await expect(toast).toHaveCount(0);
+
+  // Ensure all methods called during retry were GET (read-only)
+  expect(retryMethods.length).toBeGreaterThan(0);
+  expect(retryMethods.every((method) => method === "GET")).toBe(true);
+
+  // Verify uncertain write does not claim not-saved or blindly replay
+  await page.route("**/api/habits", async (route) => {
+    if (route.request().method() === "PATCH") {
+      await route.fulfill({
+        status: 500,
+        json: { error: "Database unavailable", code: "INTERNAL_ERROR" }
+      });
+      return;
+    }
+    await route.continue();
+  });
+
+  const rowB = card.locator(`[data-habit="${habitB.id}"]`);
+  await rowB.getByRole("button", { name: "Move Read B down" }).click();
+
+  // Uncertain write toast:
+  await expect(toast).toBeVisible();
+  await expect(toast).toContainText("Habit order status unconfirmed. Refresh to check.");
+});
+
+test("delayed stale bootstrap arriving after confirmed reorder and check-in cannot undo order or reset check-in", async ({ page }) => {
+  const habitA = await createHabit(page, "Stale A");
+  const habitB = await createHabit(page, "Stale B");
+
+  let releaseHeldBootstrap!: () => void;
+  const heldBootstrapPromise = new Promise<void>((resolve) => {
+    releaseHeldBootstrap = resolve;
+  });
+
+  await page.addInitScript(() => {
+    window.localStorage.setItem("dayflow-first-run-seen", "1");
+  });
+
+  let bootstrapCount = 0;
+  await page.route("**/api/bootstrap", async (route) => {
+    bootstrapCount++;
+    if (bootstrapCount === 2) {
+      const response = await route.fetch();
+      await heldBootstrapPromise;
+      await route.fulfill({ response });
+      return;
+    }
+    await route.continue();
+  });
+
+  await page.goto("/");
+  await expect(
+    page.getByRole("heading", {
+      name: /(tasks? left|Nothing scheduled yet|All done for today)$/
+    })
+  ).toBeVisible({ timeout: 30_000 });
+
+  const card = habitsCard(page);
+  const rows = card.locator(".habit-row-item");
+  await expect(rows.nth(0)).toHaveAttribute("data-habit", habitA.id);
+
+  // Reorder habits so habitB is first
+  const moveDownA = card.locator(`[data-habit="${habitA.id}"]`).getByRole("button", { name: "Move Stale A down" });
+  await moveDownA.click();
+  await expect(rows.nth(0)).toHaveAttribute("data-habit", habitB.id);
+
+  // Also toggle Check-in on habitB
+  const toggleB = card.locator(`[data-habit="${habitB.id}"]`).getByRole("button", { name: /Stale B:/ });
+  await toggleB.click();
+  await expect(toggleB).toContainText("done today");
+
+  // Now release the held old bootstrap response
+  releaseHeldBootstrap();
+  await page.waitForTimeout(100);
+
+  // Stale bootstrap arriving after confirmed order and check-in does not roll back order or check-in
+  await expect(rows.nth(0)).toHaveAttribute("data-habit", habitB.id);
+  await expect(rows.nth(1)).toHaveAttribute("data-habit", habitA.id);
+  await expect(toggleB).toContainText("done today");
+});
+
+test("uncertain reorder retry replaying historical receipt does not project stale order or old announcement", async ({ page }) => {
+  const habitA = await createHabit(page, "Retry A");
+  const habitB = await createHabit(page, "Retry B");
+  const habitC = await createHabit(page, "Retry C");
+
+  await openToday(page);
+  const card = habitsCard(page);
+  const rows = card.locator(".habit-row-item");
+
+  // Step 1: Start at visible O = [A, B, C]
+  await expect(rows.nth(0)).toHaveAttribute("data-habit", habitA.id);
+  await expect(rows.nth(1)).toHaveAttribute("data-habit", habitB.id);
+  await expect(rows.nth(2)).toHaveAttribute("data-habit", habitC.id);
+
+  let patchCount = 0;
+  let firstPatchMutationId = "";
+  let secondPatchMutationId = "";
+  let failTrailingRefresh = false;
+
+  let resolveFirstXCommitted!: () => void;
+  const firstXCommitted = new Promise<void>((resolve) => {
+    resolveFirstXCommitted = resolve;
+  });
+
+  let releaseRetryReceipt!: () => void;
+  const retryReceiptBarrier = new Promise<void>((resolve) => {
+    releaseRetryReceipt = resolve;
+  });
+
+  await page.route("**/api/habits", async (route) => {
+    if (route.request().method() === "PATCH") {
+      patchCount++;
+      const mutId = (route.request().headers()["x-dayflow-mutation-id"] as string) ?? "";
+      if (patchCount === 1) {
+        firstPatchMutationId = mutId;
+        // Allow server commit & receipt creation via route.fetch(), then drop the response
+        const serverResp = await route.fetch();
+        expect(serverResp.status()).toBe(200);
+        resolveFirstXCommitted();
+        await route.abort();
+        return;
+      }
+      if (patchCount === 2) {
+        secondPatchMutationId = mutId;
+        // Assert receipt response is 200 with expected payload/IDs
+        const serverResp = await route.fetch();
+        expect(serverResp.status()).toBe(200);
+        const receiptJson = await serverResp.json();
+        expect(receiptJson).toEqual({ ids: [habitB.id, habitA.id, habitC.id] });
+        // Hold response until release barrier is signaled
+        await retryReceiptBarrier;
+        await route.fulfill({ response: serverResp });
+        return;
+      }
+    }
+    await route.continue();
+  });
+
+  await page.route("**/api/bootstrap", async (route) => {
+    if (failTrailingRefresh) {
+      await route.fulfill({
+        status: 503,
+        json: { error: "Simulated trailing read failure", code: "INTERNAL_ERROR" }
+      });
+      return;
+    }
+    await route.continue();
+  });
+
+  // Move A down (op X): request commits on server, response is lost
+  const rowA = card.locator(`[data-habit="${habitA.id}"]`);
+  await rowA.getByRole("button", { name: "Move Retry A down" }).click();
+
+  // Milestone: await first X server commit and client unconfirmed feedback
+  await firstXCommitted;
+  const toast = page.locator(".app-error-toast");
+  await expect(toast).toContainText("Habit order status unconfirmed. Refresh to check.");
+  await expect(rows.nth(0)).toHaveAttribute("data-habit", habitA.id);
+  await expect(rows.nth(1)).toHaveAttribute("data-habit", habitB.id);
+  await expect(rows.nth(2)).toHaveAttribute("data-habit", habitC.id);
+  expect(firstPatchMutationId).toBeTruthy();
+
+  // Step 2: Through real API make a DIFFERENT reorder Y on server without delivering to page
+  // Server is currently [B, A, C]. Make reorder Y = [C, B, A]
+  const patchY = await page.request.patch("/api/habits", {
+    data: {
+      ids: [habitC.id, habitB.id, habitA.id],
+      expectedIds: [habitB.id, habitA.id, habitC.id]
+    },
+    headers: {
+      "X-Dayflow-Mutation-Id": "server-op-Y-mut"
+    }
+  });
+  expect(patchY.ok()).toBe(true);
+  const listAfterY = await (await page.request.get("/api/habits")).json();
+  expect(listAfterY.map((h: { id: string }) => h.id)).toEqual([habitC.id, habitB.id, habitA.id]);
+
+  // Step 3: Attach announcement observer, repeat the same UI move, verify it reuses X's mutation ID and receives X's original receipt
+  await page.evaluate(() => {
+    (window as any).__announcements = [];
+    const el = document.querySelector('[aria-live="polite"]');
+    if (el) {
+      const observer = new MutationObserver(() => {
+        if (el.textContent) {
+          (window as any).__announcements.push(el.textContent);
+        }
+      });
+      observer.observe(el, { childList: true, characterData: true, subtree: true });
+    }
+  });
+
+  failTrailingRefresh = true;
+  const retryClickPromise = rowA.getByRole("button", { name: "Move Retry A down" }).click();
+
+  // Release receipt response delivery barrier
+  releaseRetryReceipt();
+  await retryClickPromise;
+
+  expect(patchCount).toBe(2);
+  expect(secondPatchMutationId).toBe(firstPatchMutationId);
+
+  // Step 4: Wait for distinctive saved-but-refresh-failed toast indicating receipt delivery and failed refresh settlement
+  await expect(toast).toBeVisible();
+  await expect(toast).toContainText("Your change was saved, but Dayflow could not refresh the latest view");
+  const retryBtn = toast.getByRole("button", { name: "Retry refresh" });
+  await expect(retryBtn).toBeVisible();
+
+  // AFTER settlement: assert UI order remains initial O = [A, B, C]
+  await expect(rows.nth(0)).toHaveAttribute("data-habit", habitA.id);
+  await expect(rows.nth(1)).toHaveAttribute("data-habit", habitB.id);
+  await expect(rows.nth(2)).toHaveAttribute("data-habit", habitC.id);
+
+  // Observe announcement history: verify no historical position was announced during retry
+  const recordedAnnouncements = await page.evaluate(() => (window as any).__announcements as string[]);
+  expect(recordedAnnouncements.some((msg) => msg.includes('Moved "Retry A" to position 2 of 3'))).toBe(false);
+
+  // DB must still be Y
+  const dbCheck = await (await page.request.get("/api/habits")).json();
+  expect(dbCheck.map((h: { id: string }) => h.id)).toEqual([habitC.id, habitB.id, habitA.id]);
+
+  // Step 5: Allow READ-only Retry refresh; UI must then show Y, with zero reorder requests from retry button.
+  failTrailingRefresh = false;
+  const retryMethods: string[] = [];
+  page.on("request", (req) => {
+    retryMethods.push(req.method());
+  });
+
+  await retryBtn.click();
+  await expect(toast).toHaveCount(0);
+
+  // UI now shows Y
+  await expect(rows.nth(0)).toHaveAttribute("data-habit", habitC.id);
+  await expect(rows.nth(1)).toHaveAttribute("data-habit", habitB.id);
+  await expect(rows.nth(2)).toHaveAttribute("data-habit", habitA.id);
+
+  // Ensure zero PATCH requests from retry button
+  expect(retryMethods.filter((m) => m === "PATCH").length).toBe(0);
+  expect(retryMethods.includes("GET")).toBe(true);
+});

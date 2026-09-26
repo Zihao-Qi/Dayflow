@@ -37,8 +37,10 @@ export function HabitsCard({
   onCreate,
   onRename,
   onArchive,
+  onReorder,
   busyHabitIds,
-  createPending
+  createPending,
+  reorderPending
 }: {
   habits: HabitSummary[];
   todayKey: string;
@@ -57,8 +59,10 @@ export function HabitsCard({
     name: string
   ) => Promise<{ ok: boolean; error?: string }>;
   onArchive: (habitId: string) => Promise<boolean>;
+  onReorder?: (habitId: string, direction: "up" | "down") => Promise<boolean>;
   busyHabitIds: ReadonlySet<string>;
   createPending: boolean;
+  reorderPending?: boolean;
 }) {
   const [draft, setDraft] = useState("");
   const [cadence, setCadence] = useState<HabitCadenceValue>("DAILY");
@@ -83,6 +87,12 @@ export function HabitsCard({
   const returnFocusHabitIdRef = useRef<string | null>(null);
   const renameButtonRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
   const habitToggleRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const moveUpButtonRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const moveDownButtonRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const focusTargetRef = useRef<{
+    habitId: string;
+    preferredDirection: "up" | "down";
+  } | null>(null);
 
   useEffect(() => {
     if (editingHabitId === null && returnFocusHabitIdRef.current) {
@@ -94,6 +104,48 @@ export function HabitsCard({
       button?.focus();
     }
   }, [editingHabitId]);
+
+  useEffect(() => {
+    if (reorderPending || !focusTargetRef.current) return;
+    const { habitId, preferredDirection } = focusTargetRef.current;
+    focusTargetRef.current = null;
+    const index = habits.findIndex((h) => h.id === habitId);
+    if (index < 0) return;
+    const moveUpBtn = moveUpButtonRefs.current.get(habitId);
+    const moveDownBtn = moveDownButtonRefs.current.get(habitId);
+    if (preferredDirection === "up") {
+      if (moveUpBtn && !moveUpBtn.disabled) {
+        moveUpBtn.focus();
+      } else if (moveDownBtn && !moveDownBtn.disabled) {
+        moveDownBtn.focus();
+      } else {
+        const toggle = habitToggleRefs.current.get(habitId);
+        toggle?.focus();
+      }
+    } else {
+      if (moveDownBtn && !moveDownBtn.disabled) {
+        moveDownBtn.focus();
+      } else if (moveUpBtn && !moveUpBtn.disabled) {
+        moveUpBtn.focus();
+      } else {
+        const toggle = habitToggleRefs.current.get(habitId);
+        toggle?.focus();
+      }
+    }
+  }, [habits, reorderPending]);
+
+  async function handleReorder(habitId: string, direction: "up" | "down") {
+    if (!onReorder || reorderPending) return;
+    focusTargetRef.current = { habitId, preferredDirection: direction };
+    try {
+      const ok = await onReorder(habitId, direction);
+      if (!ok) {
+        focusTargetRef.current = null;
+      }
+    } catch {
+      focusTargetRef.current = null;
+    }
+  }
 
   useModalFocusTrap(
     archiveDialogRef,
@@ -189,12 +241,30 @@ export function HabitsCard({
         <p className="quiet-empty">No habits yet. Add one to start recording.</p>
       ) : (
         <div className="habits-list">
-          {habits.map((habit) => (
+          {habits.map((habit, index) => (
             <HabitRowItem
               key={`${habit.id}:${todayKey}`}
               habit={habit}
+              index={index}
+              total={habits.length}
               todayKey={todayKey}
               busy={busyHabitIds.has(habit.id)}
+              reorderPending={Boolean(reorderPending)}
+              onReorder={(id, dir) => void handleReorder(id, dir)}
+              moveUpButtonRef={(node) => {
+                if (node) {
+                  moveUpButtonRefs.current.set(habit.id, node);
+                } else {
+                  moveUpButtonRefs.current.delete(habit.id);
+                }
+              }}
+              moveDownButtonRef={(node) => {
+                if (node) {
+                  moveDownButtonRefs.current.set(habit.id, node);
+                } else {
+                  moveDownButtonRefs.current.delete(habit.id);
+                }
+              }}
               isEditing={editingHabitId === habit.id}
               renameDraft={renameDraft}
               renameError={renameError}
@@ -341,7 +411,13 @@ export function HabitsCard({
 
 function HabitRowItem({
   habit,
+  index,
+  total,
   busy,
+  reorderPending,
+  onReorder,
+  moveUpButtonRef,
+  moveDownButtonRef,
   isEditing,
   renameDraft,
   renameError,
@@ -357,7 +433,13 @@ function HabitRowItem({
   todayKey
 }: {
   habit: HabitSummary;
+  index: number;
+  total: number;
   busy: boolean;
+  reorderPending: boolean;
+  onReorder: (habitId: string, direction: "up" | "down") => void;
+  moveUpButtonRef: (node: HTMLButtonElement | null) => void;
+  moveDownButtonRef: (node: HTMLButtonElement | null) => void;
   isEditing: boolean;
   renameDraft: string;
   renameError: string;
@@ -527,6 +609,26 @@ function HabitRowItem({
               {recorded ? (done ? "done today" : "not done today") : "not recorded today"}
             </button>
             <div className="habit-row-actions">
+              <button
+                ref={moveUpButtonRef}
+                type="button"
+                className="text-button"
+                aria-label={`Move ${habit.name} up`}
+                disabled={busy || reorderPending || index === 0}
+                onClick={() => onReorder(habit.id, "up")}
+              >
+                Move up
+              </button>
+              <button
+                ref={moveDownButtonRef}
+                type="button"
+                className="text-button"
+                aria-label={`Move ${habit.name} down`}
+                disabled={busy || reorderPending || index === total - 1}
+                onClick={() => onReorder(habit.id, "down")}
+              >
+                Move down
+              </button>
               {!recorded && (
                 <button
                   type="button"

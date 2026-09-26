@@ -15,6 +15,7 @@ const dayKey = (offset: number) => localDateKey(addDays(today, offset));
 type Routes = {
   listHabits: typeof import("../../src/app/api/habits/route").GET;
   createHabit: typeof import("../../src/app/api/habits/route").POST;
+  reorderHabits: typeof import("../../src/app/api/habits/route").PATCH;
   patchHabit: typeof import("../../src/app/api/habits/[id]/route").PATCH;
   archiveHabit: typeof import("../../src/app/api/habits/[id]/archive/route").POST;
   recordCheckIn: typeof import("../../src/app/api/habits/[id]/check-in/route").PUT;
@@ -69,6 +70,7 @@ async function withRoutes(
     routes: {
       listHabits: habits.GET,
       createHabit: habits.POST,
+      reorderHabits: habits.PATCH,
       patchHabit: habitById.PATCH,
       archiveHabit: archive.POST,
       recordCheckIn: checkIn.PUT
@@ -340,6 +342,447 @@ test("Habit routes", async (context) => {
       } finally {
         prisma.$transaction = original;
       }
+    });
+
+    await context.test("reordering validates shape, duplicates, and missing fields before opening storage", async () => {
+      // Malformed JSON body
+      const badJson = new NextRequest("http://localhost/api/habits", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: "{"
+      });
+      const badJsonResponse = await routes.reorderHabits(badJson);
+      assert.equal(badJsonResponse.status, 400);
+      assert.equal((await badJsonResponse.json()).code, "INVALID_JSON");
+
+      // Non-object body
+      const nonObject = await routes.reorderHabits(
+        jsonRequest("/api/habits", "PATCH", "not an object")
+      );
+      assert.equal(nonObject.status, 400);
+      const nonObjBody = await nonObject.json();
+      assert.equal(nonObjBody.code, "VALIDATION_ERROR");
+      assert.equal(nonObjBody.field, "body");
+
+      // Missing ids
+      const missingIds = await routes.reorderHabits(
+        jsonRequest("/api/habits", "PATCH", { expectedIds: ["h1"] })
+      );
+      assert.equal(missingIds.status, 400);
+      assert.equal((await missingIds.json()).field, "ids");
+
+      // Missing expectedIds
+      const missingExpected = await routes.reorderHabits(
+        jsonRequest("/api/habits", "PATCH", { ids: ["h1"] })
+      );
+      assert.equal(missingExpected.status, 400);
+      assert.equal((await missingExpected.json()).field, "expectedIds");
+
+      // Duplicate ids
+      const dupIds = await routes.reorderHabits(
+        jsonRequest("/api/habits", "PATCH", { ids: ["h1", "h1"], expectedIds: ["h1"] })
+      );
+      assert.equal(dupIds.status, 400);
+      assert.equal((await dupIds.json()).field, "ids");
+
+      // Duplicate expectedIds
+      const dupExpected = await routes.reorderHabits(
+        jsonRequest("/api/habits", "PATCH", { ids: ["h1"], expectedIds: ["h1", "h1"] })
+      );
+      assert.equal(dupExpected.status, 400);
+      assert.equal((await dupExpected.json()).field, "expectedIds");
+
+      // Invalid ID in array (control characters / empty)
+      const invalidId = await routes.reorderHabits(
+        jsonRequest("/api/habits", "PATCH", { ids: [""], expectedIds: [""] })
+      );
+      assert.equal(invalidId.status, 400);
+      assert.equal((await invalidId.json()).field, "ids");
+
+      // Storage unavailable check: validation happens before opening storage
+      const original = prisma.$transaction;
+      (prisma as unknown as { $transaction: unknown }).$transaction = async () => {
+        throw new Error("storage unavailable");
+      };
+      try {
+        const response = await routes.reorderHabits(
+          jsonRequest("/api/habits", "PATCH", { ids: ["h1", "h1"], expectedIds: ["h1"] })
+        );
+        assert.equal(response.status, 400);
+        assert.equal((await response.json()).code, "VALIDATION_ERROR");
+      } finally {
+        prisma.$transaction = original;
+      }
+    });
+
+    await context.test("atomic full reorder persists 0..N-1 sortOrder, reloads correctly, and leaves check-ins and archived rows untouched", async () => {
+      await prisma.habitCheckIn.deleteMany();
+      await prisma.habit.deleteMany();
+      await prisma.mutationReceipt.deleteMany();
+
+      const hA = await (await routes.createHabit(jsonRequest("/api/habits", "POST", { name: "Alpha" }))).json();
+      const hB = await (await routes.createHabit(jsonRequest("/api/habits", "POST", { name: "Beta" }))).json();
+      const hC = await (await routes.createHabit(jsonRequest("/api/habits", "POST", { name: "Gamma" }))).json();
+      const hD = await (await routes.createHabit(jsonRequest("/api/habits", "POST", { name: "Delta" }))).json();
+
+      // Check-in on Alpha and Delta
+      await routes.recordCheckIn(
+        jsonRequest(`/api/habits/${hA.id}/check-in`, "PUT", { date: dayKey(0), done: true, amount: 15, note: "alpha note" }),
+        params(hA.id)
+      );
+      await routes.recordCheckIn(
+        jsonRequest(`/api/habits/${hD.id}/check-in`, "PUT", { date: dayKey(-1), done: true, amount: 30, note: "delta note" }),
+        params(hD.id)
+      );
+
+      // Archive Delta
+      await routes.archiveHabit(jsonRequest(`/api/habits/${hD.id}/archive`, "POST"), params(hD.id));
+
+      // Active order is [Alpha, Beta, Gamma]
+      const beforeReorder = await (await routes.listHabits()).json();
+      assert.deepEqual(beforeReorder.map((h: { id: string }) => h.id), [hA.id, hB.id, hC.id]);
+
+      // Reorder to [Gamma, Alpha, Beta]
+      const targetIds = [hC.id, hA.id, hB.id];
+      const expectedIds = [hA.id, hB.id, hC.id];
+      const reorderResponse = await routes.reorderHabits(
+        jsonRequest("/api/habits", "PATCH", { ids: targetIds, expectedIds }, "reorder-mut-1")
+      );
+      assert.equal(reorderResponse.status, 200);
+      assert.deepEqual(await reorderResponse.json(), { ids: targetIds });
+
+      // Active list returns reordered sequence
+      const afterReorder = await (await routes.listHabits()).json();
+      assert.deepEqual(afterReorder.map((h: { id: string }) => h.id), targetIds);
+
+      // Verify contiguous 0..N-1 sortOrder in DB
+      const rowC = await prisma.habit.findUniqueOrThrow({ where: { id: hC.id } });
+      const rowA = await prisma.habit.findUniqueOrThrow({ where: { id: hA.id } });
+      const rowB = await prisma.habit.findUniqueOrThrow({ where: { id: hB.id } });
+      assert.equal(rowC.sortOrder, 0);
+      assert.equal(rowA.sortOrder, 1);
+      assert.equal(rowB.sortOrder, 2);
+
+      // Archived Delta remains archived and untouched
+      const rowD = await prisma.habit.findUniqueOrThrow({ where: { id: hD.id } });
+      assert.equal(rowD.status, "ARCHIVED");
+      assert.notEqual(rowD.archivedAt, null);
+
+      // Check-ins for Alpha and Delta remain intact
+      const checkInA = await prisma.habitCheckIn.findFirstOrThrow({ where: { habitId: hA.id } });
+      assert.equal(checkInA.amount, 15);
+      assert.equal(checkInA.note, "alpha note");
+      const checkInD = await prisma.habitCheckIn.findFirstOrThrow({ where: { habitId: hD.id } });
+      assert.equal(checkInD.amount, 30);
+      assert.equal(checkInD.note, "delta note");
+    });
+
+    await context.test("reordering empty arrays succeeds if and only if active list is empty", async () => {
+      // When active habits exist, empty array is rejected with 409
+      const nonemptyCheck = await routes.reorderHabits(
+        jsonRequest("/api/habits", "PATCH", { ids: [], expectedIds: [] })
+      );
+      assert.equal(nonemptyCheck.status, 409);
+      assert.equal((await nonemptyCheck.json()).code, "CONFLICT");
+
+      // Archive all remaining active habits
+      const activeHabits = await prisma.habit.findMany({ where: { status: "ACTIVE" } });
+      for (const h of activeHabits) {
+        await routes.archiveHabit(jsonRequest(`/api/habits/${h.id}/archive`, "POST"), params(h.id));
+      }
+
+      // Now active list is empty; empty arrays are a valid no-op
+      const emptySuccess = await routes.reorderHabits(
+        jsonRequest("/api/habits", "PATCH", { ids: [], expectedIds: [] })
+      );
+      assert.equal(emptySuccess.status, 200);
+      assert.deepEqual(await emptySuccess.json(), { ids: [] });
+    });
+
+    await context.test("distinct stale schedules return 409 CONFLICT with zero writes", async () => {
+      await prisma.habitCheckIn.deleteMany();
+      await prisma.habit.deleteMany();
+      await prisma.mutationReceipt.deleteMany();
+
+      const h1 = await (await routes.createHabit(jsonRequest("/api/habits", "POST", { name: "Item 1" }))).json();
+      const h2 = await (await routes.createHabit(jsonRequest("/api/habits", "POST", { name: "Item 2" }))).json();
+      const h3 = await (await routes.createHabit(jsonRequest("/api/habits", "POST", { name: "Item 3" }))).json();
+
+      // Current order: [h1, h2, h3]
+      // 1. Stale full-order (same membership, order mismatch): set equality alone must fail
+      const staleOrder = await routes.reorderHabits(
+        jsonRequest("/api/habits", "PATCH", {
+          ids: [h3.id, h2.id, h1.id],
+          expectedIds: [h2.id, h1.id, h3.id] // expectedIds permutes same set, but wrong order
+        })
+      );
+      assert.equal(staleOrder.status, 409);
+      assert.equal((await staleOrder.json()).code, "CONFLICT");
+      // Verify DB unchanged
+      const listAfterStale = await (await routes.listHabits()).json();
+      assert.deepEqual(listAfterStale.map((h: { id: string }) => h.id), [h1.id, h2.id, h3.id]);
+
+      // 2. Intervening create: client sends expectedIds omitting h3
+      const staleCreate = await routes.reorderHabits(
+        jsonRequest("/api/habits", "PATCH", {
+          ids: [h2.id, h1.id],
+          expectedIds: [h1.id, h2.id]
+        })
+      );
+      assert.equal(staleCreate.status, 409);
+      assert.equal((await staleCreate.json()).code, "CONFLICT");
+
+      // 3. Intervening archive: archive h3, client still expects [h1, h2, h3]
+      await routes.archiveHabit(jsonRequest(`/api/habits/${h3.id}/archive`, "POST"), params(h3.id));
+      const staleArchive = await routes.reorderHabits(
+        jsonRequest("/api/habits", "PATCH", {
+          ids: [h2.id, h1.id, h3.id],
+          expectedIds: [h1.id, h2.id, h3.id]
+        })
+      );
+      assert.equal(staleArchive.status, 409);
+      assert.equal((await staleArchive.json()).code, "CONFLICT");
+
+      // 4. Foreign/missing ID
+      const foreignId = await routes.reorderHabits(
+        jsonRequest("/api/habits", "PATCH", {
+          ids: [h2.id, "foreign-habit-id"],
+          expectedIds: [h1.id, h2.id]
+        })
+      );
+      assert.equal(foreignId.status, 409);
+      assert.equal((await foreignId.json()).code, "CONFLICT");
+
+      // Verify DB still intact [h1, h2]
+      const finalActive = await (await routes.listHabits()).json();
+      assert.deepEqual(finalActive.map((h: { id: string }) => h.id), [h1.id, h2.id]);
+    });
+
+    await context.test("middle-write failure rolls back entire reorder transaction with zero writes and no receipt", async () => {
+      await prisma.habitCheckIn.deleteMany();
+      await prisma.habit.deleteMany();
+      await prisma.mutationReceipt.deleteMany();
+
+      const h1 = await (await routes.createHabit(jsonRequest("/api/habits", "POST", { name: "Rollback 1" }))).json();
+      const h2 = await (await routes.createHabit(jsonRequest("/api/habits", "POST", { name: "Rollback 2" }))).json();
+      const h3 = await (await routes.createHabit(jsonRequest("/api/habits", "POST", { name: "Rollback 3" }))).json();
+
+      const origTransaction = prisma.$transaction;
+      (prisma as unknown as { $transaction: unknown }).$transaction = async (fn: (tx: unknown) => Promise<unknown>, opts: unknown) => {
+        return (origTransaction as Function).call(prisma, async (tx: Record<string, unknown>) => {
+          const habitModel = tx.habit as Record<string, unknown>;
+          const origUpdate = habitModel.update as Function;
+          let updateCount = 0;
+          habitModel.update = async (args: unknown) => {
+            updateCount++;
+            if (updateCount === 2) {
+              throw new Error("Simulated middle-write failure");
+            }
+            return origUpdate.call(habitModel, args);
+          };
+          return fn(tx);
+        }, opts);
+      };
+
+      try {
+        const response = await routes.reorderHabits(
+          jsonRequest(
+            "/api/habits",
+            "PATCH",
+            { ids: [h3.id, h1.id, h2.id], expectedIds: [h1.id, h2.id, h3.id] },
+            "fail-middle-write-mut"
+          )
+        );
+        assert.equal(response.status, 500);
+        assert.equal((await response.json()).code, "INTERNAL_ERROR");
+      } finally {
+        prisma.$transaction = origTransaction;
+      }
+
+      // Assert zero partial writes: row 1 was NOT modified, all retain their previous sortOrders
+      const row1 = await prisma.habit.findUniqueOrThrow({ where: { id: h1.id } });
+      const row2 = await prisma.habit.findUniqueOrThrow({ where: { id: h2.id } });
+      const row3 = await prisma.habit.findUniqueOrThrow({ where: { id: h3.id } });
+      assert.equal(row1.sortOrder, 0);
+      assert.equal(row2.sortOrder, 1);
+      assert.equal(row3.sortOrder, 2);
+
+      // Assert no receipt was inserted
+      assert.equal(
+        await prisma.mutationReceipt.count({ where: { id: "fail-middle-write-mut" } }),
+        0
+      );
+    });
+
+    await context.test("receipt-insertion failure rolls back entire reorder transaction with zero writes", async () => {
+      await prisma.habitCheckIn.deleteMany();
+      await prisma.habit.deleteMany();
+      await prisma.mutationReceipt.deleteMany();
+
+      const h1 = await (await routes.createHabit(jsonRequest("/api/habits", "POST", { name: "Receipt-fail 1" }))).json();
+      const h2 = await (await routes.createHabit(jsonRequest("/api/habits", "POST", { name: "Receipt-fail 2" }))).json();
+
+      const origTransaction = prisma.$transaction;
+      (prisma as unknown as { $transaction: unknown }).$transaction = async (fn: (tx: unknown) => Promise<unknown>, opts: unknown) => {
+        return (origTransaction as Function).call(prisma, async (tx: Record<string, unknown>) => {
+          const receiptModel = tx.mutationReceipt as Record<string, unknown>;
+          receiptModel.create = async () => {
+            throw new Error("Simulated receipt insertion failure");
+          };
+          return fn(tx);
+        }, opts);
+      };
+
+      try {
+        const response = await routes.reorderHabits(
+          jsonRequest(
+            "/api/habits",
+            "PATCH",
+            { ids: [h2.id, h1.id], expectedIds: [h1.id, h2.id] },
+            "fail-receipt-insert-mut"
+          )
+        );
+        assert.equal(response.status, 500);
+        assert.equal((await response.json()).code, "INTERNAL_ERROR");
+      } finally {
+        prisma.$transaction = origTransaction;
+      }
+
+      // Verify zero writes occurred
+      const row1 = await prisma.habit.findUniqueOrThrow({ where: { id: h1.id } });
+      const row2 = await prisma.habit.findUniqueOrThrow({ where: { id: h2.id } });
+      assert.equal(row1.sortOrder, 0);
+      assert.equal(row2.sortOrder, 1);
+      assert.equal(
+        await prisma.mutationReceipt.count({ where: { id: "fail-receipt-insert-mut" } }),
+        0
+      );
+    });
+
+    await context.test("equal sortOrder AND equal createdAt resolves deterministically by id; new Habit appends after reorder", async () => {
+      await prisma.habitCheckIn.deleteMany();
+      await prisma.habit.deleteMany();
+      await prisma.mutationReceipt.deleteMany();
+
+      const hA = await (await routes.createHabit(jsonRequest("/api/habits", "POST", { name: "Tie A" }))).json();
+      const hB = await (await routes.createHabit(jsonRequest("/api/habits", "POST", { name: "Tie B" }))).json();
+
+      const sameDate = new Date("2026-09-01T10:00:00Z");
+      // Set equal sortOrder and equal createdAt directly in DB
+      await prisma.habit.update({ where: { id: hA.id }, data: { sortOrder: 0, createdAt: sameDate } });
+      await prisma.habit.update({ where: { id: hB.id }, data: { sortOrder: 0, createdAt: sameDate } });
+
+      const [expectedFirstId, expectedSecondId] = [hA.id, hB.id].sort();
+      const tieListed = await (await routes.listHabits()).json();
+      assert.deepEqual(tieListed.map((h: { id: string }) => h.id), [expectedFirstId, expectedSecondId]);
+
+      // Reorder explicitly so [expectedSecondId, expectedFirstId] get sortOrders 0, 1
+      await routes.reorderHabits(
+        jsonRequest("/api/habits", "PATCH", {
+          ids: [expectedSecondId, expectedFirstId],
+          expectedIds: [expectedFirstId, expectedSecondId]
+        })
+      );
+
+      // Create new habit: it must append after existing active habits (sortOrder = count(ACTIVE) = 2)
+      const hC = await (await routes.createHabit(jsonRequest("/api/habits", "POST", { name: "Appended" }))).json();
+      const rowC = await prisma.habit.findUniqueOrThrow({ where: { id: hC.id } });
+      assert.equal(rowC.sortOrder, 2);
+
+      const afterAppendList = await (await routes.listHabits()).json();
+      assert.deepEqual(
+        afterAppendList.map((h: { id: string }) => h.id),
+        [expectedSecondId, expectedFirstId, hC.id]
+      );
+
+      // Archive gaps: archive first two habits; only hC (sortOrder 2) remains active
+      await prisma.habit.update({ where: { id: expectedSecondId }, data: { status: "ARCHIVED", archivedAt: new Date() } });
+      await prisma.habit.update({ where: { id: expectedFirstId }, data: { status: "ARCHIVED", archivedAt: new Date() } });
+      const hD = await (await routes.createHabit(jsonRequest("/api/habits", "POST", { name: "Appended after archive" }))).json();
+      assert.equal(hD.sortOrder, 3);
+      const afterArchiveList = await (await routes.listHabits()).json();
+      assert.deepEqual(afterArchiveList.map((h: { id: string }) => h.id), [hC.id, hD.id]);
+
+      // Sparse active maximum: update hD to sortOrder 20
+      await prisma.habit.update({ where: { id: hD.id }, data: { sortOrder: 20 } });
+      const hE = await (await routes.createHabit(jsonRequest("/api/habits", "POST", { name: "Appended after sparse" }))).json();
+      assert.equal(hE.sortOrder, 21);
+      const afterSparseList = await (await routes.listHabits()).json();
+      assert.deepEqual(afterSparseList.map((h: { id: string }) => h.id), [hC.id, hD.id, hE.id]);
+    });
+
+    await context.test("lost response to operation A, intervening operation B, replay A's receipt leaves DB in state B; changed payload yields MUTATION_ID_CONFLICT", async () => {
+      await prisma.habitCheckIn.deleteMany();
+      await prisma.habit.deleteMany();
+      await prisma.mutationReceipt.deleteMany();
+
+      const h1 = await (await routes.createHabit(jsonRequest("/api/habits", "POST", { name: "Replay 1" }))).json();
+      const h2 = await (await routes.createHabit(jsonRequest("/api/habits", "POST", { name: "Replay 2" }))).json();
+      const h3 = await (await routes.createHabit(jsonRequest("/api/habits", "POST", { name: "Replay 3" }))).json();
+
+      // Op A: reorder to [h2, h3, h1] with mutation ID "op-A-mut"
+      const opA = await routes.reorderHabits(
+        jsonRequest(
+          "/api/habits",
+          "PATCH",
+          { ids: [h2.id, h3.id, h1.id], expectedIds: [h1.id, h2.id, h3.id] },
+          "op-A-mut"
+        )
+      );
+      assert.equal(opA.status, 200);
+      assert.deepEqual(await opA.json(), { ids: [h2.id, h3.id, h1.id] });
+
+      // Op B: intervening reorder to [h3, h1, h2] with mutation ID "op-B-mut"
+      const opB = await routes.reorderHabits(
+        jsonRequest(
+          "/api/habits",
+          "PATCH",
+          { ids: [h3.id, h1.id, h2.id], expectedIds: [h2.id, h3.id, h1.id] },
+          "op-B-mut"
+        )
+      );
+      assert.equal(opB.status, 200);
+      assert.deepEqual(await opB.json(), { ids: [h3.id, h1.id, h2.id] });
+
+      // DB is currently in state B: [h3, h1, h2]
+      const dbStateB = await (await routes.listHabits()).json();
+      assert.deepEqual(dbStateB.map((h: { id: string }) => h.id), [h3.id, h1.id, h2.id]);
+
+      // Replay of Op A with same mutation ID "op-A-mut" and exact same payload
+      const replayA = await routes.reorderHabits(
+        jsonRequest(
+          "/api/habits",
+          "PATCH",
+          { ids: [h2.id, h3.id, h1.id], expectedIds: [h1.id, h2.id, h3.id] },
+          "op-A-mut"
+        )
+      );
+      assert.equal(replayA.status, 200);
+      // Returns cached result of Op A:
+      assert.deepEqual(await replayA.json(), { ids: [h2.id, h3.id, h1.id] });
+
+      // BUT database remains in state B: [h3, h1, h2]! Replay does NOT re-apply old order!
+      const dbAfterReplay = await (await routes.listHabits()).json();
+      assert.deepEqual(dbAfterReplay.map((h: { id: string }) => h.id), [h3.id, h1.id, h2.id]);
+
+      // Changed payload with same mutation ID yields 409 MUTATION_ID_CONFLICT
+      const conflictPayload = await routes.reorderHabits(
+        jsonRequest(
+          "/api/habits",
+          "PATCH",
+          { ids: [h1.id, h2.id, h3.id], expectedIds: [h3.id, h1.id, h2.id] },
+          "op-A-mut"
+        )
+      );
+      assert.equal(conflictPayload.status, 409);
+      assert.equal((await conflictPayload.json()).code, "MUTATION_ID_CONFLICT");
+
+      // Reusing mutation ID across endpoints (e.g. PATCH /api/habits on POST /api/habits) yields 409 MUTATION_ID_CONFLICT
+      const crossEndpointConflict = await routes.createHabit(
+        jsonRequest("/api/habits", "POST", { name: "Cross conflict" }, "op-A-mut")
+      );
+      assert.equal(crossEndpointConflict.status, 409);
+      assert.equal((await crossEndpointConflict.json()).code, "MUTATION_ID_CONFLICT");
     });
   });
 });

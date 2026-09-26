@@ -1,10 +1,21 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { createHabit, recordCheckIn, renameHabit, archiveHabit } from "@/modules/evidence/ui/api";
+import {
+  createHabit,
+  recordCheckIn,
+  renameHabit,
+  archiveHabit,
+  reorderHabits as reorderHabitsRequest
+} from "@/modules/evidence/ui/api";
 import { type HabitSummaryRecord } from "@/shared/client/decoders";
 import { mutationIdFor, type PendingMutation } from "@/shared/client/mutation-ids";
-import { summarizeHabits, type HabitDefinition, type HabitCadenceValue } from "@/modules/evidence/domain/habit";
+import {
+  describeHabitMove,
+  summarizeHabits,
+  type HabitDefinition,
+  type HabitCadenceValue
+} from "@/modules/evidence/domain/habit";
 import { parseLocalDate, reviewPeriodRange, startOfLocalDay, localDateKey } from "@/shared/kernel/calendar";
 import { ApiError } from "@/shared/client/api-client";
 import { type ShellState } from "./use-shell-state";
@@ -26,7 +37,9 @@ export function useHabitActions({
 }) {
   const [busyHabitIds, setBusyHabitIds] = useState<ReadonlySet<string>>(() => new Set());
   const [habitCreatePending, setHabitCreatePending] = useState(false);
+  const [reorderPending, setReorderPending] = useState(false);
   const habitCreateMutation = useRef<PendingMutation | null>(null);
+  const reorderMutation = useRef<PendingMutation | null>(null);
   const renameMutations = useRef<Map<string, PendingMutation>>(new Map());
   const archiveMutations = useRef<Map<string, PendingMutation>>(new Map());
   const checkInMutations = useRef<Map<string, PendingMutation>>(new Map());
@@ -58,7 +71,7 @@ export function useHabitActions({
           name: result.name,
           cadence: result.cadence,
           targetPerWeek: result.targetPerWeek,
-          sortOrder: current.habits.length,
+          sortOrder: result.sortOrder ?? current.habits.length,
           createdAt: todayDate,
           archivedAt: null
         };
@@ -272,12 +285,96 @@ export function useHabitActions({
     }
   }
 
+  async function reorderHabitsAction(
+    habitId: string,
+    direction: "up" | "down"
+  ): Promise<boolean> {
+    if (!data || reorderPending) return false;
+    const currentHabits = data.habits;
+    const currentIndex = currentHabits.findIndex((h) => h.id === habitId);
+    if (currentIndex < 0) return false;
+    const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
+    if (targetIndex < 0 || targetIndex >= currentHabits.length) return false;
+
+    const reorderedHabits = [...currentHabits];
+    const [moved] = reorderedHabits.splice(currentIndex, 1);
+    reorderedHabits.splice(targetIndex, 0, moved);
+
+    const targetIds = reorderedHabits.map((h) => h.id);
+    const expectedIds = currentHabits.map((h) => h.id);
+    const capturedHabits = currentHabits;
+    const capturedTodayKey = data.todayKey;
+
+    const payload = { ids: targetIds, expectedIds };
+    const fingerprint = JSON.stringify(payload);
+    const isRetry = reorderMutation.current?.fingerprint === fingerprint;
+    const mutationId = mutationIdFor(reorderMutation, payload);
+    setReorderPending(true);
+
+    try {
+      await reorderHabitsRequest(targetIds, expectedIds, mutationId);
+      reorderMutation.current = null;
+
+      if (!isRetry) {
+        setData((current) => {
+          if (!current) return current;
+          if (current.todayKey !== capturedTodayKey) return current;
+          if (current.habits !== capturedHabits) return current;
+
+          const habitMap = new Map(current.habits.map((h) => [h.id, h]));
+          const updatedHabits = targetIds.map((id, index) => {
+            const item = habitMap.get(id);
+            return item ? { ...item, sortOrder: index } : null;
+          });
+          if (updatedHabits.some((h) => h === null)) return current;
+
+          return {
+            ...current,
+            habits: updatedHabits as HabitSummaryRecord[]
+          };
+        });
+
+        setAppError("");
+        setAppAnnouncement(
+          describeHabitMove(moved.name, targetIndex, currentHabits.length)
+        );
+        await refreshAfterConfirmedMutation();
+        return true;
+      } else {
+        // Uncertain retry: a replayed receipt or retried write must not project
+        // historical target order or announce an old position as current. Reconcile via server read.
+        const refreshed = await refreshAfterConfirmedMutation();
+        if (refreshed) {
+          setAppError("");
+          setAppAnnouncement("Saved.");
+        }
+        return refreshed;
+      }
+    } catch (error) {
+      const message =
+        error instanceof ApiError && error.status === 409
+          ? (error.message || "Habit order is out of date. Refresh and try again.")
+          : "Habit order status unconfirmed. Refresh to check.";
+      setAppError(message);
+      setAppAnnouncement(
+        error instanceof ApiError && error.status === 409
+          ? "Habit order is out of date."
+          : "Habit order status unconfirmed."
+      );
+      return false;
+    } finally {
+      setReorderPending(false);
+    }
+  }
+
   return {
     busyHabitIds,
     habitCreatePending,
+    reorderPending,
     createHabitFromDraft,
     renameHabit: renameHabitAction,
     archiveHabit: archiveHabitAction,
-    recordHabitCheckIn
+    recordHabitCheckIn,
+    reorderHabits: reorderHabitsAction
   };
 }

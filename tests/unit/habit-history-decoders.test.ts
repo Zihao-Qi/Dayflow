@@ -105,6 +105,20 @@ test("isHabitHistoryPayload preserves zero amount and empty string note", () => 
   assert.equal(isHabitHistoryPayload(validPayload), true);
 });
 
+test("history payloads reject impossible dates, partial windows, and foreign rows", () => {
+  assert.equal(isHabitHistoryPayload({ ...validPayload, earliestDate: "2026-02-31" }), false, "history window rejects an impossible date");
+  assert.equal(isHabitHistoryPayload({ ...validPayload, earliestDate: "2026-09-20" }), false);
+  assert.equal(isHabitHistoryPayload({ ...validPayload, latestDate: "2026-09-25" }), false);
+  assert.equal(isHabitHistoryPayload({
+    ...validPayload,
+    checkIns: [{ ...validPayload.checkIns[0], day: "2026-09-18" }]
+  }), false);
+  assert.equal(isHabitCheckInReconciliation({
+    ...validReconciliation,
+    checkIn: { ...validReconciliation.checkIn!, habitId: "someone-else" }
+  }), false);
+});
+
 test("isHabitCheckInReconciliation accepts populated or null checkIn record", () => {
   assert.equal(isHabitCheckInReconciliation(validReconciliation), true);
   assert.equal(isHabitCheckInReconciliation({ ...validReconciliation, checkIn: null }), true);
@@ -119,8 +133,33 @@ test("fetchHabitHistory and fetchHabitCheckInDate call correct endpoints and dec
     if (typeof path === "string" && path === "/api/habits/history") {
       return Response.json(validPayload);
     }
+    if (typeof path === "string" && path.includes("date=2026-09-18")) {
+      return Response.json({
+        ...validReconciliation,
+        habitId: "other-habit",
+        date: "2026-09-18",
+        checkIn: {
+          id: "checkin-old",
+          habitId: "other-habit",
+          date: "2026-09-18T00:00:00.000Z",
+          day: "2026-09-18",
+          done: true,
+          amount: null,
+          note: "Prior day"
+        }
+      });
+    }
     if (typeof path === "string" && path.startsWith("/api/habits/h-1/check-in?date=2026-09-20")) {
-      return Response.json({ ...validReconciliation, habitId: "h-1", date: "2026-09-20" });
+      return Response.json({
+        ...validReconciliation,
+        habitId: "h-1",
+        date: "2026-09-20",
+        checkIn: {
+          ...validReconciliation.checkIn,
+          habitId: "h-1",
+          day: "2026-09-20"
+        }
+      });
     }
     return new Response("Not found", { status: 404 });
   });
@@ -133,4 +172,12 @@ test("fetchHabitHistory and fetchHabitCheckInDate call correct endpoints and dec
   assert.equal(reconciliation.habitId, "h-1");
   assert.equal(reconciliation.date, "2026-09-20");
   assert.equal(calls[1].path, "/api/habits/h-1/check-in?date=2026-09-20");
+
+  let rejectedOtherHabit = false;
+  try {
+    await fetchHabitCheckInDate("h-1", "2026-09-18");
+  } catch {
+    rejectedOtherHabit = true;
+  }
+  assert.equal(rejectedOtherHabit, true, "exact-date read rejects a different habit");
 });

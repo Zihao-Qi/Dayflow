@@ -1208,45 +1208,47 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
     expect(cbBox!.height).toBeLessThanOrEqual(20);
     expect(cbBox!.width).toBeLessThanOrEqual(20);
 
-    // 4. Physical click on visible portion of clipped date (Wednesday 09-23) without Playwright auto-scroll
+    // 4. Physical click on visible portion of clipped middle date without Playwright auto-scroll
     await dateBar.evaluate((bar) => { bar.scrollLeft = 0; });
-    const wednesdayTarget = await dateBar.evaluate((bar) => {
+    const middleTarget = await dateBar.evaluate((bar) => {
       bar.scrollLeft = 0;
       const btns = Array.from(bar.querySelectorAll<HTMLButtonElement>(".habit-history-date-btn"));
-      const wedBtn = btns[4]; // 5th button: 09-23
-      if (!wedBtn) return null;
-      const r = wedBtn.getBoundingClientRect();
+      const targetBtn = btns[4]; // 5th button: middle date, clipped when scrollLeft = 0
+      if (!targetBtn) return null;
+      const r = targetBtn.getBoundingClientRect();
       const barRect = bar.getBoundingClientRect();
       const visibleLeft = Math.max(r.left, barRect.left);
       const visibleRight = Math.min(r.right, barRect.right);
       if (visibleRight <= visibleLeft) return null;
-      return { x: (visibleLeft + visibleRight) / 2, y: r.top + r.height / 2 };
+      const sub = targetBtn.querySelector(".habit-history-date-sub")?.textContent?.trim() ?? "";
+      return { x: (visibleLeft + visibleRight) / 2, y: r.top + r.height / 2, sub };
     });
-    expect(wednesdayTarget).not.toBeNull();
-    await page.mouse.click(wednesdayTarget!.x, wednesdayTarget!.y);
+    expect(middleTarget).not.toBeNull();
+    const middleSub = middleTarget!.sub;
+    expect(middleSub).toBeTruthy();
+    await page.mouse.click(middleTarget!.x, middleTarget!.y);
 
-    // Wednesday is now selected and automatically revealed into view
+    // Middle date is now selected and automatically revealed into view
     const selectedBtn = dateBar.locator(".habit-history-date-btn--selected");
-    await expect(selectedBtn).toContainText("09-23");
+    await expect(selectedBtn.locator(".habit-history-date-sub")).toHaveText(middleSub);
     await expect.poll(async () => isDateBtnContained()).toBe(true);
     // Keyboard focus remains on the clicked button
     const isDateFocused = await selectedBtn.evaluate((el) => document.activeElement === el);
     expect(isDateFocused).toBe(true);
 
-    // 5. Clean close and reopen: persisted middle date (Wednesday 09-23) is restored and revealed
-    // At scrollLeft 0 Wednesday is clipped; reopen handler must bring it into view
+    // 5. Clean close and reopen: persisted middle date is restored and revealed
+    // At scrollLeft 0 the middle date is clipped; reopen handler must bring it into view
     await page.keyboard.press("Escape");
     await expect(dialog).not.toBeVisible();
 
     await historyOpener.click();
     await expect(dialog).toBeVisible();
 
-    await expect(dateBar.locator(".habit-history-date-btn--selected")).toContainText("09-23");
+    await expect(dateBar.locator(".habit-history-date-btn--selected .habit-history-date-sub")).toHaveText(middleSub);
     await expect.poll(async () => isDateBtnContained()).toBe(true);
 
     // 6. Viewport resize with rightmost selection (Today):
-    // At 375px Today sits at scrollLeft 253, right edge at 346px (inside 348px strip).
-    // When resizing to 320px, strip width shrinks to 292px; without resize handler, Today is clipped at 346px > 304px!
+    // Resizing to 320px narrows strip width; resize handler must keep Today contained
     const todayDateBtn = dateBar.locator(".habit-history-date-btn").last();
     await todayDateBtn.click();
     await expect(todayDateBtn).toHaveAttribute("aria-pressed", "true");
@@ -1338,26 +1340,109 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
         return btnRect.left >= barRect.left - 1 && btnRect.right <= barRect.right + 1;
       });
     };
+    // 1. Establish initial completed reveal and preserve native geometry
     await expect.poll(async () => isDateBtnContained()).toBe(true);
 
-    // Manually scroll to start so Wednesday (09-23) is partly clipped
-    await dateBar.evaluate((bar) => { bar.scrollLeft = 0; });
+    // 2. Install test scheduler interceptor to hold selected-date animation frames
+    await page.evaluate(() => {
+      const win = window as any;
+      const originalRaf = win.requestAnimationFrame.bind(window);
+      const originalCaf = win.cancelAnimationFrame.bind(window);
+      const held = new Map<number, FrameRequestCallback>();
+      let hold = false;
+      let counter = 10000;
 
-    // Click Wednesday and immediately trigger refresh to race the RAF callback
-    const refreshBtn = dialog.getByRole("button", { name: "Refresh habit history" });
-    const wedBtn = dateBar.locator(".habit-history-date-btn").nth(4);
+      win.__holdRaf = () => { hold = true; };
+      win.__pendingRafCount = () => held.size;
+      win.__releaseRaf = () => {
+        hold = false;
+        const callbacks = Array.from(held.values());
+        held.clear();
+        for (const cb of callbacks) {
+          cb(performance.now());
+        }
+      };
+      win.__restoreRaf = () => {
+        hold = false;
+        held.clear();
+        win.requestAnimationFrame = originalRaf;
+        win.cancelAnimationFrame = originalCaf;
+      };
 
-    await Promise.all([
-      page.waitForResponse((res) => res.url().includes("/api/habits/history") && res.status() === 200),
-      (async () => {
-        await wedBtn.click();
-        await refreshBtn.click();
-      })(),
-    ]);
+      win.requestAnimationFrame = (cb: FrameRequestCallback) => {
+        if (hold) {
+          const id = ++counter;
+          held.set(id, cb);
+          return id;
+        }
+        return originalRaf(cb);
+      };
 
-    // Wednesday is selected and MUST be fully revealed into view (not lost to refresh)
-    await expect(dateBar.locator(".habit-history-date-btn--selected")).toContainText("09-23");
-    await expect.poll(async () => isDateBtnContained()).toBe(true);
+      win.cancelAnimationFrame = (id: number) => {
+        if (held.has(id)) {
+          held.delete(id);
+          return;
+        }
+        return originalCaf(id);
+      };
+    });
+
+    try {
+      // 3. Manually scroll strip to start so middle date is partly clipped
+      await dateBar.evaluate((bar) => { bar.scrollLeft = 0; });
+
+      // 4. Click VISIBLE portion of partly clipped middle date using raw mouse coordinates
+      const target = await dateBar.evaluate((bar) => {
+        bar.scrollLeft = 0;
+        const btns = Array.from(bar.querySelectorAll<HTMLButtonElement>(".habit-history-date-btn"));
+        const btn = btns[4]; // Middle date (index 4)
+        if (!btn) return null;
+        const r = btn.getBoundingClientRect();
+        const barRect = bar.getBoundingClientRect();
+        const visibleLeft = Math.max(r.left, barRect.left);
+        const visibleRight = Math.min(r.right, barRect.right);
+        if (visibleRight <= visibleLeft) return null;
+        const sub = btn.querySelector(".habit-history-date-sub")?.textContent?.trim() ?? "";
+        return { x: (visibleLeft + visibleRight) / 2, y: r.top + r.height / 2, sub };
+      });
+      expect(target).not.toBeNull();
+      const targetSub = target!.sub;
+      expect(targetSub).toBeTruthy();
+
+      // Hold frames before mouse click
+      await page.evaluate(() => { (window as any).__holdRaf(); });
+      await page.mouse.click(target!.x, target!.y);
+
+      // 5. Assert meaningful preconditions: date selected, initially clipped, reveal frame queued
+      const selectedBtn = dateBar.locator(".habit-history-date-btn--selected");
+      await expect(selectedBtn.locator(".habit-history-date-sub")).toHaveText(targetSub);
+      expect(await isDateBtnContained()).toBe(false);
+      const pendingCount = await page.evaluate(() => (window as any).__pendingRafCount());
+      expect(pendingCount).toBeGreaterThanOrEqual(1);
+
+      // 6. Trigger actual history response while reveal frame is pending
+      const refreshBtn = dialog.getByRole("button", { name: "Refresh habit history" });
+      const responsePromise = page.waitForResponse(
+        (res) => res.url().includes("/api/habits/history") && res.status() === 200
+      );
+      await refreshBtn.click();
+      await responsePromise;
+      // Observable render barrier: refresh has settled in React DOM
+      await expect(refreshBtn).toBeEnabled();
+
+      // 7. Release frame queue and assert final containment
+      await page.evaluate(() => { (window as any).__releaseRaf(); });
+
+      await expect(dateBar.locator(".habit-history-date-btn--selected .habit-history-date-sub")).toHaveText(targetSub);
+      await expect.poll(async () => isDateBtnContained()).toBe(true);
+    } finally {
+      // 8. Restore test scheduler interception in cleanup
+      await page.evaluate(() => {
+        const win = window as any;
+        if (typeof win.__restoreRaf === "function") {
+          win.__restoreRaf();
+        }
+      });
+    }
   });
 });
-

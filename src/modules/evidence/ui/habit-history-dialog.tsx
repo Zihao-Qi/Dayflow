@@ -168,31 +168,23 @@ export function HabitHistoryDialog({ history, openerRef }: HabitHistoryDialogPro
     return true;
   }, []);
 
-  const hasRevealedForOpenRef = useRef(false);
-  const prevSelectedDateRef = useRef<string | null>(null);
+  const lastRevealedDateRef = useRef<string | null>(null);
   const prevBarWidthRef = useRef<number>(0);
 
   useEffect(() => {
     if (!isOpen) {
-      hasRevealedForOpenRef.current = false;
-      prevSelectedDateRef.current = null;
+      lastRevealedDateRef.current = null;
       prevBarWidthRef.current = 0;
       return;
     }
 
-    const isNewSelection =
-      prevSelectedDateRef.current !== null &&
-      prevSelectedDateRef.current !== selectedDate;
-    const needsReveal = !hasRevealedForOpenRef.current || isNewSelection;
-
+    const needsReveal = lastRevealedDateRef.current !== selectedDate;
     if (!needsReveal) return;
-
-    prevSelectedDateRef.current = selectedDate;
 
     const frameId = window.requestAnimationFrame(() => {
       const handled = scrollSelectedDateIntoView();
       if (handled) {
-        hasRevealedForOpenRef.current = true;
+        lastRevealedDateRef.current = selectedDate;
         if (dateBarRef.current) {
           prevBarWidthRef.current = dateBarRef.current.clientWidth;
         }

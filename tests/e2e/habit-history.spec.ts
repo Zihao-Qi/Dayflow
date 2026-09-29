@@ -19,6 +19,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { DatabaseSync } from "node:sqlite";
 import { resetTestDatabase, testDatabasePath } from "./database";
+import { addLocalDays } from "./activity-date-helpers";
 import type { HabitHistoryPayload } from "../../src/modules/evidence/ui/history-api";
 
 test.beforeEach(() => {
@@ -539,28 +540,35 @@ test.describe("Habit History & Backfill (Real Routes)", () => {
 });
 
 test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
-  const mockHistoryPayload: HabitHistoryPayload = {
-    todayKey: "2026-09-26",
-    earliestDate: "2026-09-19",
-    latestDate: "2026-09-26",
-    habits: [
-      {
-        id: "mock-habit-1",
-        name: "Evening Stroll",
-        cadence: "DAILY",
-        targetPerWeek: 7,
-        status: "ACTIVE",
-        sortOrder: 0,
-        createdAt: "2026-09-18T00:00:00.000Z",
-        archivedAt: null,
-        createdDay: "2026-09-18",
-        archivedDay: null
-      }
-    ],
-    checkIns: []
-  };
+  function createMockHistoryPayload(todayKey: string): HabitHistoryPayload {
+    const earliestDate = addLocalDays(todayKey, -7);
+    const createdDay = addLocalDays(todayKey, -8);
+    return {
+      todayKey,
+      earliestDate,
+      latestDate: todayKey,
+      habits: [
+        {
+          id: "mock-habit-1",
+          name: "Evening Stroll",
+          cadence: "DAILY",
+          targetPerWeek: 7,
+          status: "ACTIVE",
+          sortOrder: 0,
+          createdAt: `${createdDay}T00:00:00.000Z`,
+          archivedAt: null,
+          createdDay,
+          archivedDay: null
+        }
+      ],
+      checkIns: []
+    };
+  }
 
   test("MOCKED FAULT: global pending UI disables concurrent saves and check status while preserving draft editing and navigation", async ({ page }) => {
+    const { todayKey } = await (await page.request.get("/api/bootstrap")).json();
+    const mockHistoryPayload = createMockHistoryPayload(todayKey);
+    const createdDay = addLocalDays(todayKey, -8);
     const multiHabitPayload: HabitHistoryPayload = {
       ...mockHistoryPayload,
       habits: [
@@ -572,9 +580,9 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
           targetPerWeek: 7,
           status: "ACTIVE",
           sortOrder: 1,
-          createdAt: "2026-09-18T00:00:00.000Z",
+          createdAt: `${createdDay}T00:00:00.000Z`,
           archivedAt: null,
-          createdDay: "2026-09-18",
+          createdDay,
           archivedDay: null
         }
       ]
@@ -598,8 +606,8 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
         const saved = {
           id: "ci-1",
           habitId: "mock-habit-1",
-          date: "2026-09-26T12:00:00.000Z",
-          day: "2026-09-26",
+          date: `${todayKey}T12:00:00.000Z`,
+          day: todayKey,
           done: true,
           amount: null,
           note: null
@@ -622,8 +630,11 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
     await page.getByRole("button", { name: "History" }).click();
 
     const dialog = page.getByRole("dialog", { name: "Habit history" });
+    await expect(dialog.locator(".habit-history-selected-notice")).toContainText(todayKey);
     const row1 = dialog.locator('[data-habit="mock-habit-1"]');
     const row2 = dialog.locator('[data-habit="mock-habit-2"]');
+    await expect(row1).toBeVisible();
+    await expect(row2).toBeVisible();
 
     // Start save on Habit 1
     await row1.getByRole("button", { name: /Record/ }).click();
@@ -667,6 +678,10 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
   });
 
   test("MOCKED FAULT: network failure on save retains uncertain intention, disables inputs, and provides exact-date reconciliation with truthful accessible name", async ({ page }) => {
+    const { todayKey } = await (await page.request.get("/api/bootstrap")).json();
+    const mockHistoryPayload = createMockHistoryPayload(todayKey);
+    const earliestDate = addLocalDays(todayKey, -7);
+
     await page.route("**/api/habits/history", async (route) => {
       await route.fulfill({
         status: 200,
@@ -688,7 +703,9 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
     await page.getByRole("button", { name: "History" }).click();
 
     const dialog = page.getByRole("dialog", { name: "Habit history" });
+    await expect(dialog.locator(".habit-history-selected-notice")).toContainText(todayKey);
     const habitRow = dialog.locator('[data-habit="mock-habit-1"]');
+    await expect(habitRow).toBeVisible();
 
     await habitRow.getByRole("button", { name: /Record/ }).click();
     const editor = habitRow.locator(".habit-history-editor");
@@ -706,7 +723,7 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
 
     // "Check status" reconciliation button is visible with truthful accessible name
     const checkStatusBtn = editor.getByRole("button", {
-      name: /^Check status for Evening Stroll on 2026-09-26/
+      name: new RegExp(`^Check status for Evening Stroll on ${todayKey}`)
     });
     await expect(checkStatusBtn).toBeVisible();
 
@@ -720,16 +737,16 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
-          todayKey: "2026-09-26",
-          earliestDate: "2026-09-19",
-          latestDate: "2026-09-26",
+          todayKey,
+          earliestDate,
+          latestDate: todayKey,
           habitId: "mock-habit-1",
-          date: "2026-09-26",
+          date: todayKey,
           checkIn: {
             id: "reconciled-ci-1",
             habitId: "mock-habit-1",
-            date: "2026-09-26T12:00:00.000Z",
-            day: "2026-09-26",
+            date: `${todayKey}T12:00:00.000Z`,
+            day: todayKey,
             done: true,
             amount: 5,
             note: "Walked around the block"
@@ -889,10 +906,14 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
   });
 
   test("Proof 4: MOCKED FAULT: expired 400 after uncertainty retains check-status, disables writes, and names original date on exact-date GET", async ({ page }) => {
+    const { todayKey } = await (await page.request.get("/api/bootstrap")).json();
+    const earliestDate = addLocalDays(todayKey, -7);
+    const createdDay = addLocalDays(todayKey, -8);
+
     let currentHistory: HabitHistoryPayload = {
-      todayKey: "2026-09-26",
-      earliestDate: "2026-09-19",
-      latestDate: "2026-09-26",
+      todayKey,
+      earliestDate,
+      latestDate: todayKey,
       habits: [
         {
           id: "mock-habit-1",
@@ -901,9 +922,9 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
           targetPerWeek: 7,
           status: "ACTIVE",
           sortOrder: 0,
-          createdAt: "2026-09-18T00:00:00.000Z",
+          createdAt: `${createdDay}T00:00:00.000Z`,
           archivedAt: null,
-          createdDay: "2026-09-18",
+          createdDay,
           archivedDay: null
         }
       ],
@@ -933,7 +954,7 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
             status: 400,
             contentType: "application/json",
             body: JSON.stringify({
-              error: "2026-09-19 is outside the 8-day writable window.",
+              error: `${earliestDate} is outside the 8-day writable window.`,
               code: "VALIDATION_ERROR",
               field: "date"
             })
@@ -950,10 +971,17 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
     const dialog = page.getByRole("dialog", { name: "Habit history" });
     const habitRow = dialog.locator('[data-habit="mock-habit-1"]');
 
-    // 1. Select the oldest writable date (2026-09-19)
+    // Explicit barrier: ensure mocked history is loaded before interacting with date bar
+    await expect(dialog.locator(".habit-history-selected-notice")).toContainText(todayKey);
+    await expect(habitRow).toBeVisible();
+
+    // 1. Select the oldest writable date (earliestDate)
     const dateButtons = dialog.locator("button.habit-history-date-btn");
     await expect(dateButtons).toHaveCount(8);
     await dateButtons.first().click();
+
+    // Explicit barrier: ensure selection has settled to oldest date before recording
+    await expect(dialog.locator(".habit-history-selected-notice")).toContainText(earliestDate);
 
     // 2. Start recording and lose save response
     await habitRow.getByRole("button", { name: /Record/ }).click();
@@ -970,7 +998,7 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
     await expect(retryBtn).toBeVisible();
 
     const checkStatusBtn = editor.getByRole("button", {
-      name: /^Check status for Evening Stroll on 2026-09-19/
+      name: new RegExp(`^Check status for Evening Stroll on ${earliestDate}`)
     });
     await expect(checkStatusBtn).toBeVisible();
 
@@ -985,7 +1013,7 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
 
     // Assert UI date validation error appears
     await expect(editor.locator(".form-error")).toContainText(
-      "2026-09-19 is outside the 8-day writable window."
+      `${earliestDate} is outside the 8-day writable window.`
     );
 
     // Check status must remain available (not falsely considered definitely failed)
@@ -993,23 +1021,25 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
     await expect(habitRow.getByText("Save uncertain")).toBeVisible();
 
     // 4. Advance mocked SERVER window by one calendar day:
+    const nextTodayKey = addLocalDays(todayKey, 1);
+    const nextEarliestDate = addLocalDays(todayKey, -6);
     currentHistory = {
       ...currentHistory,
-      todayKey: "2026-09-27",
-      earliestDate: "2026-09-20",
-      latestDate: "2026-09-27"
+      todayKey: nextTodayKey,
+      earliestDate: nextEarliestDate,
+      latestDate: nextTodayKey
     };
 
     // Refresh history
     await dialog.getByRole("button", { name: "Refresh habit history" }).click();
 
-    // Assert original selected date (2026-09-19) is retained!
-    await expect(dialog.locator(".habit-history-selected-notice")).toContainText("2026-09-19 (Read-only)");
+    // Assert original selected date (earliestDate) is retained!
+    await expect(dialog.locator(".habit-history-selected-notice")).toContainText(`${earliestDate} (Read-only)`);
 
     // Expired banner is visible
     const banner = dialog.locator(".habit-history-banner--info");
     await expect(banner).toBeVisible();
-    await expect(banner).toContainText("2026-09-19 is outside the 8-day writable window");
+    await expect(banner).toContainText(`${earliestDate} is outside the 8-day writable window`);
     await expect(banner).toContainText("Records for this date are read-only.");
 
     // Writes disabled: Retry save button is disabled
@@ -1033,16 +1063,16 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
-          todayKey: "2026-09-27",
-          earliestDate: "2026-09-20",
-          latestDate: "2026-09-27",
+          todayKey: nextTodayKey,
+          earliestDate: nextEarliestDate,
+          latestDate: nextTodayKey,
           habitId: "mock-habit-1",
-          date: "2026-09-19",
+          date: earliestDate,
           checkIn: {
             id: "reconciled-expired-1",
             habitId: "mock-habit-1",
-            date: "2026-09-19T12:00:00.000Z",
-            day: "2026-09-19",
+            date: `${earliestDate}T12:00:00.000Z`,
+            day: earliestDate,
             done: true,
             amount: 10,
             note: "Oldest day attempt"
@@ -1053,7 +1083,7 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
 
     await checkStatusBtn.click();
 
-    expect(requestedDateParam).toBe("2026-09-19");
+    expect(requestedDateParam).toBe(earliestDate);
     await expect(editor).not.toBeVisible();
     await expect(habitRow.locator(".habit-history-state-tag--done")).toContainText("Done");
     await expect(habitRow.getByText("Amount: 10")).toBeVisible();
@@ -1061,6 +1091,9 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
   });
 
   test("MOCKED FAULT: saved-write / read-refresh-failure displays warning banner without falsifying write, and enables GET-only retry", async ({ page }) => {
+    const { todayKey } = await (await page.request.get("/api/bootstrap")).json();
+    const mockHistoryPayload = createMockHistoryPayload(todayKey);
+
     let returnLoadError = false;
     let historyState = mockHistoryPayload;
 
@@ -1087,8 +1120,8 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
         const saved = {
           id: "saved-ci-1",
           habitId: "mock-habit-1",
-          date: "2026-09-26T12:00:00.000Z",
-          day: "2026-09-26",
+          date: `${todayKey}T12:00:00.000Z`,
+          day: todayKey,
           done: true,
           amount: 3,
           note: "Saved before refresh failed"
@@ -1111,7 +1144,9 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
     await page.getByRole("button", { name: "History" }).click();
 
     const dialog = page.getByRole("dialog", { name: "Habit history" });
+    await expect(dialog.locator(".habit-history-selected-notice")).toContainText(todayKey);
     const habitRow = dialog.locator('[data-habit="mock-habit-1"]');
+    await expect(habitRow).toBeVisible();
 
     await habitRow.getByRole("button", { name: /Record/ }).click();
     const editor = habitRow.locator(".habit-history-editor");
@@ -1157,5 +1192,292 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
     await expect(habitRow.locator(".habit-history-state-tag--done")).toContainText("Done");
     expect(putCount).toBe(0);
     expect(getCount).toBeGreaterThanOrEqual(1);
+  });
+
+  test("Mobile layout: selected date is visible on fresh open and reopen, reveal on select and resize, compact checkbox", async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 667 });
+    await openToday(page);
+    await createHabit(page, "Daily reading");
+
+    const historyOpener = page.getByRole("button", { name: "History" });
+    await historyOpener.click();
+    const dialog = page.getByRole("dialog", { name: "Habit history" });
+    await expect(dialog).toBeVisible();
+    const initialScrollY = await page.evaluate(() => window.scrollY);
+
+    const isDateBtnContained = async (selector = ".habit-history-date-btn--selected") => {
+      return await dateBar.evaluate((bar, sel) => {
+        const btn = bar.querySelector<HTMLButtonElement>(sel);
+        if (!btn) return false;
+        const barRect = bar.getBoundingClientRect();
+        const btnRect = btn.getBoundingClientRect();
+        return btnRect.left >= barRect.left - 1 && btnRect.right <= barRect.right + 1;
+      }, selector);
+    };
+
+    // 1. Dialog and Close button fit within 375px viewport with margins
+    const dialogBox = await dialog.boundingBox();
+    expect(dialogBox).not.toBeNull();
+    expect(dialogBox!.x + dialogBox!.width).toBeLessThanOrEqual(375);
+    expect(dialogBox!.x).toBeGreaterThanOrEqual(0);
+
+    const closeBtn = dialog.getByRole("button", { name: "Close habit history" });
+    await expect(closeBtn).toBeVisible();
+    const closeBox = await closeBtn.boundingBox();
+    expect(closeBox!.x + closeBox!.width).toBeLessThanOrEqual(dialogBox!.x + dialogBox!.width);
+    expect(closeBox!.x).toBeGreaterThanOrEqual(dialogBox!.x);
+
+    // 2. Fresh open: Today button is selected and fully contained within date strip
+    const dateBar = dialog.locator(".habit-history-date-bar");
+    await expect(dateBar).toBeVisible();
+    const todayBtn = dateBar.locator(".habit-history-date-btn--selected");
+    await expect(todayBtn).toBeVisible();
+    await expect(todayBtn).toHaveAttribute("aria-pressed", "true");
+    await expect(todayBtn).toContainText("Today");
+    await expect.poll(async () => isDateBtnContained()).toBe(true);
+
+    // 3. Compact checkbox: explicit dimensions, no 40px height inheritance
+    const checkbox = dialog.locator(".habit-history-archived-toggle input[type='checkbox']");
+    const cbBox = await checkbox.boundingBox();
+    expect(cbBox).not.toBeNull();
+    expect(cbBox!.height).toBeLessThanOrEqual(20);
+    expect(cbBox!.width).toBeLessThanOrEqual(20);
+
+    // 4. Physical click on visible portion of clipped middle date without Playwright auto-scroll
+    await dateBar.evaluate((bar) => { bar.scrollLeft = 0; });
+    const middleTarget = await dateBar.evaluate((bar) => {
+      bar.scrollLeft = 0;
+      const btns = Array.from(bar.querySelectorAll<HTMLButtonElement>(".habit-history-date-btn"));
+      const targetBtn = btns[4]; // 5th button: middle date, clipped when scrollLeft = 0
+      if (!targetBtn) return null;
+      const r = targetBtn.getBoundingClientRect();
+      const barRect = bar.getBoundingClientRect();
+      const visibleLeft = Math.max(r.left, barRect.left);
+      const visibleRight = Math.min(r.right, barRect.right);
+      if (visibleRight <= visibleLeft) return null;
+      const sub = targetBtn.querySelector(".habit-history-date-sub")?.textContent?.trim() ?? "";
+      return { x: (visibleLeft + visibleRight) / 2, y: r.top + r.height / 2, sub };
+    });
+    expect(middleTarget).not.toBeNull();
+    const middleSub = middleTarget!.sub;
+    expect(middleSub).toBeTruthy();
+    await page.mouse.click(middleTarget!.x, middleTarget!.y);
+
+    // Middle date is now selected and automatically revealed into view
+    const selectedBtn = dateBar.locator(".habit-history-date-btn--selected");
+    await expect(selectedBtn.locator(".habit-history-date-sub")).toHaveText(middleSub);
+    await expect.poll(async () => isDateBtnContained()).toBe(true);
+    // Keyboard focus remains on the clicked button
+    const isDateFocused = await selectedBtn.evaluate((el) => document.activeElement === el);
+    expect(isDateFocused).toBe(true);
+
+    // 5. Clean close and reopen: persisted middle date is restored and revealed
+    // At scrollLeft 0 the middle date is clipped; reopen handler must bring it into view
+    await page.keyboard.press("Escape");
+    await expect(dialog).not.toBeVisible();
+
+    await historyOpener.click();
+    await expect(dialog).toBeVisible();
+
+    await expect(dateBar.locator(".habit-history-date-btn--selected .habit-history-date-sub")).toHaveText(middleSub);
+    await expect.poll(async () => isDateBtnContained()).toBe(true);
+
+    // 6. Viewport resize with rightmost selection (Today):
+    // Resizing to 320px narrows strip width; resize handler must keep Today contained
+    const todayDateBtn = dateBar.locator(".habit-history-date-btn").last();
+    await todayDateBtn.click();
+    await expect(todayDateBtn).toHaveAttribute("aria-pressed", "true");
+    await expect.poll(async () => isDateBtnContained()).toBe(true);
+    await page.waitForTimeout(50);
+
+    await page.setViewportSize({ width: 320, height: 568 });
+
+    // Dialog and Close fit inside 320px viewport
+    const dialogBox320 = await dialog.boundingBox();
+    expect(dialogBox320).not.toBeNull();
+    expect(dialogBox320!.x + dialogBox320!.width).toBeLessThanOrEqual(320);
+    const closeBox320 = await closeBtn.boundingBox();
+    expect(closeBox320!.x + closeBox320!.width).toBeLessThanOrEqual(dialogBox320!.x + dialogBox320!.width);
+
+    // Today button is kept contained by the width-change resize handler
+    await expect.poll(async () => isDateBtnContained()).toBe(true);
+
+    // 7. No-width-change / content-height change preserves intentional manual browsing
+    await page.setViewportSize({ width: 375, height: 667 });
+    await page.waitForTimeout(50);
+    await dateBar.evaluate((bar) => { bar.scrollLeft = 0; });
+    expect(await isDateBtnContained()).toBe(false);
+
+    // Draft edit expands list height; must NOT snap manual scroll back to selection
+    await dialog.getByRole("button", { name: /Record/ }).first().click();
+    const noteInput = dialog.getByRole("textbox", { name: "Note (optional)" });
+    await expect(noteInput).toBeVisible();
+    await noteInput.fill("Preserving manual scroll during draft edit");
+
+    expect(await dateBar.evaluate((bar) => bar.scrollLeft)).toBe(0);
+
+    // Toggle "Show archived": re-renders with state; must NOT snap manual scroll back
+    await checkbox.click();
+    expect(await dateBar.evaluate((bar) => bar.scrollLeft)).toBe(0);
+
+    // Document and list scroll positions remain isolated (no scrollIntoView leak)
+    const docScrollY = await page.evaluate(() => window.scrollY);
+    expect(docScrollY).toBe(initialScrollY);
+    const listScrollTop = await dialog.locator(".habit-history-list").evaluate((el) => el.scrollTop);
+    expect(listScrollTop).toBe(0);
+
+    // 8. Actual history refresh preserves intentional manual browsing and focus
+    const refreshBtn = dialog.getByRole("button", { name: "Refresh habit history" });
+    await refreshBtn.focus();
+    await expect(refreshBtn).toBeFocused();
+
+    await Promise.all([
+      page.waitForResponse((res) => res.url().includes("/api/habits/history") && res.status() === 200),
+      refreshBtn.click(),
+    ]);
+    // Observe finished render after refresh settles
+    await expect(refreshBtn).toBeEnabled();
+
+    // Manual scroll remains at 0 and selection remains Today after refresh completes
+    await expect.poll(async () => dateBar.evaluate((bar) => bar.scrollLeft)).toBe(0);
+    await expect(dateBar.locator(".habit-history-date-btn--selected")).toContainText("Today");
+
+    // Keyboard focus remained on the Refresh button
+    await expect(refreshBtn).toBeFocused();
+
+    // 9. Desktop 1280px: dialog is centered with 680px width, all 8 dates fit without horizontal scroll
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.waitForTimeout(100);
+
+    const dialogBox1280 = await dialog.boundingBox();
+    expect(dialogBox1280).not.toBeNull();
+    expect(Math.round(dialogBox1280!.width)).toBe(680);
+    expect(dialogBox1280!.x).toBeGreaterThanOrEqual(250);
+  });
+
+  test("Selection reveal does not lose pending reveal when dates refresh arrives before frame", async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 667 });
+    await openToday(page);
+    await createHabit(page, "Daily reading");
+
+    const historyOpener = page.getByRole("button", { name: "History" });
+    await historyOpener.click();
+    const dialog = page.getByRole("dialog", { name: "Habit history" });
+    await expect(dialog).toBeVisible();
+
+    const dateBar = dialog.locator(".habit-history-date-bar");
+    const isDateBtnContained = async () => {
+      return await dateBar.evaluate((bar) => {
+        const btn = bar.querySelector<HTMLButtonElement>(".habit-history-date-btn--selected");
+        if (!btn) return false;
+        const barRect = bar.getBoundingClientRect();
+        const btnRect = btn.getBoundingClientRect();
+        return btnRect.left >= barRect.left - 1 && btnRect.right <= barRect.right + 1;
+      });
+    };
+    // 1. Establish initial completed reveal and preserve native geometry
+    await expect.poll(async () => isDateBtnContained()).toBe(true);
+
+    // 2. Install test scheduler interceptor to hold selected-date animation frames
+    await page.evaluate(() => {
+      const win = window as any;
+      const originalRaf = win.requestAnimationFrame.bind(window);
+      const originalCaf = win.cancelAnimationFrame.bind(window);
+      const held = new Map<number, FrameRequestCallback>();
+      let hold = false;
+      let counter = 10000;
+
+      win.__holdRaf = () => { hold = true; };
+      win.__pendingRafCount = () => held.size;
+      win.__releaseRaf = () => {
+        hold = false;
+        const callbacks = Array.from(held.values());
+        held.clear();
+        for (const cb of callbacks) {
+          cb(performance.now());
+        }
+      };
+      win.__restoreRaf = () => {
+        hold = false;
+        held.clear();
+        win.requestAnimationFrame = originalRaf;
+        win.cancelAnimationFrame = originalCaf;
+      };
+
+      win.requestAnimationFrame = (cb: FrameRequestCallback) => {
+        if (hold) {
+          const id = ++counter;
+          held.set(id, cb);
+          return id;
+        }
+        return originalRaf(cb);
+      };
+
+      win.cancelAnimationFrame = (id: number) => {
+        if (held.has(id)) {
+          held.delete(id);
+          return;
+        }
+        return originalCaf(id);
+      };
+    });
+
+    try {
+      // 3. Manually scroll strip to start so middle date is partly clipped
+      await dateBar.evaluate((bar) => { bar.scrollLeft = 0; });
+
+      // 4. Click VISIBLE portion of partly clipped middle date using raw mouse coordinates
+      const target = await dateBar.evaluate((bar) => {
+        bar.scrollLeft = 0;
+        const btns = Array.from(bar.querySelectorAll<HTMLButtonElement>(".habit-history-date-btn"));
+        const btn = btns[4]; // Middle date (index 4)
+        if (!btn) return null;
+        const r = btn.getBoundingClientRect();
+        const barRect = bar.getBoundingClientRect();
+        const visibleLeft = Math.max(r.left, barRect.left);
+        const visibleRight = Math.min(r.right, barRect.right);
+        if (visibleRight <= visibleLeft) return null;
+        const sub = btn.querySelector(".habit-history-date-sub")?.textContent?.trim() ?? "";
+        return { x: (visibleLeft + visibleRight) / 2, y: r.top + r.height / 2, sub };
+      });
+      expect(target).not.toBeNull();
+      const targetSub = target!.sub;
+      expect(targetSub).toBeTruthy();
+
+      // Hold frames before mouse click
+      await page.evaluate(() => { (window as any).__holdRaf(); });
+      await page.mouse.click(target!.x, target!.y);
+
+      // 5. Assert meaningful preconditions: date selected, initially clipped, reveal frame queued
+      const selectedBtn = dateBar.locator(".habit-history-date-btn--selected");
+      await expect(selectedBtn.locator(".habit-history-date-sub")).toHaveText(targetSub);
+      expect(await isDateBtnContained()).toBe(false);
+      const pendingCount = await page.evaluate(() => (window as any).__pendingRafCount());
+      expect(pendingCount).toBeGreaterThanOrEqual(1);
+
+      // 6. Trigger actual history response while reveal frame is pending
+      const refreshBtn = dialog.getByRole("button", { name: "Refresh habit history" });
+      const responsePromise = page.waitForResponse(
+        (res) => res.url().includes("/api/habits/history") && res.status() === 200
+      );
+      await refreshBtn.click();
+      await responsePromise;
+      // Observable render barrier: refresh has settled in React DOM
+      await expect(refreshBtn).toBeEnabled();
+
+      // 7. Release frame queue and assert final containment
+      await page.evaluate(() => { (window as any).__releaseRaf(); });
+
+      await expect(dateBar.locator(".habit-history-date-btn--selected .habit-history-date-sub")).toHaveText(targetSub);
+      await expect.poll(async () => isDateBtnContained()).toBe(true);
+    } finally {
+      // 8. Restore test scheduler interception in cleanup
+      await page.evaluate(() => {
+        const win = window as any;
+        if (typeof win.__restoreRaf === "function") {
+          win.__restoreRaf();
+        }
+      });
+    }
   });
 });

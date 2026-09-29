@@ -6056,9 +6056,31 @@ html[data-layout-mode="phone"] .habits-card {
 .habit-history-archived-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   cursor: pointer;
   user-select: none;
+  flex-shrink: 0;
+}
+
+.habit-history-archived-toggle input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  min-height: 16px;
+  margin: 0;
+  padding: 0;
+  flex-shrink: 0;
+  cursor: pointer;
+  accent-color: var(--accent, var(--ink));
+}
+
+.habit-history-archived-toggle input[type="checkbox"]:focus-visible {
+  outline: 2px solid var(--accent, var(--ink));
+  outline-offset: 2px;
+}
+
+.habit-history-archived-toggle span {
+  white-space: nowrap;
 }
 
 .habit-history-selected-notice {
@@ -6290,9 +6312,13 @@ html[data-layout-mode="phone"] .habits-card {
 }
 
 @media (max-width: 640px) {
+  .habit-history-dialog-overlay {
+    padding: 12px;
+  }
   .habit-history-dialog {
     padding: 14px;
-    width: 96vw;
+    width: 100%;
+    max-width: 100%;
   }
   .habit-history-fields-row {
     flex-direction: column;

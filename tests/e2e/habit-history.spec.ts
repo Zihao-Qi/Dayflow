@@ -19,6 +19,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { DatabaseSync } from "node:sqlite";
 import { resetTestDatabase, testDatabasePath } from "./database";
+import { addLocalDays } from "./activity-date-helpers";
 import type { HabitHistoryPayload } from "../../src/modules/evidence/ui/history-api";
 
 test.beforeEach(() => {
@@ -539,28 +540,35 @@ test.describe("Habit History & Backfill (Real Routes)", () => {
 });
 
 test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
-  const mockHistoryPayload: HabitHistoryPayload = {
-    todayKey: "2026-09-26",
-    earliestDate: "2026-09-19",
-    latestDate: "2026-09-26",
-    habits: [
-      {
-        id: "mock-habit-1",
-        name: "Evening Stroll",
-        cadence: "DAILY",
-        targetPerWeek: 7,
-        status: "ACTIVE",
-        sortOrder: 0,
-        createdAt: "2026-09-18T00:00:00.000Z",
-        archivedAt: null,
-        createdDay: "2026-09-18",
-        archivedDay: null
-      }
-    ],
-    checkIns: []
-  };
+  function createMockHistoryPayload(todayKey: string): HabitHistoryPayload {
+    const earliestDate = addLocalDays(todayKey, -7);
+    const createdDay = addLocalDays(todayKey, -8);
+    return {
+      todayKey,
+      earliestDate,
+      latestDate: todayKey,
+      habits: [
+        {
+          id: "mock-habit-1",
+          name: "Evening Stroll",
+          cadence: "DAILY",
+          targetPerWeek: 7,
+          status: "ACTIVE",
+          sortOrder: 0,
+          createdAt: `${createdDay}T00:00:00.000Z`,
+          archivedAt: null,
+          createdDay,
+          archivedDay: null
+        }
+      ],
+      checkIns: []
+    };
+  }
 
   test("MOCKED FAULT: global pending UI disables concurrent saves and check status while preserving draft editing and navigation", async ({ page }) => {
+    const { todayKey } = await (await page.request.get("/api/bootstrap")).json();
+    const mockHistoryPayload = createMockHistoryPayload(todayKey);
+    const createdDay = addLocalDays(todayKey, -8);
     const multiHabitPayload: HabitHistoryPayload = {
       ...mockHistoryPayload,
       habits: [
@@ -572,9 +580,9 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
           targetPerWeek: 7,
           status: "ACTIVE",
           sortOrder: 1,
-          createdAt: "2026-09-18T00:00:00.000Z",
+          createdAt: `${createdDay}T00:00:00.000Z`,
           archivedAt: null,
-          createdDay: "2026-09-18",
+          createdDay,
           archivedDay: null
         }
       ]
@@ -598,8 +606,8 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
         const saved = {
           id: "ci-1",
           habitId: "mock-habit-1",
-          date: "2026-09-26T12:00:00.000Z",
-          day: "2026-09-26",
+          date: `${todayKey}T12:00:00.000Z`,
+          day: todayKey,
           done: true,
           amount: null,
           note: null
@@ -622,8 +630,11 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
     await page.getByRole("button", { name: "History" }).click();
 
     const dialog = page.getByRole("dialog", { name: "Habit history" });
+    await expect(dialog.locator(".habit-history-selected-notice")).toContainText(todayKey);
     const row1 = dialog.locator('[data-habit="mock-habit-1"]');
     const row2 = dialog.locator('[data-habit="mock-habit-2"]');
+    await expect(row1).toBeVisible();
+    await expect(row2).toBeVisible();
 
     // Start save on Habit 1
     await row1.getByRole("button", { name: /Record/ }).click();
@@ -667,6 +678,10 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
   });
 
   test("MOCKED FAULT: network failure on save retains uncertain intention, disables inputs, and provides exact-date reconciliation with truthful accessible name", async ({ page }) => {
+    const { todayKey } = await (await page.request.get("/api/bootstrap")).json();
+    const mockHistoryPayload = createMockHistoryPayload(todayKey);
+    const earliestDate = addLocalDays(todayKey, -7);
+
     await page.route("**/api/habits/history", async (route) => {
       await route.fulfill({
         status: 200,
@@ -688,7 +703,9 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
     await page.getByRole("button", { name: "History" }).click();
 
     const dialog = page.getByRole("dialog", { name: "Habit history" });
+    await expect(dialog.locator(".habit-history-selected-notice")).toContainText(todayKey);
     const habitRow = dialog.locator('[data-habit="mock-habit-1"]');
+    await expect(habitRow).toBeVisible();
 
     await habitRow.getByRole("button", { name: /Record/ }).click();
     const editor = habitRow.locator(".habit-history-editor");
@@ -706,7 +723,7 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
 
     // "Check status" reconciliation button is visible with truthful accessible name
     const checkStatusBtn = editor.getByRole("button", {
-      name: /^Check status for Evening Stroll on 2026-09-26/
+      name: new RegExp(`^Check status for Evening Stroll on ${todayKey}`)
     });
     await expect(checkStatusBtn).toBeVisible();
 
@@ -720,16 +737,16 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
-          todayKey: "2026-09-26",
-          earliestDate: "2026-09-19",
-          latestDate: "2026-09-26",
+          todayKey,
+          earliestDate,
+          latestDate: todayKey,
           habitId: "mock-habit-1",
-          date: "2026-09-26",
+          date: todayKey,
           checkIn: {
             id: "reconciled-ci-1",
             habitId: "mock-habit-1",
-            date: "2026-09-26T12:00:00.000Z",
-            day: "2026-09-26",
+            date: `${todayKey}T12:00:00.000Z`,
+            day: todayKey,
             done: true,
             amount: 5,
             note: "Walked around the block"
@@ -889,10 +906,14 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
   });
 
   test("Proof 4: MOCKED FAULT: expired 400 after uncertainty retains check-status, disables writes, and names original date on exact-date GET", async ({ page }) => {
+    const { todayKey } = await (await page.request.get("/api/bootstrap")).json();
+    const earliestDate = addLocalDays(todayKey, -7);
+    const createdDay = addLocalDays(todayKey, -8);
+
     let currentHistory: HabitHistoryPayload = {
-      todayKey: "2026-09-26",
-      earliestDate: "2026-09-19",
-      latestDate: "2026-09-26",
+      todayKey,
+      earliestDate,
+      latestDate: todayKey,
       habits: [
         {
           id: "mock-habit-1",
@@ -901,9 +922,9 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
           targetPerWeek: 7,
           status: "ACTIVE",
           sortOrder: 0,
-          createdAt: "2026-09-18T00:00:00.000Z",
+          createdAt: `${createdDay}T00:00:00.000Z`,
           archivedAt: null,
-          createdDay: "2026-09-18",
+          createdDay,
           archivedDay: null
         }
       ],
@@ -933,7 +954,7 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
             status: 400,
             contentType: "application/json",
             body: JSON.stringify({
-              error: "2026-09-19 is outside the 8-day writable window.",
+              error: `${earliestDate} is outside the 8-day writable window.`,
               code: "VALIDATION_ERROR",
               field: "date"
             })
@@ -950,10 +971,17 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
     const dialog = page.getByRole("dialog", { name: "Habit history" });
     const habitRow = dialog.locator('[data-habit="mock-habit-1"]');
 
-    // 1. Select the oldest writable date (2026-09-19)
+    // Explicit barrier: ensure mocked history is loaded before interacting with date bar
+    await expect(dialog.locator(".habit-history-selected-notice")).toContainText(todayKey);
+    await expect(habitRow).toBeVisible();
+
+    // 1. Select the oldest writable date (earliestDate)
     const dateButtons = dialog.locator("button.habit-history-date-btn");
     await expect(dateButtons).toHaveCount(8);
     await dateButtons.first().click();
+
+    // Explicit barrier: ensure selection has settled to oldest date before recording
+    await expect(dialog.locator(".habit-history-selected-notice")).toContainText(earliestDate);
 
     // 2. Start recording and lose save response
     await habitRow.getByRole("button", { name: /Record/ }).click();
@@ -970,7 +998,7 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
     await expect(retryBtn).toBeVisible();
 
     const checkStatusBtn = editor.getByRole("button", {
-      name: /^Check status for Evening Stroll on 2026-09-19/
+      name: new RegExp(`^Check status for Evening Stroll on ${earliestDate}`)
     });
     await expect(checkStatusBtn).toBeVisible();
 
@@ -985,7 +1013,7 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
 
     // Assert UI date validation error appears
     await expect(editor.locator(".form-error")).toContainText(
-      "2026-09-19 is outside the 8-day writable window."
+      `${earliestDate} is outside the 8-day writable window.`
     );
 
     // Check status must remain available (not falsely considered definitely failed)
@@ -993,23 +1021,25 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
     await expect(habitRow.getByText("Save uncertain")).toBeVisible();
 
     // 4. Advance mocked SERVER window by one calendar day:
+    const nextTodayKey = addLocalDays(todayKey, 1);
+    const nextEarliestDate = addLocalDays(todayKey, -6);
     currentHistory = {
       ...currentHistory,
-      todayKey: "2026-09-27",
-      earliestDate: "2026-09-20",
-      latestDate: "2026-09-27"
+      todayKey: nextTodayKey,
+      earliestDate: nextEarliestDate,
+      latestDate: nextTodayKey
     };
 
     // Refresh history
     await dialog.getByRole("button", { name: "Refresh habit history" }).click();
 
-    // Assert original selected date (2026-09-19) is retained!
-    await expect(dialog.locator(".habit-history-selected-notice")).toContainText("2026-09-19 (Read-only)");
+    // Assert original selected date (earliestDate) is retained!
+    await expect(dialog.locator(".habit-history-selected-notice")).toContainText(`${earliestDate} (Read-only)`);
 
     // Expired banner is visible
     const banner = dialog.locator(".habit-history-banner--info");
     await expect(banner).toBeVisible();
-    await expect(banner).toContainText("2026-09-19 is outside the 8-day writable window");
+    await expect(banner).toContainText(`${earliestDate} is outside the 8-day writable window`);
     await expect(banner).toContainText("Records for this date are read-only.");
 
     // Writes disabled: Retry save button is disabled
@@ -1033,16 +1063,16 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
-          todayKey: "2026-09-27",
-          earliestDate: "2026-09-20",
-          latestDate: "2026-09-27",
+          todayKey: nextTodayKey,
+          earliestDate: nextEarliestDate,
+          latestDate: nextTodayKey,
           habitId: "mock-habit-1",
-          date: "2026-09-19",
+          date: earliestDate,
           checkIn: {
             id: "reconciled-expired-1",
             habitId: "mock-habit-1",
-            date: "2026-09-19T12:00:00.000Z",
-            day: "2026-09-19",
+            date: `${earliestDate}T12:00:00.000Z`,
+            day: earliestDate,
             done: true,
             amount: 10,
             note: "Oldest day attempt"
@@ -1053,7 +1083,7 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
 
     await checkStatusBtn.click();
 
-    expect(requestedDateParam).toBe("2026-09-19");
+    expect(requestedDateParam).toBe(earliestDate);
     await expect(editor).not.toBeVisible();
     await expect(habitRow.locator(".habit-history-state-tag--done")).toContainText("Done");
     await expect(habitRow.getByText("Amount: 10")).toBeVisible();
@@ -1061,6 +1091,9 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
   });
 
   test("MOCKED FAULT: saved-write / read-refresh-failure displays warning banner without falsifying write, and enables GET-only retry", async ({ page }) => {
+    const { todayKey } = await (await page.request.get("/api/bootstrap")).json();
+    const mockHistoryPayload = createMockHistoryPayload(todayKey);
+
     let returnLoadError = false;
     let historyState = mockHistoryPayload;
 
@@ -1087,8 +1120,8 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
         const saved = {
           id: "saved-ci-1",
           habitId: "mock-habit-1",
-          date: "2026-09-26T12:00:00.000Z",
-          day: "2026-09-26",
+          date: `${todayKey}T12:00:00.000Z`,
+          day: todayKey,
           done: true,
           amount: 3,
           note: "Saved before refresh failed"
@@ -1111,7 +1144,9 @@ test.describe("Habit History (Labelled Mocked Fault Scenarios)", () => {
     await page.getByRole("button", { name: "History" }).click();
 
     const dialog = page.getByRole("dialog", { name: "Habit history" });
+    await expect(dialog.locator(".habit-history-selected-notice")).toContainText(todayKey);
     const habitRow = dialog.locator('[data-habit="mock-habit-1"]');
+    await expect(habitRow).toBeVisible();
 
     await habitRow.getByRole("button", { name: /Record/ }).click();
     const editor = habitRow.locator(".habit-history-editor");

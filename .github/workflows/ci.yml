@@ -137,6 +137,8 @@ jobs:
       - name: Browser tests
         run: npx playwright test --shard=${{ matrix.shard }}/4
 
+      # A retry can make Browser tests succeed while its first attempt still
+      # left a trace worth keeping, so upload artifacts on every non-cancelled run.
       - name: Upload browser artifacts
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7

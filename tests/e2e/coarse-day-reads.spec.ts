@@ -334,6 +334,19 @@ for (const malformed of [false, true]) {
     await page.clock.install({ time: now });
     await page.clock.pauseAt(now);
     await openToday(page);
+    // A routed PATCH counts before the browser consumes its failure. Observe
+    // actual retry timer registration before advancing the paused clock.
+    const retryDelays = await page.evaluateHandle(() => {
+      const browser = window as Window;
+      const schedule = browser.setTimeout.bind(browser);
+      const delays: number[] = [];
+      browser.setTimeout = (handler, delay, ...args) => {
+        const timer = schedule(handler, delay, ...args);
+        if (delay === 1000 || delay === 4000) delays.push(delay);
+        return timer;
+      };
+      return delays;
+    });
     let attempts = 0;
     await page.route(`**/api/tasks/${task.id}`, async (route) => {
       if (route.request().method() !== "PATCH") return route.continue();
@@ -369,8 +382,10 @@ for (const malformed of [false, true]) {
     const attempted = row("Attempted coarse title");
     await expect(attempted).toBeVisible();
     await expect(attempted.getByRole("button", { name: "Complete Attempted coarse title", exact: true })).toBeVisible();
+    await expect.poll(() => retryDelays.jsonValue()).toEqual([1000]);
     await page.clock.runFor(1000);
     await expect.poll(() => attempts).toBe(2);
+    await expect.poll(() => retryDelays.jsonValue()).toEqual([1000, 4000]);
     await page.clock.runFor(4000);
     await expect.poll(() => attempts).toBe(3);
     await expect(attempted.locator(".save-state-chip.error")).toContainText("Not saved");

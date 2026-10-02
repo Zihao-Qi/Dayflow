@@ -36,7 +36,28 @@ const window = {
   periodEnd: "2026-09-01T05:00:00.000Z",
   review: null,
   reviewSummary: summary,
-  projects: []
+  projects: [],
+  habits: []
+};
+
+const habitSummary = {
+  id: "habit-1",
+  name: "Read",
+  cadence: "DAILY" as const,
+  targetPerWeek: 7,
+  sortOrder: 0,
+  today: null,
+  days: [{ day: "2026-08-31", state: "done" as const, amount: null }],
+  doneCount: 1,
+  target: 7
+};
+
+const savedReview = {
+  id: "review-1",
+  periodStart: window.periodStart,
+  periodEnd: window.periodEnd,
+  narrative: "looked back",
+  nextPeriodIntention: "look ahead"
 };
 
 const draft = {
@@ -121,7 +142,12 @@ test("Review Window drafts must match both outer period bounds", () => {
 test("past Review and history validators reject current drafts", () => {
   assert.equal(isPastReviewRecord(draft), false);
   assert.equal(isReviewHistoryPage({ items: [draft], nextCursor: null, totalCount: 1 }), false);
-  assert.equal(isPastReviewDetail({ review: draft, reviewSummary: summary, projects: [], isCurrentPeriod: true }), false);
+  assert.equal(
+    isPastReviewDetail({
+      review: draft, reviewSummary: summary, projects: [], habits: [], isCurrentPeriod: true
+    }),
+    false
+  );
 });
 
 test("Review Window responses accept complete unsaved and exact saved details", () => {
@@ -167,6 +193,41 @@ function currentWindow(periodStart = window.periodStart, periodEnd = window.peri
       narrative: persisted ? "Saved writing" : "", nextPeriodIntention: ""
     }
   };
+}
+
+for (const { name, guard, base } of [
+  {
+    name: "current Review Period",
+    guard: isCurrentReviewWindow,
+    base: currentWindow()
+  },
+  {
+    name: "historical Review Window",
+    guard: isReviewWindowDetail,
+    base: window
+  },
+  {
+    name: "saved Past Review Period",
+    guard: isPastReviewDetail,
+    base: { ...window, review: savedReview, isCurrentPeriod: false }
+  }
+]) {
+  test(`${name} accepts empty and nonempty Habit summaries`, () => {
+    assert.equal(guard({ ...base, habits: [] }), true, "empty Habit list");
+    assert.equal(guard({ ...base, habits: [habitSummary] }), true, "Habit summary");
+  });
+
+  const { habits: _habits, ...missing } = base;
+  for (const [condition, payload] of [
+    ["missing", missing],
+    ["null", { ...base, habits: null }],
+    ["non-array", { ...base, habits: {} }],
+    ["malformed", { ...base, habits: [{ ...habitSummary, doneCount: "one" }] }]
+  ] as const) {
+    test(`${name} rejects ${condition} Habit summaries`, () => {
+      assert.equal(guard(payload), false, condition);
+    });
+  }
 }
 
 // Fixed server payloads: changing the browser zone must never change the verdict.

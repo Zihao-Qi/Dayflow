@@ -297,6 +297,7 @@ export type PastReviewDetail = {
   review: PastReviewRecord;
   reviewSummary: PastReviewSummary;
   projects: PastReviewProject[];
+  habits: HabitSummaryRecord[];
   isCurrentPeriod: boolean;
 };
 
@@ -307,6 +308,7 @@ export type ReviewWindowDetail = {
   review: PastReviewRecord | null;
   reviewSummary: PastReviewSummary;
   projects: PastReviewProject[];
+  habits: HabitSummaryRecord[];
 };
 
 const isIsoDate = (value: unknown): value is string =>
@@ -441,6 +443,8 @@ export function isPastReviewDetail(value: unknown): value is PastReviewDetail {
     isPastReviewSummary(detail.reviewSummary) &&
     Array.isArray(detail.projects) &&
     detail.projects.every(isPastReviewProject) &&
+    Array.isArray(detail.habits) &&
+    detail.habits.every(isHabitSummaryRecord) &&
     typeof detail.isCurrentPeriod === "boolean"
   );
 }
@@ -454,7 +458,9 @@ export function isReviewWindowDetail(
     !hasReviewWindowGeometry(detail) ||
     !isPastReviewSummary(detail.reviewSummary) ||
     !Array.isArray(detail.projects) ||
-    !detail.projects.every(isPastReviewProject)
+    !detail.projects.every(isPastReviewProject) ||
+    !Array.isArray(detail.habits) ||
+    !detail.habits.every(isHabitSummaryRecord)
   ) {
     return false;
   }

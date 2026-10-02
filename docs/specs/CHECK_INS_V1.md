@@ -1,6 +1,6 @@
 # Habit Check-ins v1
 
-Status: Proposed
+Status: Implemented (Stages 1–4)
 Date: September 14, 2026
 Scope: A named, repeating commitment and a per-day record of whether it happened
 
@@ -337,13 +337,41 @@ The Today page renders a dedicated Habits card (`HabitsCard`), supporting direct
 - **Confirmed-Write & Read-Refresh Feedback**: A confirmed write updates local UI state immediately, but the action stays pending while `useHabitActions` awaits a trailing read-refresh (`refreshAfterConfirmedMutation`). If the trailing refresh fails, the confirmed write is preserved in the card and an announcement or retry toast is presented.
 - **Cross-Midnight Protection**: `HabitsCard` and its rows require a `todayKey: string` property and key each row item by `${habit.id}:${todayKey}`. Day-scoped drafts, errors, and touched flags reset across calendar boundaries, ensuring uncommitted drafts from yesterday cannot leak into the new day's editor.
 
+## Habits in Review (Stage 4 Implementation)
+
+Review presents Habit evidence through one read-only `ReviewHabits` component:
+
+- **Interval ownership**: Current Review uses its current-window response. A
+  historical Review Window uses the response for the chosen ending day. A saved
+  Past Review Period uses its stored boundaries. An empty selected interval stays
+  empty; it must not substitute evidence from the current period.
+- **Server-owned summaries**: All three detail contracts require the existing
+  `HabitSummaryRecord[]`. The UI displays the returned `doneCount` and effective
+  `target` without recomputing capacity or clamping a ratio such as `4/3`. Daily
+  and weekly cadence labels provide context for the effective target.
+- **Seven dated states**: Each summary shows seven local calendar dates with
+  distinct marks and accessible text for Done, Not done, Not recorded, and
+  Outside lifetime. Explicit amounts, including zero, remain available in each
+  date's label and tooltip. Local date parsing preserves weekday labels across
+  timezones.
+- **Historical evidence**: Archived definitions and explicit evidence outside
+  lifetime appear when the existing server selection includes them. Saved Review
+  writing remains stored writing; its evidence reflects current records within
+  the saved boundaries.
+- **Empty and responsive states**: An empty summary array displays “No habits
+  were active during this review period.” The panel and seven-date strips fit at
+  320px, 375px, and desktop widths. This section has no check-in controls or new
+  fetch owner; existing Review navigation, editing, retry, and refresh remain in
+  charge.
+
 ## Habit History & 8-Day Backfill Dialog (Stage 3 Implementation)
 
 A separate responsive dialog (`HabitHistoryDialog`) provides historical inspection and backfill across the full eight-day backfill window (`today - 7` through `today`):
 
 - **Header Entry Point**: A "History" action button in the `HabitsCard` header launches the dialog. The entry point remains accessible even when the active habit list is empty, allowing historical review and backfill for previously archived commitments.
-- **Date-First 8-Date Bar**: Eight clearly labelled calendar-date buttons spanning the server-authoritative backfill window (`earliestDate` through `latestDate`), with Today selected by default. Switching dates immediately updates the active habit list and evidence for that day.
-- **Active & Archived Discovery**: Active habits appear first (sorted by `sortOrder`, `createdAt`, `id`). A "Show archived" toggle discloses all archived habit definitions (sorted by `archivedAt desc`, `createdAt desc`, `id asc`). An out-of-scope status outside lifetime does not prevent recording explicit evidence within the writable window.
+- **Date-First 8-Date Bar**: Eight clearly labelled calendar-date buttons spanning the server-authoritative backfill window (`earliestDate` through `latestDate`), with Today selected by default. Switching dates immediately updates the active habit list and evidence for that day. On compact viewports, the selected date button is automatically revealed into view within the horizontal date strip on initial open, reopen, date selection, and resize without shifting keyboard focus or scrolling outer ancestors, preserving manual strip browsing during editing.
+- **Active & Archived Discovery**: Active habits appear first (sorted by `sortOrder`, `createdAt`, `id`). A "Show archived" toggle discloses all archived habit definitions (sorted by `archivedAt desc`, `createdAt desc`, `id asc`). The toggle uses a compact, explicitly dimensioned checkbox with non-wrapping label text and visible keyboard focus. An out-of-scope status outside lifetime does not prevent recording explicit evidence within the writable window.
+- **Responsive Dialog Containment**: The dialog and its close button are fully contained within narrow viewports (down to 320px width) with symmetric margins, avoiding right-edge clipping while desktop layouts preserve centered presentation and internal scrolling for long content.
 - **Four Distinct States**: Each habit row indicates its day status: `done` (●), `notDone` (×), `unrecorded` (·), and `outOfScope` (outside lifetime). Existing amounts and notes are displayed as badges/summaries when present.
 - **Inline Editor with Explicit State Choice**: Clicking "Record" or "Edit" opens an inline editor for that habit and date. The user must explicitly select "Done" or "Not done" before saving (Save button disabled while state is unselected). Optional amount (`0..1,000,000`) and note (up to 2,000 characters) inputs are provided. Zero amounts (`amount: 0`) are preserved honestly and not coerced to null.
 - **Keyed Draft Isolation**: Drafts, input touched states, and field validation errors are keyed strictly by `${habitId}:${date}`. Switching dates preserves uncommitted drafts on their originating date without leaking text into another day.

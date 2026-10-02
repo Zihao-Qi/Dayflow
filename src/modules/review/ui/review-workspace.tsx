@@ -7,6 +7,7 @@ import { SaveStateChip, useSaveState } from "@/components/save-state";
 import { useReviewHistory } from "@/modules/review/ui/use-review-history";
 import { PageHeader } from "@/components/workspace-ui";
 import { ReviewMetric } from "@/modules/review/ui/review-metric";
+import { ReviewHabits } from "./review-habits";
 import {
   formatDiaryAverage,
   formatMinutes,
@@ -113,6 +114,11 @@ export function ReviewPage({
   const detail = window ?? past;
   const activeSummary: ReviewSummary = detail ? detail.reviewSummary : summary;
   const activeProjects: ReviewMovedProject[] = detail ? detail.projects : projects;
+  const activeHabits = window
+    ? window.habits
+    : past
+      ? past.habits
+      : current.payload.habits;
   const activePeriodEnd = window
     ? window.periodEnd
     : past
@@ -160,6 +166,8 @@ export function ReviewPage({
         projects={activeProjects}
         onOpenProject={onOpenProject}
       />
+
+      <ReviewHabits habits={activeHabits} />
 
       {window?.review && window.review.id !== null ? (
         <PastReviewCard

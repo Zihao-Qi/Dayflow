@@ -1,6 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
 import { resetTestDatabase, seedPastReviews } from "./database";
-import { addLocalDays, localDateKey } from "./activity-date-helpers";
+import {
+  addLocalDays,
+  localDateKey,
+  shiftLocalDay
+} from "./activity-date-helpers";
 
 test.beforeEach(() => {
   resetTestDatabase();
@@ -367,10 +371,6 @@ async function controlBootstrapPeriodShift(page: Page) {
     completedReads: () => bootstrapLoads + failedReads.length,
     failedReads: () => [...failedReads]
   };
-}
-
-function shiftLocalDay(value: string) {
-  return new Date(new Date(value).getTime() + 24 * 60 * 60 * 1_000).toISOString();
 }
 
 test("a local-day rollover keeps an open Past Review Period on screen", async ({

@@ -5,6 +5,12 @@ export function addLocalDays(value: string, days: number) {
   return localDateKey(date);
 }
 
+export function shiftLocalDay(value: string) {
+  const date = new Date(value);
+  date.setDate(date.getDate() + 1);
+  return date.toISOString();
+}
+
 export function localDateKey(value: string | Date) {
   const date = typeof value === "string" ? new Date(value) : value;
   return [

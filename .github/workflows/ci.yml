@@ -137,11 +137,11 @@ jobs:
       - name: Browser tests
         run: npx playwright test --shard=${{ matrix.shard }}/4
 
-      - name: Upload browser failure artifacts
-        if: ${{ failure() }}
+      - name: Upload browser artifacts
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
-          name: playwright-failure-${{ github.run_id }}-${{ github.run_attempt }}-shard${{ matrix.shard }}
+          name: playwright-${{ github.run_id }}-${{ github.run_attempt }}-shard${{ matrix.shard }}
           path: |
             playwright-report/
             test-results/

@@ -1,6 +1,6 @@
 # Habit Check-ins v1
 
-Status: Proposed
+Status: Implemented (Stages 1–4)
 Date: September 14, 2026
 Scope: A named, repeating commitment and a per-day record of whether it happened
 
@@ -336,6 +336,33 @@ The Today page renders a dedicated Habits card (`HabitsCard`), supporting direct
 - **Amount & Note Editing**: Amount (integer `0–1,000,000`) and note (textarea, `rows={2}`, max 2,000 characters) fields remain disabled until the habit is recorded today. An independent "Save details" action commits changes; clearing an amount field sends `null`, and clearing a note field sends `null`, persisting the removal in storage.
 - **Confirmed-Write & Read-Refresh Feedback**: A confirmed write updates local UI state immediately, but the action stays pending while `useHabitActions` awaits a trailing read-refresh (`refreshAfterConfirmedMutation`). If the trailing refresh fails, the confirmed write is preserved in the card and an announcement or retry toast is presented.
 - **Cross-Midnight Protection**: `HabitsCard` and its rows require a `todayKey: string` property and key each row item by `${habit.id}:${todayKey}`. Day-scoped drafts, errors, and touched flags reset across calendar boundaries, ensuring uncommitted drafts from yesterday cannot leak into the new day's editor.
+
+## Habits in Review (Stage 4 Implementation)
+
+Review presents Habit evidence through one read-only `ReviewHabits` component:
+
+- **Interval ownership**: Current Review uses its current-window response. A
+  historical Review Window uses the response for the chosen ending day. A saved
+  Past Review Period uses its stored boundaries. An empty selected interval stays
+  empty; it must not substitute evidence from the current period.
+- **Server-owned summaries**: All three detail contracts require the existing
+  `HabitSummaryRecord[]`. The UI displays the returned `doneCount` and effective
+  `target` without recomputing capacity or clamping a ratio such as `4/3`. Daily
+  and weekly cadence labels provide context for the effective target.
+- **Seven dated states**: Each summary shows seven local calendar dates with
+  distinct marks and accessible text for Done, Not done, Not recorded, and
+  Outside lifetime. Explicit amounts, including zero, remain available in each
+  date's label and tooltip. Local date parsing preserves weekday labels across
+  timezones.
+- **Historical evidence**: Archived definitions and explicit evidence outside
+  lifetime appear when the existing server selection includes them. Saved Review
+  writing remains stored writing; its evidence reflects current records within
+  the saved boundaries.
+- **Empty and responsive states**: An empty summary array displays “No habits
+  were active during this review period.” The panel and seven-date strips fit at
+  320px, 375px, and desktop widths. This section has no check-in controls or new
+  fetch owner; existing Review navigation, editing, retry, and refresh remain in
+  charge.
 
 ## Habit History & 8-Day Backfill Dialog (Stage 3 Implementation)
 

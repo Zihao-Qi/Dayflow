@@ -184,6 +184,15 @@ npm run typecheck
 npm run build
 ```
 
+`npm run typecheck` uses the native TypeScript 7 compiler, installed as
+`@typescript/native` (an npm alias for `typescript`). The `typescript` import
+resolves to Microsoft's `@typescript/typescript6` compatibility package, which
+provides the compiler API used by the architecture scanner and Next.js's build
+check. `tsc` runs the native checker; `tsc6` runs the compatibility checker.
+Keep both packages: replacing the compatibility alias with native TypeScript
+breaks the scanner and Next.js's default API-based check. This follows the
+[TypeScript team's side-by-side guidance](https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/).
+
 ## Browser Tests
 
 Install Playwright's Chromium browser once:

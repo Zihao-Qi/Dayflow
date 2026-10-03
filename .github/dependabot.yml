@@ -9,17 +9,6 @@ updates:
     # governs routine version maintenance.
     open-pull-requests-limit: 5
     ignore:
-      # TypeScript 7 is deferred, not unwanted -- see issue #93. The native port
-      # changes the compiler API the architecture scanner depends on: `ts.ScriptTarget`
-      # is undefined on the default import, so all nine rules fail before they run.
-      # Porting the scanner means re-verifying that every rule still detects what it
-      # detected before, which the ratchets cannot tell us on their own -- a scanner
-      # that finds nothing still passes an empty baseline.
-      #
-      # Remove this entry when #93 is resolved.
-      - dependency-name: typescript
-        update-types:
-          - version-update:semver-major
       # Prisma 7 is deferred, not unwanted -- see issue #100. It removes the
       # datasource `url` property from the schema (P1012) and requires a
       # prisma.config.ts plus a driver adapter passed to the PrismaClient

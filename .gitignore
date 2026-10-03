@@ -34,4 +34,5 @@ __pycache__/
 
 # Local working notes, deliberately not published.
 AGENTS.md
+CLAUDE.md
 docs/research/

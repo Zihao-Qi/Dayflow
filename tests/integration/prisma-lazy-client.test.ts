@@ -27,7 +27,7 @@ test("the lazy client binds the first-use URL and still honors scoped injection"
     const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", `
       import assert from 'node:assert/strict';
       import {createRequire} from 'node:module';
-      const require=createRequire("file:///private/tmp/dayflow-prisma7-compat/package.json");
+      const require=createRequire(${JSON.stringify(pathToFileURL(join(process.cwd(), "package.json")).href)});
       // Match the CommonJS package condition used by the application's tsx modules.
       const {PrismaClient}=require('@prisma/client');
       const {PrismaBetterSqlite3}=require('@prisma/adapter-better-sqlite3');

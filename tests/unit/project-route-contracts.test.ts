@@ -14,8 +14,8 @@ import {
   PATCH as updatePhase
 } from "../../src/app/api/phases/[id]/route";
 import { mutationRequestHash } from "../../src/lib/idempotent-mutations";
-import { getPrisma } from "../../src/lib/prisma";
-const prisma = getPrisma();
+import { injectedUnitTestClient } from "../prisma-test-helpers";
+const prisma = injectedUnitTestClient();
 
 // Route reads and phase updates now enter a transaction before calling these delegates.
 const originalTransactionRoot = prisma.$transaction;

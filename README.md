@@ -103,12 +103,10 @@ even when the current day itself has nothing scheduled.
 
 ## Local Setup
 
-Prerequisite: Node.js 22.13 or newer on the 22.x line, or 23.4 or newer.
-The browser-test helpers open the test database through `node:sqlite`,
-which arrived in Node 22.5 and left `--experimental-sqlite` in v22.13.0
-and v23.4.0 - so 23.0 through 23.3 still require the flag and are not
-supported. The seed step loads `.env` with
-Node's `--env-file-if-exists` flag, which older 20.x releases do not have.
+Prerequisite: Node.js 22.13 or newer on the 22.x line, or Node.js 24 or newer.
+Prisma 7 excludes Node.js 23. The test helpers also require `node:sqlite`
+without an experimental flag, available on the supported versions. The seed
+step loads `.env` with Node's `--env-file-if-exists` flag.
 
 ```bash
 npm install
@@ -130,6 +128,23 @@ device.
 `prisma/dev.db` so a new dashboard has example data immediately. If the
 database already contains Dayflow data, seeding is skipped and nothing is
 deleted.
+
+Prisma 7 uses `prisma.config.ts` for CLI configuration and the better-sqlite3
+adapter for runtime connections. An explicitly supplied `DATABASE_URL` wins over
+`.env`; relative `file:` paths still resolve under `prisma/`. Dependency installation
+generates the client automatically. Client generation and builds need no database
+URL and open no database. Database commands require
+an explicit URL or one in `.env`; there is no fallback to guess a database.
+The adapter writes integer milliseconds so existing Prisma 6 dates and range
+queries remain compatible. Keep the Prisma CLI, client and adapter versions aligned.
+
+This migration retains the `prisma-client-js` generator to preserve existing
+imports; adopting its successor is separate work. The scoped `prisma` → `mysql2`
+override pins 3.24.5 because Prisma 7.10.0 otherwise installs vulnerable 3.15.3.
+Remove that override once Prisma resolves a patched release, after a clean-install
+audit and configuration/migration checks. `@prisma/config` now loads `deepmerge-ts`
+when reading this configuration, so its existing override must be validated with
+the CLI; it can no longer be justified as unreachable.
 
 To deliberately replace a local database with the demo dataset:
 

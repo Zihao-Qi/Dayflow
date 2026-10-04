@@ -1,24 +1,15 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import test from "node:test";
+import { initializeTestDatabase, injectedTestClient } from "../sqlite-test-helpers";
 import {
   addDays,
   localDateKey,
   reviewPeriodRange,
   startOfLocalDay
 } from "../../src/lib/dates";
-
-const repositoryRoot = process.cwd();
-const prismaCliPath = join(
-  repositoryRoot,
-  "node_modules",
-  "prisma",
-  "build",
-  "index.js"
-);
 
 async function withDatabase(
   context: { after: (fn: () => unknown) => void },
@@ -48,19 +39,9 @@ async function withDatabase(
     }
   });
 
-  execFileSync(
-    process.execPath,
-    [
-      prismaCliPath,
-      "db",
-      "execute",
-      "--file",
-      "prisma/init.sql",
-      "--url",
-      process.env.DATABASE_URL
-    ],
-    { cwd: repositoryRoot, stdio: "pipe" }
-  );
+  initializeTestDatabase(process.env.DATABASE_URL!);
+  const fixture = injectedTestClient(process.env.DATABASE_URL!);
+  disconnectPrisma = () => fixture.close();
 
   const [history, bootstrap, { getPrisma }] = await Promise.all([
     import("../../src/lib/review-history"),
@@ -68,7 +49,6 @@ async function withDatabase(
     import("../../src/lib/prisma")
   ]);
   const prisma = getPrisma();
-  disconnectPrisma = () => prisma.$disconnect();
 
   await run({ prisma, history, loadBootstrap: bootstrap.GET });
 }

@@ -1,20 +1,11 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import test from "node:test";
+import { initializeTestDatabase } from "../sqlite-test-helpers";
 import { NextRequest } from "next/server";
 import type { Prisma } from "@prisma/client";
-
-const repositoryRoot = process.cwd();
-const prismaCliPath = join(
-  repositoryRoot,
-  "node_modules",
-  "prisma",
-  "build",
-  "index.js"
-);
 
 async function withDatabase(
   context: { after: (fn: () => unknown) => void },
@@ -45,19 +36,7 @@ async function withDatabase(
     }
   });
 
-  execFileSync(
-    process.execPath,
-    [
-      prismaCliPath,
-      "db",
-      "execute",
-      "--file",
-      "prisma/init.sql",
-      "--url",
-      process.env.DATABASE_URL
-    ],
-    { cwd: repositoryRoot, stdio: "pipe" }
-  );
+  initializeTestDatabase(process.env.DATABASE_URL!);
 
   const [taskRoute, projectRoute, focusRoute, activityRoute, { getPrisma }] =
     await Promise.all([

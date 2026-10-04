@@ -19,8 +19,8 @@ import {
   IdempotentMutationError,
   mutationRequestHash
 } from "../../src/lib/idempotent-mutations";
-import { getPrisma } from "../../src/lib/prisma";
-const prisma = getPrisma();
+import { injectedUnitTestClient } from "../prisma-test-helpers";
+const prisma = injectedUnitTestClient();
 
 test("evidence routes return typed malformed-JSON responses", async () => {
   const activityResponse = await createActivity(

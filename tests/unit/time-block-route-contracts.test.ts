@@ -13,8 +13,8 @@ import {
   TimeBlockError
 } from "../../src/lib/time-blocks";
 import { IdempotentMutationError } from "../../src/lib/idempotent-mutations";
-import { getPrisma } from "../../src/lib/prisma";
-const prisma = getPrisma();
+import { injectedUnitTestClient } from "../prisma-test-helpers";
+const prisma = injectedUnitTestClient();
 import { timeBlockMutationErrorResponse } from "../../src/server/time-blocks";
 
 const validBody = {

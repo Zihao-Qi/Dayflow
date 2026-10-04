@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import test from "node:test";
+import { initializeTestDatabase, injectedTestClient } from "../sqlite-test-helpers";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import {
   archiveHabit,
@@ -36,13 +36,11 @@ async function withDatabase(
       rmSync(directory, { recursive: true, force: true });
     }
   });
-  execFileSync(process.execPath, [
-    join(process.cwd(), "node_modules/prisma/build/index.js"),
-    "db", "execute", "--file", "prisma/init.sql", "--url", process.env.DATABASE_URL
-  ], { cwd: process.cwd(), stdio: "pipe" });
+  initializeTestDatabase(process.env.DATABASE_URL!);
+  const fixture = injectedTestClient(process.env.DATABASE_URL!);
+  disconnect = () => fixture.close();
   const { getPrisma } = await import("../../src/lib/prisma");
   const prisma = getPrisma();
-  disconnect = () => prisma.$disconnect();
   await run(prisma);
 }
 

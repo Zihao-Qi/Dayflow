@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import test from "node:test";
+import { initializeTestDatabase } from "../sqlite-test-helpers";
 import { PrismaClient, type Prisma } from "@prisma/client";
+import { createSqliteAdapter } from "../../src/server/prisma/sqlite";
 import { parseNoteCreateInput, parseMaterialCreateInput, journalErrors } from "../../src/modules/journal/domain/journal";
 import { createNote, readNoteHistory, detachProjectNotes, readDayNotes, readProjectNotes, readReviewNotes } from "../../src/modules/journal/services/notes";
 import { createMaterial, readMaterialHistory, detachProjectMaterials, readRecentMaterials, readProjectMaterials, readReviewMaterials } from "../../src/modules/journal/services/materials";
@@ -31,10 +32,7 @@ async function withDatabase(
       rmSync(directory, { recursive: true, force: true });
     }
   });
-  execFileSync(process.execPath, [
-    join(process.cwd(), "node_modules/prisma/build/index.js"),
-    "db", "execute", "--file", "prisma/init.sql", "--url", process.env.DATABASE_URL
-  ], { cwd: process.cwd(), stdio: "pipe" });
+  initializeTestDatabase(process.env.DATABASE_URL!);
   // Load the transaction root only after directing its client at disposable SQLite.
   const [{ getPrisma }, { runOnce }] = await Promise.all([
     import("../../src/lib/prisma"),
@@ -136,7 +134,7 @@ test("journal services run headlessly on SQLite", async context => {
 
     await context.test("page and total share a snapshot while another connection attempts an insert", async () => {
       await prisma.$queryRawUnsafe('PRAGMA journal_mode = WAL');
-      const writer = new PrismaClient({ datasources: { db: { url: process.env.DATABASE_URL } } });
+      const writer = new PrismaClient({ adapter: createSqliteAdapter(process.env.DATABASE_URL!) });
       try {
         for (const kind of ["note", "material"] as const) {
           const marker = `snapshot-${kind}`;
@@ -149,10 +147,10 @@ test("journal services run headlessly on SQLite", async context => {
             let reads = 0;
             const instrumented = { ...tx, $queryRawUnsafe: async (sql: string, ...values: unknown[]) => {
               const rows = await tx.$queryRawUnsafe(sql, ...values);
-              // Prisma SQLite reserves the writer lock for the read transaction.
-              // Start the competing write between page/count; it commits after release.
+              // This fixture uses WAL so the competing write can actually
+              // commit between page/count. Escaping the snapshot then sees two.
               if (++reads === 1) concurrentInsert = insert();
-              if (concurrentInsert) void Promise.resolve(concurrentInsert).catch(() => undefined);
+              if (concurrentInsert) await concurrentInsert;
               return rows;
             } } as unknown as Prisma.TransactionClient;
             const criteria = parseJournalHistoryCriteria(new URLSearchParams({ q: marker }), kind);

@@ -147,12 +147,13 @@ rules target directories that do not exist until the migration creates them.
 6. **Transaction roots.** A direct call to a property named `$transaction`
    is permitted only in `src/server/prisma/client.ts`, the module that owns
    the transaction queue. This was tightened from `src/app/api`, `src/server`
-   and the idempotency helper when the queue moved into that module: Prisma
-   opens interactive transactions on SQLite with `BEGIN IMMEDIATE`, and past
-   the engine's worker count the waiting transactions starve each other and
-   fail together as P1008. A root outside the module skips the queue and
-   restores that failure, so the allowlist is one file and new callers go
-   through Rule 10 instead.
+   and the idempotency helper when the queue moved into that module. On Prisma
+   6, `BEGIN IMMEDIATE` contention starved engine workers and failed as P1008.
+   Prisma 7's adapter uses `BEGIN` and a per-connection mutex, so that historical
+   reproduction no longer applies. The process queue still governs admission
+   across clients, bounds waiting and forbids nested roots. A root outside the
+   module skips those contracts; the allowlist remains one file and new callers
+   go through Rule 10 instead.
 7. **Activity writes.** Every direct call whose receiver property or
    identifier is `activityEntry` and whose method is `create`, `createMany`,
    `upsert`, `update`, `updateMany`, `delete` or `deleteMany` under `src/`,

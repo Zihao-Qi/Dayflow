@@ -1,6 +1,6 @@
-import { PrismaClient } from "@prisma/client";
+import { getPrisma } from "../src/lib/prisma";
 
-const prisma = new PrismaClient();
+const prisma = getPrisma();
 // The legacy completion transaction wrote Activity.createdAt and
 // FocusSession.recordedAt together. Content alone is not provenance because a
 // manual Activity can be identical.

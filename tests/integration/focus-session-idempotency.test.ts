@@ -1,19 +1,10 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import test from "node:test";
+import { initializeTestDatabase } from "../sqlite-test-helpers";
 import { NextRequest } from "next/server";
-
-const repositoryRoot = process.cwd();
-const prismaCliPath = join(
-  repositoryRoot,
-  "node_modules",
-  "prisma",
-  "build",
-  "index.js"
-);
 
 test("Focus Session start idempotency", async (context) => {
   const temporaryDirectory = mkdtempSync(
@@ -36,19 +27,7 @@ test("Focus Session start idempotency", async (context) => {
     }
   });
 
-  execFileSync(
-    process.execPath,
-    [
-      prismaCliPath,
-      "db",
-      "execute",
-      "--file",
-      "prisma/init.sql",
-      "--url",
-      process.env.DATABASE_URL
-    ],
-    { cwd: repositoryRoot, stdio: "pipe" }
-  );
+  initializeTestDatabase(process.env.DATABASE_URL!);
 
   const [{ POST }, { getPrisma }] = await Promise.all([
     import("../../src/app/api/focus-session/route"),

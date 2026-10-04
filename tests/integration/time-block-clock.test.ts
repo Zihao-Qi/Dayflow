@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { initializeTestDatabase } from "../sqlite-test-helpers";
 import type { Prisma } from "@prisma/client";
 import { NextRequest } from "next/server";
 import { clock } from "../../src/lib/time";
@@ -32,10 +32,7 @@ test("Time Block writes use the day at validation and receipts remain replayable
       rmSync(directory, { recursive: true, force: true });
     }
   });
-  execFileSync(process.execPath, [
-    join(process.cwd(), "node_modules/prisma/build/index.js"),
-    "db", "execute", "--file", "prisma/init.sql", "--url", process.env.DATABASE_URL
-  ], { stdio: "pipe" });
+  initializeTestDatabase(process.env.DATABASE_URL!);
   const [{ POST }, { PUT }, { getPrisma }] = await Promise.all([
     import("../../src/app/api/time-blocks/route"),
     import("../../src/app/api/time-blocks/[id]/route"),

@@ -1,20 +1,11 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import test from "node:test";
+import { initializeTestDatabase } from "../sqlite-test-helpers";
 import { NextRequest } from "next/server";
 import { reviewPeriodRange, startOfLocalDay } from "../../src/lib/dates";
-
-const repositoryRoot = process.cwd();
-const prismaCliPath = join(
-  repositoryRoot,
-  "node_modules",
-  "prisma",
-  "build",
-  "index.js"
-);
 
 test("Review saves upsert one period row without changing Diary evidence", async (context) => {
   const temporaryDirectory = mkdtempSync(
@@ -37,19 +28,7 @@ test("Review saves upsert one period row without changing Diary evidence", async
     }
   });
 
-  execFileSync(
-    process.execPath,
-    [
-      prismaCliPath,
-      "db",
-      "execute",
-      "--file",
-      "prisma/init.sql",
-      "--url",
-      process.env.DATABASE_URL
-    ],
-    { cwd: repositoryRoot, stdio: "pipe" }
-  );
+  initializeTestDatabase(process.env.DATABASE_URL!);
 
   const [{ PUT }, { GET: loadBootstrap }, { getPrisma }] = await Promise.all([
     import("../../src/app/api/review/route"),

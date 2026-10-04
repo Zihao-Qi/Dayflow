@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { initializeTestDatabase } from "../sqlite-test-helpers";
 import { PrismaClient, type Prisma } from "@prisma/client";
+import { createSqliteAdapter } from "../../src/server/prisma/sqlite";
 import { calendarFor } from "../../src/shared/kernel/calendar";
 import { AppError } from "../../src/shared/kernel/errors";
 import { serializeAppError } from "../../src/lib/http-errors";
@@ -28,9 +29,8 @@ const input = (narrative = "  Deliberate progress.  ") => parseReviewMutation({
 async function withDatabase(context: { after: (fn: () => unknown) => void }, run: (db: PrismaClient, url: string) => Promise<void>) {
   const directory = mkdtempSync(join(tmpdir(), "dayflow-review-services-"));
   const url = `file:${join(directory, "dayflow.db")}`;
-  execFileSync(process.execPath, [join(process.cwd(), "node_modules/prisma/build/index.js"),
-    "db", "execute", "--file", "prisma/init.sql", "--url", url], { stdio: "pipe" });
-  const db = new PrismaClient({ datasources: { db: { url } } });
+  initializeTestDatabase(url);
+  const db = new PrismaClient({ adapter: createSqliteAdapter(url) });
   context.after(async () => { await db.$disconnect(); rmSync(directory, { recursive: true, force: true }); });
   await run(db, url);
 }
@@ -143,18 +143,24 @@ test("Review services run headlessly on SQLite", async context => {
     });
 
     await context.test("history paginates tied starts once, excludes current, and keeps snapshot totals during an insert", async () => {
+      // WAL is a test fixture: let the other connection commit between reads.
+      // With the synchronous adapter in DELETE mode, its blocked COMMIT stalls
+      // this process before the reader can finish. Production mode is unchanged.
+      await db.$queryRawUnsafe("PRAGMA journal_mode = WAL");
       for (const [id, end] of [["tie-a", "2026-08-25"], ["tie-b", "2026-08-26"], ["tie-c", "2026-08-27"]]) {
         // Restored rows may share starts with different ends; the cursor must retain the id tie-breaker.
         await db.review.create({ data: { id, periodStart: past.start, periodEnd: new Date(`${end}T05:00:00.000Z`), narrative: id } });
       }
-      const writer = new PrismaClient({ datasources: { db: { url } } });
+      const writer = new PrismaClient({ adapter: createSqliteAdapter(url) });
       let inserted: Promise<unknown> | undefined;
       try {
         const page = await db.$transaction(async tx => {
           const instrumented = { ...tx, review: { ...tx.review, findMany: async (args: Prisma.ReviewFindManyArgs) => {
             const rows = await tx.review.findMany(args);
             inserted = writer.review.create({ data: { id: "newer", periodStart: new Date("2026-08-20T05:00:00.000Z"), periodEnd: new Date("2026-08-28T05:00:00.000Z"), narrative: "Concurrent" } }).then(row => row);
-            void inserted.catch(() => undefined);
+            // The insert is confirmed before the count, so an escaped read
+            // sees four rows and cannot accidentally pass this snapshot oracle.
+            await inserted;
             return rows;
           } } } as Prisma.TransactionClient;
           return readReviewHistoryPage(instrumented, new URLSearchParams("limit=1"), now, calendar);

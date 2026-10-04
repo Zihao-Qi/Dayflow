@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import test from "node:test";
+import { initializeTestDatabase } from "../sqlite-test-helpers";
 import type { PrismaClient } from "@prisma/client";
 import { NextRequest } from "next/server";
 import { addDays, localDateKey, startOfLocalDay } from "../../src/shared/kernel/calendar";
@@ -52,10 +52,7 @@ async function withRoutes(
       rmSync(directory, { recursive: true, force: true });
     }
   });
-  execFileSync(process.execPath, [
-    join(process.cwd(), "node_modules/prisma/build/index.js"),
-    "db", "execute", "--file", "prisma/init.sql", "--url", process.env.DATABASE_URL
-  ], { cwd: process.cwd(), stdio: "pipe" });
+  initializeTestDatabase(process.env.DATABASE_URL!);
 
   // Load the routes only after the client is pointed at a disposable database.
   const [habits, habitById, archive, checkIn, history, { getPrisma }] = await Promise.all([

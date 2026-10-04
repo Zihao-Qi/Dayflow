@@ -1,6 +1,6 @@
-import { PrismaClient } from "@prisma/client";
+import { getPrisma } from "../src/lib/prisma";
 
-const prisma = new PrismaClient();
+const prisma = getPrisma();
 
 const startOfDay = (offset = 0) => {
   const date = new Date();

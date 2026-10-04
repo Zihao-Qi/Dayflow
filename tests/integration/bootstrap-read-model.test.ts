@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { PrismaClient } from "@prisma/client";
+import { createSqliteAdapter } from "../../src/server/prisma/sqlite";
+import { initializeTestDatabase } from "../sqlite-test-helpers";
 import { readBootstrap } from "../../src/server/read-models/bootstrap";
 import { readTasksInDateRange } from "../../src/modules/planning/services/tasks";
 import { resolveEarliestNavigableDayKey } from "../../src/lib/day-view";
@@ -16,10 +17,9 @@ const day = (offset: number) => new Date(2026, 8, 4 + offset);
 function database(context: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), "dayflow-bootstrap-read-model-"));
   const path = join(directory, "dayflow.db");
-  execFileSync("sqlite3", ["-batch", "-bail", path], {
-    input: readFileSync(join(process.cwd(), "prisma/init.sql")), stdio: "pipe"
-  });
-  const prisma = new PrismaClient({ datasourceUrl: `file:${path}` });
+  const databaseUrl = `file:${path}`;
+  initializeTestDatabase(databaseUrl);
+  const prisma = new PrismaClient({ adapter: createSqliteAdapter(databaseUrl) });
   context.after(async () => {
     try { await prisma.$disconnect(); }
     finally { rmSync(directory, { recursive: true, force: true }); }

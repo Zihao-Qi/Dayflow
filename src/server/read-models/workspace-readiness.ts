@@ -2,12 +2,18 @@ import type { Prisma, PrismaClient } from "@prisma/client";
 import { withTransaction } from "@/server/prisma/client";
 
 export async function isWorkspaceEmpty(database: PrismaClient | Prisma.TransactionClient) {
-  const records = "$transaction" in database ? await withTransaction(
+  const records = isRootClient(database) ? await withTransaction(
     database,
     (tx) => Promise.all(workspaceRecordQueries(tx))
   ) : await Promise.all(workspaceRecordQueries(database));
 
   return records.every((record) => record === null);
+}
+
+function isRootClient(database: PrismaClient | Prisma.TransactionClient): database is PrismaClient {
+  // Prisma 7 exposes a callable $transaction on an existing transaction too.
+  // $connect remains root-only; an existing transaction must be reused.
+  return "$connect" in database && typeof database.$connect === "function";
 }
 
 // Reuse an existing transaction, while preserving the standalone batch read.

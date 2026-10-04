@@ -6,24 +6,13 @@ import { AsyncLocalStorage } from "node:async_hooks";
  * The single transaction root. Every interactive transaction in the tree opens
  * through here, and Rule 6 confines `$transaction` to this file.
  *
- * Prisma opens interactive transactions on SQLite with `BEGIN IMMEDIATE`, even
- * when the callback only reads, so concurrent transactions never overlap: one
- * holds the write lock and the rest wait. The waiting is the problem. Quaint
- * runs rusqlite on tokio's worker threads without `spawn_blocking`, so every
- * blocked transaction occupies a worker; once the number in flight reaches the
- * worker count the holder's own COMMIT cannot be scheduled, and the pile times
- * out together at five seconds as P1008. Measured on this tree: clean through
- * N = cores, then at N = cores + 1 a 5.2s wall with rejections (8 cores: N=9
- * rejected four, N=12 rejected eight). Upstream reports the same cliff in
- * prisma/prisma#29870.
- *
- * The queue therefore removes no parallelism — SQLite had already serialised
- * these transactions. It moves the waiting off the engine's workers and into
- * this process, where waiting is free. A direct experiment against a scratch
- * database confirmed the premise: with one transaction held open for 800ms, a
- * second transaction's callback did not enter until the first committed, for
- * read/read, write/read and write/write alike, while the same two operations
- * outside a transaction overlapped at 22ms.
+ * This queue originated with Prisma 6's BEGIN IMMEDIATE worker-starvation
+ * failure (#122). Prisma 7 uses BEGIN and its adapter serializes a connection
+ * itself, so the old unqueued P1008 control no longer describes this engine.
+ * We retain process-wide admission across clients, bounded waiting and the
+ * no-nested-root contract. A per-connection mutex does not provide those rules.
+ * Database integration tests observe a held real transaction and prove that a
+ * second client cannot be dispatched until the first root settles.
  *
  * This supersedes the per-route queue that guarded focus-session starts.
  */
@@ -48,7 +37,7 @@ const openTransaction = new AsyncLocalStorage<{ open: boolean }>();
  *
  * It must exceed the longest transaction in the tree, or the queue would
  * reject healthy callers while the transaction ahead of them is still running
- * well inside its own budget. Four roots carry a 60s budget today: bootstrap,
+ * well inside its own budget. Five roots carry a 60s budget today: bootstrap,
  * agent export, and the three Review reads. A caller whose own budget is
  * longer raises its admission deadline to match.
  */

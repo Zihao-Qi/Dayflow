@@ -21,7 +21,10 @@ import {
   writeSync
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
+
+import { sqlitePathFromDatabaseUrl, sqliteDatabaseUrlForPath } from "../../../lib/sqlite-path";
+export { sqlitePathFromDatabaseUrl } from "../../../lib/sqlite-path";
 
 const BACKUP_MAGIC = Buffer.from("DAYFLOW-BACKUP\n", "utf8");
 const MANIFEST_LENGTH_BYTES = 4;
@@ -339,36 +342,6 @@ export function resolveActiveDatabase(
     environment.DATABASE_URL?.trim() || readDatabaseUrlFromEnv(repositoryRoot);
   const databasePath = sqlitePathFromDatabaseUrl(databaseUrl, repositoryRoot);
   return { databaseUrl, databasePath };
-}
-
-export function sqlitePathFromDatabaseUrl(
-  databaseUrl: string,
-  repositoryRoot = process.cwd()
-) {
-  if (!databaseUrl.startsWith("file:")) {
-    throw new Error(
-      "DATABASE_URL must be a SQLite file URL such as file:./dev.db."
-    );
-  }
-
-  const encodedPath = databaseUrl.slice("file:".length).split(/[?#]/, 1)[0];
-  if (!encodedPath || encodedPath === ":memory:") {
-    throw new Error("DATABASE_URL must point to a persistent SQLite file.");
-  }
-
-  let decodedPath: string;
-  try {
-    decodedPath = decodeURIComponent(encodedPath);
-  } catch {
-    throw new Error("DATABASE_URL contains an invalid encoded file path.");
-  }
-  if (decodedPath.includes("\0")) {
-    throw new Error("DATABASE_URL contains an invalid file path.");
-  }
-
-  return isAbsolute(decodedPath)
-    ? resolve(decodedPath)
-    : resolve(repositoryRoot, "prisma", decodedPath);
 }
 
 export function defaultBackupPath(
@@ -2054,11 +2027,7 @@ function sqlIdentifier(value: string) {
   return `"${value.replaceAll('"', '""')}"`;
 }
 
-function databaseUrlForPath(path: string) {
-  return `file:${encodeURI(path)
-    .replaceAll("#", "%23")
-    .replaceAll("?", "%3F")}`;
-}
+const databaseUrlForPath = sqliteDatabaseUrlForPath;
 
 function readApplicationVersion(repositoryRoot: string) {
   const packageJson = JSON.parse(

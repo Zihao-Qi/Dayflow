@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import test from "node:test";
+import { initializeTestDatabase } from "../sqlite-test-helpers";
 import { Prisma } from "@prisma/client";
 import { parseProjectCreateMutation, parseProjectPatchMutation, projectErrors, isProjectDetailResponse } from "../../src/modules/projects/domain/project";
 import { createProject, updateProject, createPhase, updatePhase, validateProjectPlacement, translateProjectPersistenceError } from "../../src/modules/projects/services/projects";
@@ -34,10 +34,7 @@ async function withDatabase(
       rmSync(directory, { recursive: true, force: true });
     }
   });
-  execFileSync(process.execPath, [
-    join(process.cwd(), "node_modules/prisma/build/index.js"),
-    "db", "execute", "--file", "prisma/init.sql", "--url", process.env.DATABASE_URL
-  ], { cwd: process.cwd(), stdio: "pipe" });
+  initializeTestDatabase(process.env.DATABASE_URL!);
   // Load the transaction root only after directing its client at disposable SQLite.
   const [{ getPrisma }, { runOnce }] = await Promise.all([
     import("../../src/lib/prisma"),

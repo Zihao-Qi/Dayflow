@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { observedSqliteAdapter } from "../prisma-test-helpers";
 import { PrismaClient } from "@prisma/client";
 import { addDays, localDateKey, reviewPeriodRange, startOfLocalDay } from "../../src/lib/dates";
 import { activityHeaders, parseCsv, taskHeaders } from "../csv-test-helpers";
@@ -15,9 +16,12 @@ test("bootstrap, agent export, and CSV preserve their seeded read contracts", as
   const globalClient = globalThis as unknown as { prisma?: PrismaClient };
   const previousClient = globalClient.prisma;
   process.env.DATABASE_URL = `file:${databasePath}`;
-  const database = new PrismaClient({ log: [{ emit: "event", level: "query" }] });
-  globalClient.prisma = database;
   const queries: string[] = [];
+  const database = new PrismaClient({
+    adapter: observedSqliteAdapter(process.env.DATABASE_URL, () => queries.push("TRANSACTION_STARTED")),
+    log: [{ emit: "event", level: "query" }]
+  });
+  globalClient.prisma = database;
   database.$on("query", ({ query }) => queries.push(query));
   context.after(async () => {
     try {
@@ -134,12 +138,12 @@ test("bootstrap, agent export, and CSV preserve their seeded read contracts", as
   }
 
   function assertSingleReadTransaction() {
-    assert.match(queries[0], /^BEGIN/);
+    assert.equal(queries[0], "TRANSACTION_STARTED");
     assert.equal(queries.at(-1), "COMMIT");
-    assert.equal(queries.filter((query) => /^BEGIN/.test(query)).length, 1);
+    assert.equal(queries.filter((query) => query === "TRANSACTION_STARTED").length, 1);
     assert.ok(queries.slice(1, -1).length > 0);
     assert.ok(queries.slice(1, -1).every((query) => /^SELECT/.test(query)),
-      "all payload queries are reads between BEGIN and COMMIT");
+      "all payload queries are reads between successful adapter start and COMMIT");
   }
 
   await context.test("bootstrap keeps its keys, collections, and derived values", async () => {

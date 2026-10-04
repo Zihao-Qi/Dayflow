@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import test from "node:test";
-import { initializeTestDatabase } from "../sqlite-test-helpers";
+import { initializeTestDatabase, injectedTestClient } from "../sqlite-test-helpers";
 import {
   createTask,
   updateTask,
@@ -50,12 +50,13 @@ async function withDatabase(
     }
   });
   initializeTestDatabase(process.env.DATABASE_URL!);
+  const fixture = injectedTestClient(process.env.DATABASE_URL!);
+  disconnect = () => fixture.close();
   const [{ getPrisma }, { runOnce }] = await Promise.all([
     import("../../src/lib/prisma"),
     import("../../src/server/prisma/run-once")
   ]);
   const prisma = getPrisma();
-  disconnect = () => prisma.$disconnect();
   await run({ prisma, runOnce });
 }
 

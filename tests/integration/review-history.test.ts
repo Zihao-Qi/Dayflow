@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import test from "node:test";
-import { initializeTestDatabase } from "../sqlite-test-helpers";
+import { initializeTestDatabase, injectedTestClient } from "../sqlite-test-helpers";
 import {
   addDays,
   localDateKey,
@@ -40,6 +40,8 @@ async function withDatabase(
   });
 
   initializeTestDatabase(process.env.DATABASE_URL!);
+  const fixture = injectedTestClient(process.env.DATABASE_URL!);
+  disconnectPrisma = () => fixture.close();
 
   const [history, bootstrap, { getPrisma }] = await Promise.all([
     import("../../src/lib/review-history"),
@@ -47,7 +49,6 @@ async function withDatabase(
     import("../../src/lib/prisma")
   ]);
   const prisma = getPrisma();
-  disconnectPrisma = () => prisma.$disconnect();
 
   await run({ prisma, history, loadBootstrap: bootstrap.GET });
 }

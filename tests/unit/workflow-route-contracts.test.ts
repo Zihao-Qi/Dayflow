@@ -18,8 +18,8 @@ import { POST as reorderTasks } from "../../src/app/api/tasks/reorder/route";
 import { FocusSessionError } from "../../src/lib/focus-sessions";
 import { FocusQueueError } from "../../src/lib/focus-queue";
 import { mutationRequestHash } from "../../src/lib/idempotent-mutations";
-import { getPrisma } from "../../src/lib/prisma";
-const prisma = getPrisma();
+import { injectedUnitTestClient } from "../prisma-test-helpers";
+const prisma = injectedUnitTestClient();
 
 test("workflow mutation routes return typed malformed-JSON responses", async () => {
   for (const [route, request] of [

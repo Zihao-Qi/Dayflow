@@ -6,8 +6,8 @@ import { GET as getPastReview } from "../../src/app/api/review/[id]/route";
 import { GET as getReviewHistory } from "../../src/app/api/review/history/route";
 import { GET as getReviewWindow } from "../../src/app/api/review/window/route";
 import { reviewPeriodRange } from "../../src/lib/dates";
-import { getPrisma } from "../../src/lib/prisma";
-const prisma = getPrisma();
+import { injectedUnitTestClient } from "../prisma-test-helpers";
+const prisma = injectedUnitTestClient();
 import { clock } from "../../src/lib/time";
 // The route's own response contract, which admits the current draft: the client
 // decoder behind @/lib/review-records deliberately rejects one.

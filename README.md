@@ -131,11 +131,20 @@ deleted.
 
 Prisma 7 uses `prisma.config.ts` for CLI configuration and the better-sqlite3
 adapter for runtime connections. An explicitly supplied `DATABASE_URL` wins over
-`.env`; relative `file:` paths still resolve under `prisma/`. Client generation
-and builds need no database URL and open no database. Database commands require
+`.env`; relative `file:` paths still resolve under `prisma/`. Dependency installation
+generates the client automatically. Client generation and builds need no database
+URL and open no database. Database commands require
 an explicit URL or one in `.env`; there is no fallback to guess a database.
 The adapter writes integer milliseconds so existing Prisma 6 dates and range
 queries remain compatible. Keep the Prisma CLI, client and adapter versions aligned.
+
+This migration retains the `prisma-client-js` generator to preserve existing
+imports; adopting its successor is separate work. The scoped `prisma` → `mysql2`
+override pins 3.24.5 because Prisma 7.10.0 otherwise installs vulnerable 3.15.3.
+Remove that override once Prisma resolves a patched release, after a clean-install
+audit and configuration/migration checks. `@prisma/config` now loads `deepmerge-ts`
+when reading this configuration, so its existing override must be validated with
+the CLI; it can no longer be justified as unreachable.
 
 To deliberately replace a local database with the demo dataset:
 

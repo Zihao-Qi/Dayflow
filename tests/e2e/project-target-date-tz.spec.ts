@@ -3,7 +3,7 @@ import { resetTestDatabase } from "./database";
 
 // Keep browser timezone aligned with the test runner and webServer process
 test.use({
-  timezoneId: process.env.TZ || "Asia/Shanghai"
+  timezoneId: process.env.TZ || undefined
 });
 
 test.beforeEach(() => {

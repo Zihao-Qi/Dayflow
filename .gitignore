@@ -26,8 +26,8 @@ prisma/backups/
 
 *.log
 *.tsbuildinfo
-playwright-report
-test-results
+playwright-report*
+test-results*
 
 # Python bytecode from the merge-gate tooling and its tests.
 __pycache__/

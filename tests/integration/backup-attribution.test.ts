@@ -27,13 +27,13 @@ const transitions = [
   }
 ];
 
-test("backup and restore safety copies preserve historical attribution after Task changes", { timeout: 120_000 }, async context => {
+test("backup and restore safety copies preserve historical attribution after Task changes", async context => {
   const directory = mkdtempSync(join(tmpdir(), "dayflow-backup-attribution-"));
   try {
     const template = join(directory, "template.db");
     initialize(template);
     for (const [index, transition] of transitions.entries()) {
-      await context.test(transition.name, async () => {
+      await context.test(transition.name, { timeout: 120_000 }, async () => {
         const databasePath = join(directory, `active-${index}.db`);
         copyFileSync(template, databasePath);
         if (transition.initialSql) {
@@ -91,7 +91,7 @@ const invalidRelationships = [
   { name: "completed Focus Session loses its evidence link", sql: "UPDATE ActivityEntry SET focusSessionId = NULL WHERE id = 'focus';", error: /completed Focus Session evidence validation failed/ }
 ];
 
-test("backup and restore still reject dangling references and invalid persisted relationships", { timeout: 120_000 }, async context => {
+test("backup and restore still reject dangling references and invalid persisted relationships", async context => {
   const directory = mkdtempSync(join(tmpdir(), "dayflow-backup-invalid-attribution-"));
   try {
     const databasePath = join(directory, "active.db");
@@ -100,7 +100,7 @@ test("backup and restore still reject dangling references and invalid persisted 
     createDatabaseBackup({ databasePath, outputPath: validBackup, repositoryRoot, now });
     const activeHash = hash(databasePath);
     for (const [index, invalid] of invalidRelationships.entries()) {
-      await context.test(invalid.name, async () => {
+      await context.test(invalid.name, { timeout: 120_000 }, async () => {
         const malformed = join(directory, `invalid-${index}.db`);
         copyFileSync(databasePath, malformed);
         sql(malformed, invalid.sql); // Deliberately bypass FK enforcement to simulate damaged storage.

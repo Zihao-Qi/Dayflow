@@ -35,3 +35,11 @@ export function recordFocusActivity(
     update: enrichment ? { category: enrichment.category, note: enrichment.note } : {}
   });
 }
+
+/** A receipt acknowledges an earlier write; its Activity must be read afresh. */
+export function readFocusActivity(
+  database: { activityEntry: Pick<Prisma.TransactionClient["activityEntry"], "findUnique"> },
+  focusSessionId: string
+) {
+  return database.activityEntry.findUnique({ where: { focusSessionId } });
+}

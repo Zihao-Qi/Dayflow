@@ -978,40 +978,18 @@ function validateSemanticRelationships(
     );
   }
 
-  if (
-    hasColumns("ActivityEntry", [
-      "taskId",
-      "projectId",
-      "attributedProjectId"
-    ]) &&
-    hasColumns("Task", ["id", "projectId"])
-  ) {
+  if (hasColumns("ActivityEntry", ["projectId", "attributedProjectId"])) {
+    // attributedProjectId snapshots ownership when evidence was recorded.
+    // Reassigning or deleting a Task must not invalidate that history. Both
+    // links are checked above for dangling references; only a stored direct
+    // Project must still agree with its snapshot, independent of today's Task.
     assertZeroCount(
       databasePath,
       "Activity Project attribution",
       `SELECT COUNT(*) AS count
          FROM "ActivityEntry" AS activity
-         LEFT JOIN "Task" AS task ON task.id = activity.taskId
-        WHERE (
-          activity.taskId IS NULL
-          AND activity.attributedProjectId IS NOT activity.projectId
-        ) OR (
-          activity.taskId IS NOT NULL
-          AND (
-            task.id IS NULL
-            OR (
-              task.projectId IS NOT NULL
-              AND (
-                activity.projectId IS NOT NULL
-                OR activity.attributedProjectId IS NOT task.projectId
-              )
-            )
-            OR (
-              task.projectId IS NULL
-              AND activity.attributedProjectId IS NOT activity.projectId
-            )
-          )
-        );`
+        WHERE activity.projectId IS NOT NULL
+          AND activity.attributedProjectId IS NOT activity.projectId;`
     );
   }
 
@@ -1032,21 +1010,10 @@ function validateSemanticRelationships(
     }
   }
 
-  if (
-    hasColumns("FocusSession", ["taskId", "projectId"]) &&
-    hasColumns("Task", ["id", "projectId"])
-  ) {
-    assertZeroCount(
-      databasePath,
-      "Focus Session Project attribution",
-      `SELECT COUNT(*) AS count
-         FROM "FocusSession" AS session
-         JOIN "Task" AS task ON task.id = session.taskId
-        WHERE task.projectId IS NOT NULL
-          AND session.projectId IS NOT NULL;`
-    );
-  }
-
+  // A Focus Session's direct Project was validated when it was started. Its
+  // Task may subsequently gain/change Project ownership, so comparing their
+  // current Project links would reject valid completed evidence. Referential
+  // integrity is checked above; its Activity/source linkage is checked below.
   if (
     hasColumns("ActivityEntry", [
       "origin",

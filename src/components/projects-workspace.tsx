@@ -1,4 +1,5 @@
 "use client";
+import { localDateKey, parseLocalDate } from "@/shared/kernel/calendar";
 import { isProjectDetailResponse, isProjectPhaseResponse, isProjectTaskResponse } from "@/modules/projects/domain/project";
 import { projectReactivation, type ProjectReactivation } from "@/modules/projects/domain/lifecycle";
 
@@ -1620,6 +1621,12 @@ function ProjectDetailWorkspace({
   );
 }
 
+export function formatProjectTargetDateInput(value: string | null | undefined): string {
+  if (!value) return "";
+  const parsed = parseLocalDate(value);
+  return parsed ? localDateKey(parsed) : "";
+}
+
 function ProjectEditForm({
   project,
   onCancel,
@@ -1638,7 +1645,8 @@ function ProjectEditForm({
   onDelete: () => Promise<void>;
 }) {
   const [desiredOutcome, setDesiredOutcome] = useState(project.desiredOutcome);
-  const [targetDate, setTargetDate] = useState(project.targetDate?.slice(0, 10) ?? "");
+  const initialTargetDate = formatProjectTargetDateInput(project.targetDate);
+  const [targetDate, setTargetDate] = useState(initialTargetDate);
   const [targetDurationValue, setTargetDurationValue] = useState(
     project.targetDurationValue?.toString() ?? ""
   );
@@ -1666,7 +1674,7 @@ function ProjectEditForm({
   const dirty =
     name !== project.name ||
     desiredOutcome !== project.desiredOutcome ||
-    targetDate !== (project.targetDate?.slice(0, 10) ?? "") ||
+    targetDate !== initialTargetDate ||
     targetDurationValue !== (project.targetDurationValue?.toString() ?? "") ||
     targetDurationUnit !== (project.targetDurationUnit ?? "WEEKS") ||
     weeklyMinutesBudget !== (project.weeklyMinutesBudget?.toString() ?? "") ||

@@ -12,6 +12,7 @@ import {
   FocusSnapshot,
   focusRemainingSeconds
 } from "@/lib/focus-domain";
+import { prepareFocusEnrichmentAttempt, type FocusEnrichmentAttempt } from "@/modules/focus/ui/enrichment-attempt";
 import { prepareFocusStartAttempt, type FocusStartAttempt } from "@/lib/focus-start-idempotency";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
@@ -68,6 +69,7 @@ export function FocusSessionProvider({ children }: { children: React.ReactNode }
   const [activityRevision, setActivityRevision] = useState(0);
   const autoFinishingId = useRef<string | null>(null);
   const startAttempt = useRef<FocusStartAttempt | null>(null);
+  const enrichmentAttempt = useRef<FocusEnrichmentAttempt | null>(null);
   const loadController = useRef<AbortController | null>(null);
   const active = snapshot?.active ?? null;
   const pendingCompletion = snapshot?.pendingCompletion ?? null;
@@ -222,7 +224,11 @@ export function FocusSessionProvider({ children }: { children: React.ReactNode }
       setBusy(true);
       setError("");
       try {
-        const result = await enrichFocusRequest(completion.id, input);
+        const attempt = prepareFocusEnrichmentAttempt(enrichmentAttempt.current, completion.id, input);
+        enrichmentAttempt.current = attempt;
+        const result = await enrichFocusRequest(attempt);
+        // Confirmation ends this intent even if the separate next-session start fails.
+        enrichmentAttempt.current = null;
 
         setSnapshot(result.snapshot);
         setSuggestedBreak(null);

@@ -37,3 +37,5 @@ export function activityMutationErrorResponse(
 
 export { readDayActivities, readActivityCategories, readReviewActivities, readEarliestActivity } from "@/modules/evidence/services/activities";
 export { readDiary, readReviewDiaries } from "@/modules/evidence/services/diary";
+
+export { readFocusActivity } from "@/modules/evidence/services/focus-activity";

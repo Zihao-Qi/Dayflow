@@ -1,5 +1,6 @@
 import type { FocusSessionRecord, FocusSnapshot } from "@/lib/focus-domain";
 import type { QueuePlacement } from "@/lib/focus-queue";
+import type { FocusEnrichmentAttempt } from "./enrichment-attempt";
 import type { FocusStartAttempt } from "@/lib/focus-start-idempotency";
 import { isFocusQueueResponse, type Task } from "@/shared/client/decoders";
 import { request } from "@/shared/client/api-client";
@@ -82,20 +83,15 @@ export function startFocus(attempt: FocusStartAttempt, fallback = "The timer cou
   });
 }
 
-export function enrichFocus(id: string, input: {
-  note: string;
-  category: string;
-  taskCompleted: boolean;
-}) {
-  return request(`/api/focus-session/${id}`, {
+export function enrichFocus(attempt: FocusEnrichmentAttempt) {
+  return request(`/api/focus-session/${attempt.sessionId}`, {
     method: "PATCH",
     body: {
       action: "enrich",
-      note: input.note,
-      category: input.category,
-      taskCompleted: input.taskCompleted
+      ...attempt.payload
     },
     decode: (result): result is TransitionResult => isTransitionResult(result),
+    mutationId: attempt.mutationId,
     fallback: "The completion record could not be saved.",
   });
 }

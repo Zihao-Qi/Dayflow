@@ -46,6 +46,10 @@ test("preserves project targetDate across unrelated edits and repeated saves in 
   const dialog = page.getByRole("dialog", { name: "Edit TZ Target Date Project" });
   await expect(dialog).toBeVisible();
 
+  // Save changes must be disabled immediately after opening before edits
+  const saveBtn = dialog.getByRole("button", { name: "Save changes", exact: true });
+  await expect(saveBtn).toBeDisabled();
+
   // 5. Verify the date input value matches the local calendar date
   const targetDateInput = dialog.locator('input[type="date"]');
   await expect(targetDateInput).toHaveValue("2026-10-20");
@@ -55,7 +59,6 @@ test("preserves project targetDate across unrelated edits and repeated saves in 
   await outcomeInput.fill("Updated outcome via browser edit without touching date");
 
   // 7. Save changes
-  const saveBtn = dialog.getByRole("button", { name: "Save changes", exact: true });
   await expect(saveBtn).toBeEnabled();
   await saveBtn.click();
   await expect(dialog).toBeHidden();
@@ -66,6 +69,7 @@ test("preserves project targetDate across unrelated edits and repeated saves in 
   // 9. Reopen edit dialog and perform a second unrelated edit to verify no repeated drift
   await page.getByRole("button", { name: "Edit", exact: true }).click();
   await expect(dialog).toBeVisible();
+  await expect(saveBtn).toBeDisabled();
   await expect(targetDateInput).toHaveValue("2026-10-20");
 
   await outcomeInput.fill("Second edit without touching date");

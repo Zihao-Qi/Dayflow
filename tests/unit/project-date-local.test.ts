@@ -27,25 +27,11 @@ test("formatProjectTargetDateInput converts serialized UTC ISO dates in isolated
     assert.ok(created.targetDate);
     const serializedIso = created.targetDate.toISOString();
 
-    // 1. Negative control: ISO string slice east of UTC shifts backwards
-    const isEastOfUtc = new Date(created.targetDate).getTimezoneOffset() < 0;
-    const oldBuggySlice = serializedIso.slice(0, 10);
-    if (isEastOfUtc) {
-      assert.equal(oldBuggySlice, "2026-10-19", "Original slice(0, 10) must shift back east of UTC");
-      // Negative control: comparing against slice(0, 10) causes false-dirty on clean forms
-      const falseDirtyOnOpen = targetDate !== oldBuggySlice;
-      assert.equal(falseDirtyOnOpen, true, "Original slice comparison causes false-dirty on clean open");
-    }
-
-    // 2. Positive check: formatProjectTargetDateInput produces unchanged local date
+    // Positive check: formatProjectTargetDateInput produces unchanged local date
     const fixedInput = formatProjectTargetDateInput(serializedIso);
     assert.equal(fixedInput, targetDate, "formatProjectTargetDateInput must preserve local civil day");
 
-    // 3. Positive check: clean form dirty check evaluates to false
-    const cleanDirtyCheck = fixedInput !== targetDate;
-    assert.equal(cleanDirtyCheck, false, "Fixed input comparison stays clean without user edits");
-
-    // 4. Positive check: saving patched project round-trips without date drift
+    // Positive check: saving patched project round-trips without date drift
     const patched = parseProjectPatchMutation({ desiredOutcome: "Unrelated edit", targetDate: fixedInput });
     assert.ok(patched.data.targetDate);
     assert.equal(localDateKey(patched.data.targetDate), targetDate, "Round-trip patch must preserve targetDate");

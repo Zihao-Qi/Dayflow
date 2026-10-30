@@ -53,9 +53,15 @@ for (const firstAttempt of ["committed response lost", "never reached server"] a
     const projectResponse = await page.request.post("/api/projects", { data: { name: "Retry attribution" } });
     expect(projectResponse.status()).toBe(201);
     const project = await projectResponse.json();
-    const taskResponse = await page.request.post("/api/tasks", { data: { title: "Task changes between attempts", date: null } });
+    // A real scheduled Task anchors yesterday inside the supported day-navigation
+    // range; changing only bootstrap's calendar cannot invent historical evidence.
+    const taskResponse = await page.request.post("/api/tasks", {
+      data: { title: "Task changes between attempts", date: firstAttempt === "never reached server" ? initialDay : null }
+    });
     expect(taskResponse.status()).toBe(201);
     const task = await taskResponse.json();
+    const initialDayRead = await page.request.get(`/api/day?date=${initialDay}`);
+    expect(initialDayRead.status()).toBe(200);
     const rollover = await calendarRollover(page, initialDay);
     const form = await openNotes(page);
     const content = form.getByPlaceholder("Capture a thought, decision, or reminder.");

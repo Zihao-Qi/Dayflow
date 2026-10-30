@@ -433,3 +433,55 @@ test("a local-day rollover keeps an open Past Review Period on screen", async ({
   await expect(page.locator(".page-eyebrow")).toHaveText(pastEyebrow ?? "");
   await expect(page.locator(".review-page textarea")).toHaveCount(0);
 });
+
+for (const selection of ["saved history", "unsaved window"] as const) {
+  test(`retains failed current Review writing and retry state across ${selection}`, async ({ page }) => {
+    seedPastReviews([3]);
+    let rejectWrites = true;
+    let rejectedWrites = 0;
+    await page.route("**/api/review", async (route) => {
+      if (route.request().method() !== "PUT" || !rejectWrites) return route.continue();
+      rejectedWrites += 1;
+      await route.fulfill({ status: 500, json: { error: "Deliberately rejected Review write." } });
+    });
+    await openReview(page);
+    const narrative = "  Keep this exact failed narrative.  ";
+    const intention = "  Protect this exact failed intention.  ";
+    await page.getByLabel("What moved forward?").fill(narrative);
+    await page.getByLabel("What deserves protection next?").fill(intention);
+    await page.getByRole("button", { name: "Save review", exact: true }).click();
+    const editor = page.getByRole("region", { name: "Your review", exact: true });
+    await expect(editor.getByRole("status")).toContainText("Not saved", { timeout: 15_000 });
+    expect(rejectedWrites).toBeGreaterThanOrEqual(3);
+    // The bounded retry loop has settled. Verify this really is unpersisted, not a masked success.
+    const before = await (await page.request.get("/api/review/window?current=1")).json();
+    expect(before.review.narrative).toBe("");
+    expect(before.review.nextPeriodIntention).toBe("");
+    const currentLabel = await page.locator(".page-eyebrow").textContent();
+    await page.getByRole("button", { name: "Earlier reviews", exact: true }).click();
+    if (selection === "saved history") {
+      await historyPanel(page).getByRole("button", { name: /Saved 3 days ago/ }).click();
+      await expect(page.locator(".page-eyebrow")).toContainText("Past review");
+    } else {
+      await openReviewWindow(page, addLocalDays(localDateKey(new Date()), -12));
+    }
+    await expect(page.locator(".review-page textarea")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /^Save review$/ })).toHaveCount(0);
+    await page.getByRole("button", { name: "Back to this week", exact: true }).click();
+    await expect(page.locator(".page-eyebrow")).toHaveText(currentLabel ?? "");
+    await expect(page.getByLabel("What moved forward?")).toHaveValue(narrative);
+    await expect(page.getByLabel("What deserves protection next?")).toHaveValue(intention);
+    await expect(editor.getByRole("status")).toContainText("Not saved");
+    rejectWrites = false;
+    const saved = page.waitForResponse((response) =>
+      new URL(response.url()).pathname === "/api/review" && response.request().method() === "PUT" && response.ok());
+    await editor.getByRole("button", { name: "Retry", exact: true }).click();
+    expect((await saved).ok()).toBe(true);
+    await expect(editor.getByRole("status")).toContainText("Saved");
+    const persisted = await (await page.request.get("/api/review/window?current=1")).json();
+    expect(persisted.review.narrative).toBe(narrative.trim());
+    expect(persisted.review.nextPeriodIntention).toBe(intention.trim());
+    expect(persisted.periodStart).toBe(before.periodStart);
+    expect(persisted.periodEnd).toBe(before.periodEnd);
+  });
+}

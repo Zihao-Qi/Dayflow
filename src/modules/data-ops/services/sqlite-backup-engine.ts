@@ -993,6 +993,9 @@ function validateSemanticRelationships(
     );
   }
 
+  // A standalone Task may be captured with a direct Project, then later join
+  // that same Project without rewriting Journal links. Redundant agreeing
+  // links are valid; retain rejection of genuinely conflicting live contexts.
   for (const tableName of ["Note", "Material"] as const) {
     if (
       hasColumns(tableName, ["taskId", "projectId"]) &&
@@ -1005,7 +1008,8 @@ function validateSemanticRelationships(
            FROM ${sqlIdentifier(tableName)} AS evidence
            JOIN "Task" AS task ON task.id = evidence.taskId
           WHERE task.projectId IS NOT NULL
-            AND evidence.projectId IS NOT NULL;`
+            AND evidence.projectId IS NOT NULL
+            AND evidence.projectId <> task.projectId;`
       );
     }
   }

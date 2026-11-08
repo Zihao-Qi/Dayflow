@@ -1,3 +1,4 @@
+export type { NoteCreatePayload } from "./api";
 export { JournalPage, type JournalPageProps } from "@/modules/journal/ui/journal-page";
 export {
   useJournalPage,

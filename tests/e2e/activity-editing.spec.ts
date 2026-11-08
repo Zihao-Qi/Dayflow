@@ -666,3 +666,69 @@ test("blocks Escape and traps Tab to dialog container while save is in flight", 
   });
   await expect(updatedOpener).toBeFocused();
 });
+
+async function historicallyUnassignedActivity(page: Page) {
+  const bootstrap = await (await page.request.get("/api/bootstrap")).json();
+  const project = await createProject(page.request, "Later Task Project");
+  const taskResponse = await page.request.post("/api/tasks", {
+    data: { title: "Originally standalone Task", date: bootstrap.todayKey }
+  });
+  expect(taskResponse.status()).toBe(201);
+  const task = await taskResponse.json();
+  const original = await createManualActivity(page.request, {
+    startTime: "09:00", durationMinutes: 20, category: "Admin",
+    note: "Historically unassigned evidence", taskId: task.id
+  });
+  expect(original.projectId).toBeNull();
+  expect(original.attributedProjectId).toBeNull();
+  const move = await page.request.patch(`/api/tasks/${task.id}`, {
+    data: { projectId: project.id, phaseId: null }
+  });
+  expect(move.ok()).toBe(true);
+  expect((await move.json()).projectId).toBe(project.id);
+  await openDashboard(page);
+  await openLog(page);
+  await page.getByRole("button", {
+    name: "Edit activity: Historically unassigned evidence", exact: true
+  }).click();
+  return { original, task, project, dialog: page.getByRole("dialog", { name: "Edit activity", exact: true }) };
+}
+
+test("confirms an unchanged historically null Activity correction after its Task joins a Project", async ({ page }) => {
+  const { original, task, dialog } = await historicallyUnassignedActivity(page);
+  await dialog.getByLabel("Activity note").fill("Corrected historically unassigned evidence");
+  await dialog.getByLabel("Time", { exact: true }).fill("10:15");
+  await dialog.getByLabel("Minutes", { exact: true }).fill("35");
+  await dialog.getByLabel("Category", { exact: true }).fill("Learning");
+  const updated = page.waitForResponse((response) =>
+    new URL(response.url()).pathname === `/api/activities/${original.id}` && response.request().method() === "PUT");
+  await dialog.getByRole("button", { name: "Save changes", exact: true }).click();
+  const response = await updated;
+  expect(response.status()).toBe(200);
+  expect(await response.json()).toEqual(expect.objectContaining({
+    id: original.id, taskId: task.id, projectId: null, attributedProjectId: null,
+    note: "Corrected historically unassigned evidence", durationMinutes: 35, category: "Learning"
+  }));
+  // A successful server write alone is insufficient: the mounted editor must acknowledge it.
+  await expect(dialog).toHaveCount(0);
+  const after = await (await page.request.get("/api/bootstrap")).json();
+  expect(after.activities).toHaveLength(1);
+  expect(after.activities[0]).toEqual(expect.objectContaining({
+    id: original.id, attributedProjectId: null, taskId: task.id, projectId: null
+  }));
+});
+
+test("shows historical No Project rather than the Task's later Project when editing", async ({ page }) => {
+  const { dialog, project, original } = await historicallyUnassignedActivity(page);
+  await expect(dialog.getByLabel("Project", { exact: true })).toHaveValue("");
+  await expect(dialog.getByText("Inherited from linked task", { exact: true })).toHaveCount(0);
+  // An explicit relationship change still resolves new attribution normally.
+  await dialog.getByLabel("Linked task").selectOption("");
+  await dialog.getByLabel("Project", { exact: true }).selectOption(project.id);
+  await dialog.getByRole("button", { name: "Save changes", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  const after = await (await page.request.get("/api/bootstrap")).json();
+  expect(after.activities.find((activity: Activity) => activity.id === original.id)).toEqual(
+    expect.objectContaining({ taskId: null, projectId: project.id, attributedProjectId: project.id })
+  );
+});

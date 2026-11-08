@@ -486,6 +486,7 @@ export function WorkspaceShell() {
           categorySuggestions={data.activityCategorySuggestions}
           draft={activity.draft}
           originalTaskId={activity.editor?.original.taskId ?? null}
+          originalProjectId={activity.editor?.original.projectId ?? null}
           originalInheritedProjectId={
             activity.editor?.original.taskId &&
             activity.editor.original.projectId === null

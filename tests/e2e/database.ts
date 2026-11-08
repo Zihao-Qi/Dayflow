@@ -393,13 +393,14 @@ export function seedPreviousDayTimeBlockReceipt(date: string) {
 export function seedPastReviews(saveOffsets: number[]) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const dayMs = 24 * 60 * 60 * 1_000;
   const seeded = saveOffsets.map((daysAgo) => {
     if (!Number.isInteger(daysAgo) || daysAgo < 1) {
       throw new Error("A past Review must have been saved at least one day ago.");
     }
-    const periodEnd = new Date(today.getTime() + (1 - daysAgo) * dayMs);
-    const periodStart = new Date(periodEnd.getTime() - 7 * dayMs);
+    const periodEnd = new Date(today);
+    periodEnd.setDate(periodEnd.getDate() + 1 - daysAgo);
+    const periodStart = new Date(periodEnd);
+    periodStart.setDate(periodStart.getDate() - 7);
     return {
       id: `past-review-${daysAgo}`,
       daysAgo,

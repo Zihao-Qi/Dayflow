@@ -195,9 +195,7 @@ export function useActivityCapture({
     const expectedAttributedProjectId =
       activeEditor &&
       editable.taskId === activeEditor.original.taskId &&
-      editable.projectId === activeEditor.original.projectId &&
-      activeEditor.original.projectId === null &&
-      activeEditor.original.attributedProjectId
+      editable.projectId === activeEditor.original.projectId
         ? activeEditor.original.attributedProjectId
         : selectedTaskProjectId ?? editable.projectId;
     const payload = activeEditor

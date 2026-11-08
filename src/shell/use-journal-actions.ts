@@ -80,7 +80,7 @@ export function useJournalActions({
   }
 
   async function addNote() {
-    if (!noteDraft.content.trim() || noteSaving) return;
+    if (!data?.todayKey || !noteDraft.content.trim() || noteSaving) return;
     let tags: string[];
     try {
       tags = normalizeNoteTags(
@@ -94,23 +94,26 @@ export function useJournalActions({
       setAppAnnouncement("The note was not saved.");
       return;
     }
-    const selectedTaskProjectId = taskProjectIdFor(
-      noteDraft.taskId,
-      journal.tasks
-    );
-    const expectedProjectId = selectedTaskProjectId
-      ? null
-      : noteDraft.projectId || null;
-    const payload = {
+    const fields = {
       content: noteDraft.content.trim(),
       tags,
       taskId: noteDraft.taskId || null,
       projectId: noteDraft.projectId || null
     };
-    const mutationId = mutationIdFor(noteCreateMutation, payload);
+    // Calendar refresh does not change an unchanged draft's logical attempt.
+    // Freeze an explicit request date as well as its receipt identity.
+    const fingerprint = JSON.stringify(fields);
+    if (noteCreateMutation.current?.fingerprint !== fingerprint) {
+      noteCreateMutation.current = {
+        id: crypto.randomUUID(),
+        fingerprint,
+        payload: { ...fields, date: data.todayKey }
+      };
+    }
+    const { payload, id: mutationId } = noteCreateMutation.current;
     setNoteSaving(true);
     try {
-      const result = await createNoteRequest(payload, mutationId, expectedProjectId, data?.todayKey);
+      const result = await createNoteRequest(payload, mutationId);
 
       setNoteDraft(emptyNoteCaptureDraft);
       noteCreateMutation.current = null;

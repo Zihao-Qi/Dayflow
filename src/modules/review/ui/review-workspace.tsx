@@ -181,15 +181,15 @@ export function ReviewPage({
           review={past.review}
           onReturnToCurrent={history.clearSelection}
         />
-      ) : (
-        <CurrentReviewEditor
-          key={`${review.periodStart}:${review.periodEnd}`}
-          review={review}
-          onSaveReview={(draft) => onSaveReview(draft, current.acceptReview)}
-          onSaveError={onSaveError}
-          onSaveRecovered={onSaveRecovered}
-        />
-      )}
+      ) : null}
+      <CurrentReviewEditor
+        key={`${review.periodStart}:${review.periodEnd}`}
+        visible={!detail}
+        review={review}
+        onSaveReview={(draft) => onSaveReview(draft, current.acceptReview)}
+        onSaveError={onSaveError}
+        onSaveRecovered={onSaveRecovered}
+      />
     </div>
   );
 }
@@ -438,11 +438,13 @@ function ReviewEvidenceSections({
 }
 
 function CurrentReviewEditor({
+  visible,
   review,
   onSaveReview,
   onSaveError,
   onSaveRecovered
 }: {
+  visible: boolean;
   review: Review;
   onSaveReview: (review: Review) => Promise<boolean>;
   onSaveError: () => void;
@@ -458,6 +460,8 @@ function CurrentReviewEditor({
     onRecovered: onSaveRecovered
   });
   const hasDraft = hasReviewContent(reviewSave.draft);
+  // History hides the editor, not this exact period's draft/retry owner.
+  if (!visible) return null;
 
   return (
       <section

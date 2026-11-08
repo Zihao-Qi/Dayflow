@@ -16,6 +16,7 @@ export function ActivityDialog({
   categorySuggestions,
   draft,
   originalTaskId,
+  originalProjectId,
   originalInheritedProjectId,
   error,
   saving,
@@ -30,6 +31,7 @@ export function ActivityDialog({
   categorySuggestions: string[];
   draft: ActivityDraft;
   originalTaskId: string | null;
+  originalProjectId: string | null;
   originalInheritedProjectId: string | null;
   error: string;
   saving: boolean;
@@ -40,13 +42,15 @@ export function ActivityDialog({
   const { date, time, duration, category, taskId, projectId, note } = draft;
   const currentTaskProjectId =
     tasks.find((task) => task.id === taskId)?.projectId ?? null;
-  const usingHistoricalAttribution =
+  const relationshipsUnchanged =
     mode === "edit" &&
     taskId === originalTaskId &&
-    projectId === "" &&
-    Boolean(originalInheritedProjectId);
-  const linkedTaskProjectId = usingHistoricalAttribution
-    ? originalInheritedProjectId
+    (projectId || null) === originalProjectId;
+  const usingHistoricalAttribution =
+    relationshipsUnchanged && originalProjectId === null;
+  // A historical null is a recorded absence, not permission to infer today's Project.
+  const linkedTaskProjectId = relationshipsUnchanged
+    ? originalProjectId === null ? originalInheritedProjectId : null
     : currentTaskProjectId;
   const title = mode === "edit" ? "Edit activity" : "Log activity";
   const dialogRef = useRef<HTMLElement | null>(null);
@@ -188,7 +192,7 @@ export function ActivityDialog({
             <select
               aria-label="Project"
               value={linkedTaskProjectId ?? projectId}
-              disabled={saving || Boolean(linkedTaskProjectId)}
+              disabled={saving || Boolean(linkedTaskProjectId) || Boolean(currentTaskProjectId)}
               onChange={(event) =>
                 onDraftChange({ projectId: event.target.value })
               }
@@ -200,10 +204,12 @@ export function ActivityDialog({
                 </option>
               ))}
             </select>
-            {linkedTaskProjectId && (
+            {(linkedTaskProjectId || (usingHistoricalAttribution && taskId)) && (
               <small>
                 {usingHistoricalAttribution
-                  ? "Recorded from linked task"
+                  ? linkedTaskProjectId
+                    ? "Recorded from linked task"
+                    : "Recorded without Project attribution"
                   : "Inherited from linked task"}
               </small>
             )}

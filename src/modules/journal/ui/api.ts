@@ -13,12 +13,15 @@ import {
   type JournalNoteRecord
 } from "./journal-model";
 
-export function createNote(payload: {
+export type NoteCreatePayload = {
   content: string;
   tags: string[];
   taskId: string | null;
   projectId: string | null;
-}, mutationId: string, expectedProjectId: string | null, todayKey: string | undefined) {
+  date: string;
+};
+
+export function createNote(payload: NoteCreatePayload, mutationId: string) {
   return request("/api/notes", {
     method: "POST",
     body: payload,
@@ -27,9 +30,11 @@ export function createNote(payload: {
       result.content === payload.content &&
       stringArraysEqual(result.tags, payload.tags) &&
       result.taskId === payload.taskId &&
-      result.projectId === expectedProjectId &&
-      Boolean(todayKey) &&
-      localDateKey(new Date(result.date)) === todayKey,
+      // A Task may acquire its Project before the first commit; a receipt keeps
+      // the original direct Project. Both must still match this request's intent.
+      (result.projectId === payload.projectId ||
+        (payload.taskId !== null && result.projectId === null)) &&
+      localDateKey(new Date(result.date)) === payload.date,
     fallback: "The note could not be saved. Your draft is still here.",
   });
 }

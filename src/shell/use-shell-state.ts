@@ -10,7 +10,8 @@ import { FocusDraft } from "@/modules/focus/ui/focus-rail";
 import {
   useJournalPage,
   type MaterialCaptureDraft,
-  type NoteCaptureDraft
+  type NoteCaptureDraft,
+  type NoteCreatePayload
 } from "@/modules/journal/ui";
 import type { Bootstrap } from "@/shared/client/decoders";
 import { type PendingMutation } from "@/shared/client/mutation-ids";
@@ -117,7 +118,9 @@ export function useShellState() {
   const noteCreateWasInError = useRef(false);
   const materialCreateWasInError = useRef(false);
   const taskCreateMutation = useRef<PendingMutation | null>(null);
-  const noteCreateMutation = useRef<PendingMutation | null>(null);
+  const noteCreateMutation = useRef<
+    (PendingMutation & { payload: NoteCreatePayload }) | null
+  >(null);
   const materialCreateMutation = useRef<PendingMutation | null>(null);
   const timeBlockCreateMutation = useRef<PendingMutation | null>(null);
   const paletteOpener = useRef<HTMLElement | null>(null);
